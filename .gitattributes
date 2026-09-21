@@ -1,0 +1,8 @@
+# 批处理脚本必须使用 CRLF 换行符,
+# 因为 cmd.exe 解析裸 LF 时会把注释行误当成命令, 破坏语法
+*.bat text eol=crlf
+
+# 源码与文档统一用 LF
+*.py    text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
