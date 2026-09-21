@@ -9,8 +9,9 @@ from bpy.types import Operator
 
 from . import qd_panel, qd_presets, qd_settings
 from .qd_pipeline import FractureError, main
+from .qd_errors import InvalidParameterError
 from .qd_properties import CONTEXT, PROPERTY_SPECS, property_definitions
-from .qd_translations import TRANSLATIONS_DOMAIN, translations_dict, tr
+from .qd_translations import TRANSLATIONS_DOMAIN, translations_dict, tr_report
 
 
 class OBJECT_OT_add_quick_destruction_objects(Operator):
@@ -20,8 +21,8 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
     bl_label = "Quick Destruction Selected Mesh Objects"
     bl_description = "Cut selected editable meshes into shards; source objects are kept"
     bl_translation_context = CONTEXT
-    # PRESET 与上游一致, 用于对话框里那套原生预设按钮
-    bl_options = {'PRESET', 'UNDO'}
+    # 参数预设由自定义 JSON 菜单处理，几何操作支持撤销。
+    bl_options = {'UNDO'}
 
     # 属性与 PropertyGroup 共用同一份定义, 避免两处接口分叉;
     # preset_session 是隐藏字段, 只用于把对话框预设指向本次对话框而非侧栏
@@ -40,23 +41,29 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
             data = qd_settings.settings_to_dict(self)
             keywords = qd_settings.validated_values(data)
             objects, seconds = main(context, **keywords)
-            # 切割成功后把实际生效的参数同步回侧栏, 便于接着微调
-            qd_settings.dict_to_settings(context.scene.qd_settings.fracture, data)
-            if self.preset_session:
-                context.scene.qd_settings.preset_name = qd_presets.preset_name(context, self.preset_session)
-            self.report({'INFO'}, tr("Created {count} shards in {seconds:.2f} s",
+            # main 返回即提交几何。侧栏同步是后续便利操作，失败不能伪装成未执行。
+            try:
+                qd_settings.dict_to_settings(context.scene.qd_settings.fracture, data)
+                if self.preset_session:
+                    context.scene.qd_settings.preset_name = qd_presets.preset_name(context, self.preset_session)
+            except Exception as error:
+                traceback.print_exc()
+                self.report({'WARNING'}, tr_report(
+                    "Shards were created, but sidebar settings could not be synchronized: {detail}",
+                    detail=tr_report(str(error))))
+            self.report({'INFO'}, tr_report("Created {count} shards in {seconds:.2f} s",
                                     count=len(objects), seconds=seconds))
             return {'FINISHED'}
         except FractureError as error:
-            self.report({'ERROR'}, tr(error.message, **error.values))
-        except ValueError as error:
+            self.report({'ERROR'}, tr_report(error.message, **error.values))
+        except InvalidParameterError as error:
             # 参数校验失败时把字段标识换成可读名称再报错
-            field = str(error)
+            field = error.field
             label = PROPERTY_SPECS.get(field, ('', {'name': field}))[1]['name']
-            self.report({'ERROR'}, tr("Invalid parameter: {name}", name=tr(label)))
+            self.report({'ERROR'}, tr_report("Invalid parameter: {name}", name=tr_report(label)))
         except Exception as error:
             traceback.print_exc()
-            self.report({'ERROR'}, tr("Fracture failed: {detail}", detail=str(error)))
+            self.report({'ERROR'}, tr_report("Fracture failed: {detail}", detail=tr_report(str(error))))
         finally:
             qd_presets.end_session(self.preset_session)
             self.preset_session = ''

@@ -14,7 +14,7 @@ rem        publish -> roll back on failure.
 rem
 rem  If an installation already exists and -Force was not given, the script asks
 rem  before replacing it. The default answer is yes: pressing Enter replaces the
-rem  existing installation, and only an explicit n/N cancels.
+rem  existing installation. Only Enter or y/Y continues; other input cancels.
 rem
 rem  Only cmd builtins and the tar.exe shipped with Windows are used, so there
 rem  is no PowerShell dependency. Every line of output is plain ASCII, which
@@ -26,6 +26,10 @@ set "SCRIPT_DIR=%~dp0"
 set "TARGET_VERSION="
 set "FORCE="
 set "PAUSE_AT_END=1"
+rem Cleanup may only use paths created by this invocation, never inherited variables.
+set "MANIFEST="
+set "STAGE="
+set "BACKUP="
 
 rem ------------------------------------------------------------- argument parse
 :parse_args
@@ -185,7 +189,7 @@ if exist "%DESTINATION%" if not defined FORCE (
   echo   An installation already exists at:
   echo     %DESTINATION%
   rem Default is yes: pressing Enter with no input replaces the existing install.
-  rem Only an explicit n/N cancels; anything else is treated as cancel to be safe.
+  rem Only Enter or y/Y continues; all other input cancels.
   rem The closing paren is escaped with ^ because a bare ")" inside an if block
   rem would be taken as the end of the block and would never be printed.
   echo   Replace the installed extension? [Y/n]  (Enter = Y, replace; N = cancel^)
@@ -300,6 +304,7 @@ echo INSTALL FAILED
 set "RESULT=1"
 
 :finish
+if defined MANIFEST if exist "%MANIFEST%" del "%MANIFEST%" >nul 2>&1
 if "%PAUSE_AT_END%"=="1" (
   echo.
   echo Press any key to close this window . . .
@@ -315,13 +320,16 @@ rem look in. The listing is read once per directory into numbered variables:
 rem expanding %%F and !TRY! inside a nested for block proved unreliable, so
 rem candidates are processed by index.
 :find_package
-set "DIR_INDEX=0"
 for %%D in ("%SCRIPT_DIR%." "%SCRIPT_DIR%..") do call :try_directory "%%~fD"
 exit /b 0
 
 :try_directory
+rem The script directory has priority over its parent, even if the parent is newer.
+if defined PACKAGE exit /b 0
 set "TRY_DIR=%~1"
 if not exist "%TRY_DIR%" exit /b 0
+rem Reset the count per directory; old slots beyond this count are never read.
+set "DIR_INDEX=0"
 set "TRY_LIST="
 for /f "delims=" %%F in ('dir /b /a-d /o-d "%TRY_DIR%\*.zip" 2^>nul') do (
   set /a "DIR_INDEX+=1"
@@ -332,8 +340,10 @@ if not defined TRY_LIST exit /b 0
 set "INDEX=0"
 :try_next
 set /a "INDEX+=1"
+if %INDEX% GTR %DIR_INDEX% exit /b 0
 set "NAME="
-for /f "tokens=1,* delims==" %%A in ('set TRY_%INDEX% 2^>nul') do set "NAME=%%B"
+rem SET uses a prefix match: accept only the exact variable (TRY_1 is not TRY_10).
+for /f "tokens=1,* delims==" %%A in ('set TRY_%INDEX% 2^>nul') do if "%%A"=="TRY_%INDEX%" set "NAME=%%B"
 if not defined NAME exit /b 0
 set "CANDIDATE=%TRY_DIR%\%NAME%"
 set "MANIFEST=%TEMP%\qd_manifest_%RANDOM%%RANDOM%.txt"
@@ -341,8 +351,10 @@ tar -xOf "%CANDIDATE%" ./blender_manifest.toml >"%MANIFEST%" 2>nul
 if not errorlevel 1 (
   findstr /b /c:"id = \"quick_destruction\"" "%MANIFEST%" >nul 2>&1
   if not errorlevel 1 (
-    rem Keep the accepted manifest so the caller can read its fields.
+    rem The caller reads the accepted package again; release this probe file now.
     set "PACKAGE=%CANDIDATE%"
+    del "%MANIFEST%" >nul 2>&1
+    set "MANIFEST="
     exit /b 0
   )
 )

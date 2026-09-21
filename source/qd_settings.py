@@ -7,6 +7,7 @@ from bpy.props import PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 
 from .qd_properties import CONTEXT, PROPERTY_SPECS, property_definitions
+from .qd_errors import InvalidParameterError
 
 
 class CellFractureSettings(PropertyGroup):
@@ -79,7 +80,7 @@ def validated_values(data):
                 value = tuple(value)
         if not valid:
             # 抛出字段标识, 由调用方翻译成人话再显示
-            raise ValueError(key)
+            raise InvalidParameterError(key)
         values[key] = value
     return values
 

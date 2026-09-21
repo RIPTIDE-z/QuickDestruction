@@ -14,7 +14,8 @@ from bpy.types import Menu, Operator
 
 from .qd_properties import CONTEXT, PROPERTY_SPECS
 from .qd_settings import dict_to_settings, settings_to_dict, validated_values
-from .qd_translations import tr
+from .qd_errors import InvalidParameterError
+from .qd_translations import tr, tr_report
 
 # 预设存放在 Blender 用户脚本目录下, 与扩展本体分离, 重装扩展不会丢
 PRESET_SUBDIR = os.path.join("quick_destruction", "presets")
@@ -141,9 +142,10 @@ class PresetTarget:
     def failure(self, error):
         detail = str(error)
         # 校验失败时抛的是字段标识, 换成界面上的参数名再显示
-        if detail in PROPERTY_SPECS:
-            detail = tr("Invalid parameter: {name}", name=tr(PROPERTY_SPECS[detail][1]['name']))
-        self.report({'ERROR'}, tr("Preset operation failed: {detail}", detail=tr(detail)))
+        if isinstance(error, InvalidParameterError):
+            detail = tr_report("Invalid parameter: {name}",
+                               name=tr_report(PROPERTY_SPECS[error.field][1]['name']))
+        self.report({'ERROR'}, tr_report("Preset operation failed: {detail}", detail=tr_report(detail)))
         return {'CANCELLED'}
 
 
@@ -183,11 +185,11 @@ class QD_OT_preset_save(PresetTarget, Operator):
             name = save_preset(self.name, settings_to_dict(self.target(context)), self.overwrite)
             set_preset_name(context, self.session, name)
         except FileExistsError:
-            self.report({'WARNING'}, tr("Preset already exists; enable Overwrite to replace it"))
+            self.report({'WARNING'}, tr_report("Preset already exists; enable Overwrite to replace it"))
             return {'CANCELLED'}
         except (OSError, ValueError, TypeError, ReferenceError) as error:
             return self.failure(error)
-        self.report({'INFO'}, tr('Saved preset "{name}"', name=name))
+        self.report({'INFO'}, tr_report('Saved preset "{name}"', name=name))
         return {'FINISHED'}
 
 
@@ -211,7 +213,7 @@ class QD_OT_preset_load(PresetTarget, Operator):
             set_preset_name(context, self.session, path.stem)
         except (OSError, ValueError, TypeError, ReferenceError, OverflowError) as error:
             return self.failure(error)
-        self.report({'INFO'}, tr("Loaded {count} parameters", count=count))
+        self.report({'INFO'}, tr_report("Loaded {count} parameters", count=count))
         return {'FINISHED'}
 
 
@@ -237,7 +239,7 @@ class QD_OT_preset_remove(PresetTarget, Operator):
                 set_preset_name(context, self.session, '')
         except (OSError, ValueError, ReferenceError) as error:
             return self.failure(error)
-        self.report({'INFO'}, tr('Removed preset "{name}"', name=path.stem))
+        self.report({'INFO'}, tr_report('Removed preset "{name}"', name=path.stem))
         return {'FINISHED'}
 
 
@@ -252,7 +254,7 @@ class QD_OT_preset_open_directory(Operator):
         try:
             bpy.ops.wm.path_open(filepath=str(preset_directory(create=True)))
         except (OSError, RuntimeError) as error:
-            self.report({'ERROR'}, tr("Preset operation failed: {detail}", detail=str(error)))
+            self.report({'ERROR'}, tr_report("Preset operation failed: {detail}", detail=tr_report(str(error))))
             return {'CANCELLED'}
         return {'FINISHED'}
 

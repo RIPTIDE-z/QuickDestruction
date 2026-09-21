@@ -12,6 +12,7 @@ UI_MESSAGES = {
     "Quick Destruction Effect": "快速破坏效果",
     "Cut selected editable meshes into shards; source objects are kept": "将选中的可编辑网格切成碎块，保留源物体",
     "QuickDestruction": "快速破坏",
+    "Fracture": "切割",
     "Point Source": "种子点来源", "Recursive Shatter": "递归破碎",
     "Mesh Data": "网格数据", "Physics": "物理", "Object": "物体",
     "Scene": "场景", "Debug": "调试", "Naming": "命名", "Collection": "集合",
@@ -43,6 +44,7 @@ UI_MESSAGES = {
     "Created {count} shards in {seconds:.2f} s": "已生成 {count} 个碎块，耗时 {seconds:.2f} 秒",
     "Invalid parameter: {name}": "无效参数：{name}",
     "Fracture failed: {detail}": "切割失败：{detail}",
+    "Shards were created, but sidebar settings could not be synchronized: {detail}": "碎块已生成，但侧栏设置同步失败：{detail}",
     "Select editable mesh objects in Object Mode": "请在物体模式下选择可编辑的网格物体",
     'Mesh "{name}" has no faces': '网格“{name}”没有面',
     'Material slot {index} does not exist on "{name}"': '物体“{name}”不存在索引为 {index} 的材质槽',
@@ -51,8 +53,8 @@ UI_MESSAGES = {
     "Source geometry contains non-finite coordinates": "源几何包含非有限坐标",
 }
 
-# RNA 标签走自定义上下文, 而提示与枚举项由 Blender 按默认上下文查找,
-# 因此每条译文在两个上下文下都注册一遍, 否则会出现"标签是中文而提示是英文"
+# RNA 标签和枚举名使用属性上下文；RNA 提示与侧栏分类还需要默认上下文。
+# 保留双上下文兼容现有界面路径，数据名与用户预设名不送入翻译函数。
 MESSAGES = {**UI_MESSAGES, **PROPERTY_MESSAGES}
 translations_dict = {
     language: {(context, source): translated
@@ -65,4 +67,10 @@ translations_dict = {
 def tr(message, **values):
     """按自定义上下文取译文, 并填入格式化参数。"""
     translated = bpy.app.translations.pgettext_iface(message, CONTEXT)
+    return translated.format(**values) if values else translated
+
+
+def tr_report(message, **values):
+    """尊重报告翻译开关；动态字段在消息翻译之后填入。"""
+    translated = bpy.app.translations.pgettext_rpt(message, CONTEXT)
     return translated.format(**values) if values else translated

@@ -5,6 +5,9 @@ from math import isfinite, sqrt
 from mathutils import Vector
 from mathutils.geometry import points_in_planes
 
+from .qd_errors import FractureError, InvalidParameterError
+from .qd_properties import CELL_SCALE_MIN
+
 
 def points_as_bmesh_cells(verts, points, points_scale=None,
                          margin_bounds=0.05, margin_cell=0.0):
@@ -16,10 +19,10 @@ def points_as_bmesh_cells(verts, points, points_scale=None,
     if not verts or not points:
         return []
     if any(not isfinite(value) for point in (*verts, *points) for value in point):
-        raise ValueError("Source geometry contains non-finite coordinates")
+        raise FractureError("Source geometry contains non-finite coordinates")
     scale = tuple(points_scale) if points_scale is not None else (1.0, 1.0, 1.0)
-    if len(scale) != 3 or any(not isfinite(v) or v <= 0 for v in scale):
-        raise ValueError('cell_scale')
+    if len(scale) != 3 or any(not isfinite(v) or v < CELL_SCALE_MIN for v in scale):
+        raise InvalidParameterError('cell_scale')
     isotropic = scale[0] == scale[1] == scale[2]
     # 三轴权重相等时不改变上游的平面构造, 走等轴快路径
     points_scale = None if isotropic else scale

@@ -23,8 +23,7 @@ ROW_LAYOUT = (
         ('cell_scale',),
     )),
     ("Recursive Shatter", (
-        # 递归开关单独成行, 这样它在递归为 0 时依然可点, 用户才有入口开启递归;
-        # 下面两行在递归为 0 时会整行置灰
+        # 递归开关保持独立；从属参数按实际执行条件分别置灰。
         ('recursion',),
         ('recursion_source_limit', 'recursion_clamp'),
         # 递归方式与参与比例同处一行; 枚举用普通 prop 绘制, 因此是下拉而不是
@@ -80,7 +79,7 @@ def _compact_rows(title):
 # 逐项实测结论 (use_debug_bool=True 时):
 #   use_sharp_edges / use_sharp_edges_apply   内部收尾被整段跳过, 锐边不会标记
 #   use_interior_vgroup                       同上, 不会创建"内部"顶点组
-#   use_island_split                          孤岛拆分被跳过, 胞体保持未求交
+#   use_island_split                          跳过拆分，求交结果保留在启用的修改器中
 # 反例: use_smooth_faces / margin / use_recenter / use_debug_points 在两种模式下都有效,
 #       所以它们不能一并置灰 —— 这也是旧逻辑里最误导人的地方。
 DEBUG_INACTIVE = frozenset({'use_sharp_edges', 'use_sharp_edges_apply',
@@ -93,16 +92,7 @@ PHYSICS_KEYS = frozenset({'mass_mode', 'mass'})
 
 
 def _param_enabled(owner, key):
-    """判断单个参数此刻是否会起作用, 置灰即表示改了也没有效果。
-
-    依赖关系全部来自代码里的实际读取条件:
-      递归系列        仅在 recursion > 0 时被 main_object 读取
-      移除上级碎块    仅在 recursion > 0 时被读取 (与调试布尔无关)
-      锐边拆分        仅在 use_sharp_edges 打开时才有对象可拆
-      材质索引        仅在 use_data_match 打开时索引才与源物体槽位对应
-      调试布尔        跳过内部收尾与孤岛拆分, 见 DEBUG_INACTIVE
-      物理            没有任何代码读取, 见 PHYSICS_KEYS
-    """
+    """按执行阶段判断参数可用性，不将依赖关系扩散到同一显示行。"""
     if key in PHYSICS_KEYS:
         return False
     if key == 'use_sharp_edges_apply':
@@ -112,8 +102,15 @@ def _param_enabled(owner, key):
         return owner.use_sharp_edges and not owner.use_debug_bool
     if key in DEBUG_INACTIVE:
         return not owner.use_debug_bool
+    if key == 'recursion':
+        return not owner.use_debug_bool
+    recursion_enabled = owner.recursion > 0 and not owner.use_debug_bool
+    if key == 'recursion_chance_select':
+        return recursion_enabled and 0 < owner.recursion_chance < 1
     if key in RECURSION_DEPENDENT or key == 'use_remove_original':
-        return owner.recursion > 0
+        return recursion_enabled
+    if key == 'use_shard_collections':
+        return recursion_enabled
     if key == 'material_index':
         # 关掉匹配数据后, 布尔会自行带入刀刃物体的材质槽,
         # 碎块槽位与源物体槽位不再一一对应, 同一个索引会指到别的材质,
@@ -190,24 +187,21 @@ def _draw_compact_group(box, owner, title):
     for row_spec in _compact_rows(title):
         # 单独占一行的项用对齐行, 便于和其它分组保持一致的缩进
         row = col.row(align=True) if len(row_spec) == 1 else col.row()
-        # 整行统一置灰: 行内只要有一项无效, 同行其它项也一并变灰,
-        # 断掉"开一个再开另一个"的路径, 也避免半灰半亮的怪排版。
-        # 但行内每一项的判定都独立进行, 不把无关参数牵连进来
-        # (例如 recursion 单独成行, 就不会被递归系列整体置灰连累)。
-        if not all(_param_enabled(owner, key) for key in row_spec):
-            row.enabled = False
         for key in row_spec:
+            # 子布局分别禁用，不能让从属开关禁用它自己的控制开关。
+            item = row.row(align=True)
+            item.enabled = _param_enabled(owner, key)
             if key == 'source':
-                row.use_property_split = False
+                item.use_property_split = False
                 for identifier, name, _description in PROPERTY_SPECS[key][1]['items']:
-                    row.prop_enum(owner, key, identifier, text=name, text_ctxt=CONTEXT)
+                    item.prop_enum(owner, key, identifier, text=name, text_ctxt=CONTEXT)
                 continue
             if key in COMPONENT_AXES:
-                _draw_component_row(row, owner, key)
+                _draw_component_row(item, owner, key)
                 continue
             # 普通 prop: 枚举因此显示为下拉菜单。
             # 不要传 expand=True, 那会把枚举横铺成一排按钮并挤掉同行其它控件。
-            row.prop(owner, key)
+            item.prop(owner, key)
 
 
 def configure_operator(operator, owner):
@@ -247,7 +241,7 @@ class QD_PT_settings(Panel):
         actions = layout.column(align=True)
         actions.enabled = ready
         actions.operator_context = 'EXEC_DEFAULT'
-        apply = actions.operator("object.add_quick_destruction_objects", text="切割",
+        apply = actions.operator("object.add_quick_destruction_objects", text="Fracture",
                                  text_ctxt=CONTEXT, icon='MOD_EXPLODE')
         # 传面板当前值, 不依赖算子默认值
         configure_operator(apply, owner)

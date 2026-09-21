@@ -3,6 +3,9 @@
 # 自定义翻译上下文: 核心中文词典优先级更高, 用它可避免参数名被核心词表抢占语义
 CONTEXT = "QuickDestruction"
 
+# 正下限与 RNA、预设校验和胞体计算共用，避免界面能输入执行时必定拒绝的零。
+CELL_SCALE_MIN = 0.001
+
 # 参数的唯一来源: 算子与 PropertyGroup 都从这里生成属性, 避免两处接口分叉。
 # 键是参数标识, 值前半是 bpy.props 里的属性类型名, 后半是传给它的关键字参数。
 PROPERTY_SPECS = {'source': ('EnumProperty',
@@ -47,11 +50,9 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
                    'precision': 3}),
  'cell_scale': ('FloatVectorProperty',
                 {'name': 'Scale',
-                 'description': 'Positive axis weights for cell dividing planes; changes their '
-                                'direction and distance, not object scale. Equal weights give the '
-                                'unscaled partition.',
+                 'description': 'Axis weights from 0.001 to 1 for cell dividing planes; changes their direction and distance, not object scale. Equal weights give the unscaled partition.',
                  'size': 3,
-                 'min': 0.0,
+                 'min': CELL_SCALE_MIN,
                  'max': 1.0,
                  'default': (1.0, 1.0, 1.0)}),
  'recursion': ('IntProperty',
@@ -120,9 +121,7 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
                       'default': True}),
  'use_sharp_edges_apply': ('BoolProperty',
                            {'name': 'Apply Split Edge',
-                            'description': 'Physically split sharp edges when Sharp Edges is enabled. '
-                                           'Duplicates vertices and can make otherwise closed shards '
-                                           'non-watertight.',
+                            'description': 'Physically split all sharp edges, including inherited ones, when Sharp Edges is enabled. Duplicates vertices and can make closed shards non-watertight.',
                             'default': True}),
  'use_data_match': ('BoolProperty',
                     {'name': 'Match Data',
@@ -155,35 +154,27 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
                      'min': 0}),
  'use_interior_vgroup': ('BoolProperty',
                          {'name': 'Interior VGroup',
-                          'description': 'Create the vertex group 内部 for vertices belonging only to '
-                                         'interior faces. Boundary vertices shared with exterior faces '
-                                         'are excluded.',
+                          'description': 'Create the vertex group 内部 for interior-only vertices before splitting sharp edges. Boundary vertices shared with exterior faces are excluded; split copies are not reclassified.',
                           'default': False}),
  'mass_mode': ('EnumProperty',
                {'name': 'Mass Mode',
                 'items': (('VOLUME',
                            'By Volume',
-                           'Distribute a total mass by world-space bounding-box volume, not exact mesh '
-                           'volume.'),
+                           'Inactive legacy option: proportional mass distribution by bounding-box volume is not performed.'),
                           ('UNIFORM',
                            'Uniform',
-                           'Assign the specified mass to each shard with rigid body data.')),
+                           'Inactive legacy option: uniform mass assignment is not performed.')),
                 'default': 'VOLUME',
-                'description': 'Inactive placeholder. No code reads this field: the pipeline never '
-                               'creates or touches rigid bodies, so shard mass is never assigned. '
-                               'Kept only so old presets stay loadable.'}),
+                'description': 'Compatibility placeholder for old presets. The fracture pipeline does not use this field or create or modify rigid bodies; no mass is assigned.'}),
  'mass': ('FloatProperty',
           {'name': 'Mass',
-           'description': 'Inactive placeholder, in kilograms. No code reads this field because '
-                          'the tool never creates rigid bodies for the shards. Kept only so old '
-                          'presets stay loadable.',
+           'description': 'Compatibility placeholder in kilograms, kept for old presets. The fracture pipeline does not assign mass or create rigid bodies.',
            'min': 0.001,
            'max': 1000.0,
            'default': 1.0}),
  'use_recenter': ('BoolProperty',
                   {'name': 'Recenter',
-                   'description': 'Move each shard origin to its geometry center after cutting, without '
-                                  'moving its geometry.',
+                   'description': 'Move each shard origin to its geometry center using MEDIAN, without moving its geometry. This is not a volume-based center of mass.',
                    'default': True}),
  'use_remove_original': ('BoolProperty',
                          {'name': 'Remove Parent Shards',
@@ -193,10 +184,7 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
                           'default': True}),
  'collection_name': ('StringProperty',
                      {'name': 'Collection',
-                      'description': 'Output collection name. Empty uses the current collection; '
-                                     'otherwise reuse an editable collection in this scene or create '
-                                     'one. This collection always holds every shard of the operation, '
-                                     'directly or through the group collections inside it.',
+                      'description': 'Output collection name. Empty uses the current collection. A named collection must be editable and visible in this view layer; create it only if no collection has that name. All shards are placed here or in its group collections.',
                       'default': 'cell_collection'}),
  'shard_prefix': ('StringProperty',
                   {'name': 'Shard Prefix',
@@ -213,8 +201,7 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
                             'default': True}),
  'shard_index_padding': ('IntProperty',
                          {'name': 'Index Digits',
-                          'description': 'Zero padding for the shard sequence number, so names sort '
-                                         'in creation order in the Outliner.',
+                          'description': 'Minimum digit width of the shard sequence number, padded with zeros. Does not pad level/group numbers or guarantee global creation-order sorting.',
                           'min': 0,
                           'max': 8,
                           'default': 3}),
@@ -230,8 +217,7 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
                        'default': True}),
  'use_debug_bool': ('BoolProperty',
                     {'name': 'Unapplied Boolean',
-                     'description': 'Keep un-applied Boolean modifiers on convex cells. Skip recursion, '
-                                    'island splitting and interior finishing.',
+                     'description': 'Keep enabled Boolean modifiers on convex base meshes; evaluated geometry still shows the intersection. Skip recursion, island splitting and interior finishing.',
                      'default': False})}
 
 # 英文原文到中文译文的对照表, 键必须与上面定义里的原文逐字一致
@@ -252,7 +238,7 @@ PROPERTY_MESSAGES = {'Combine selected seed sources. Child means direct child ob
  'Random seed displacement, from 0 to this fraction of half the world-space bounding-box diagonal. 0 disables displacement.': '种子点随机位移，最大距离为世界空间包围盒对角线一半乘以此值；0 '
                                                                                                                               '表示不扰动。',
  'Noise': '噪波',
- 'Positive axis weights for cell dividing planes; changes their direction and distance, not object scale. Equal weights give the unscaled partition.': '胞体分割平面的正数轴向权重，改变平面方向和距离，不缩放物体；三轴权重相等时与未缩放分区相同。',
+ 'Axis weights from 0.001 to 1 for cell dividing planes; changes their direction and distance, not object scale. Equal weights give the unscaled partition.': '胞体分割平面的轴向权重，各轴为 0.001–1，改变平面方向和距离，不缩放物体；三轴权重相等时与未缩放分区相同。',
  'Scale': '胞体缩放',
  'Additional shatter rounds after the first cut. 0 disables recursion; growth also depends on the fraction and stopping threshold.': '首次切割后的额外细分轮数；0 '
                                                                                                                                      '表示不递归。增长量还受参与比例与停止阈值控制。',
@@ -284,7 +270,7 @@ PROPERTY_MESSAGES = {'Combine selected seed sources. Child means direct child ob
  'Smooth Interior': '平滑内侧面',
  'Mark edges between interior and exterior faces as sharp, independently of smooth interior shading.': '把内部断面与外表面交界处的边标记为锐边，与内部平滑着色开关独立。',
  'Sharp Edges': '锐边',
- 'Physically split sharp edges when Sharp Edges is enabled. Duplicates vertices and can make otherwise closed shards non-watertight.': '启用锐边时将锐边实际拆开，会复制顶点，可能让原本封闭的碎块变为不水密网格。',
+ 'Physically split all sharp edges, including inherited ones, when Sharp Edges is enabled. Duplicates vertices and can make closed shards non-watertight.': '启用锐边时实际拆开所有锐边，包括继承的锐边；会复制顶点，可能让原本封闭的碎块变为不水密网格。',
  'Apply Split Edge': '应用拆分边',
  'Copy material slots and create matching UV/color layers. Boolean interpolation transfers supported exterior data; interior UVs are not unwrapped.': '复制材质槽并创建对应的 '
                                                                                                                                                       'UV/颜色层；布尔插值传递受支持的外表面数据，内部断面不会自动展开 '
@@ -301,26 +287,26 @@ PROPERTY_MESSAGES = {'Combine selected seed sources. Child means direct child ob
                                                                                                                                                      '开始；0 '
                                                                                                                                                      '为第一个槽。需要启用匹配数据且存在对应材质槽才能显示材质。',
  'Material': '材质索引',
- 'Create the vertex group 内部 for vertices belonging only to interior faces. Boundary vertices shared with exterior faces are excluded.': '为仅属于内部断面的顶点创建“内部”顶点组；与外表面共享的边界顶点不包含在内。',
+ 'Create the vertex group 内部 for interior-only vertices before splitting sharp edges. Boundary vertices shared with exterior faces are excluded; split copies are not reclassified.': '在拆开锐边之前，为仅属于内部断面的顶点创建“内部”顶点组；排除与外表面共享的边界顶点，拆边副本不重新分类。',
  'Interior VGroup': '内部顶点组',
- 'Inactive placeholder. No code reads this field: the pipeline never creates or touches rigid bodies, so shard mass is never assigned. Kept only so old presets stay loadable.': '无效占位参数：没有任何代码读取它，本工具不会创建或修改刚体，因此不会分配碎块质量。保留该字段只为旧预设仍可正常载入。',
+ 'Compatibility placeholder for old presets. The fracture pipeline does not use this field or create or modify rigid bodies; no mass is assigned.': '兼容旧预设的占位参数；切割流程不使用它，也不创建或修改刚体，不分配碎块质量。',
  'Mass Mode': '质量模式',
  'By Volume': '按体积比例',
- 'Distribute a total mass by world-space bounding-box volume, not exact mesh volume.': '按世界空间包围盒体积比例分配总质量，不使用精确网格体积。',
+ 'Inactive legacy option: proportional mass distribution by bounding-box volume is not performed.': '无效的旧版选项：当前不按包围盒体积分配质量。',
  'Uniform': '统一质量',
- 'Assign the specified mass to each shard with rigid body data.': '为每个已有刚体数据的碎块赋予指定质量。',
- 'Inactive placeholder, in kilograms. No code reads this field because the tool never creates rigid bodies for the shards. Kept only so old presets stay loadable.': '无效占位参数，单位千克：本工具不会为碎块创建刚体，因此没有任何代码读取它。保留该字段只为旧预设仍可正常载入。',
+ 'Inactive legacy option: uniform mass assignment is not performed.': '无效的旧版选项：当前不执行统一质量赋值。',
+ 'Compatibility placeholder in kilograms, kept for old presets. The fracture pipeline does not assign mass or create rigid bodies.': '兼容旧预设的占位参数，单位千克；切割流程不分配质量，也不创建刚体。',
  'Mass': '质量',
- 'Move each shard origin to its geometry center after cutting, without moving its geometry.': '切割后将每个碎块原点移到其几何中心，不移动几何本身。',
+ 'Move each shard origin to its geometry center using MEDIAN, without moving its geometry. This is not a volume-based center of mass.': '切割后用 MEDIAN 将碎块原点移到几何中心，不移动几何本身；不是按体积计算的质量中心。',
  'Recenter': '重设轴心',
  'Delete generated parent shards after successful recursive replacement. The originally selected source objects are always kept.': '递归成功替换后删除生成的上级碎块；最初选中的源物体始终保留。',
  'Remove Parent Shards': '移除上级碎块',
- 'Output collection name. Empty uses the current collection; otherwise reuse an editable collection in this scene or create one. This collection always holds every shard of the operation, directly or through the group collections inside it.': '输出集合名称；留空使用当前集合，否则复用当前场景中的可编辑集合或新建集合。该集合始终容纳本次操作的全部碎块（直接容纳或经由其中的分组集合）。',
+ 'Output collection name. Empty uses the current collection. A named collection must be editable and visible in this view layer; create it only if no collection has that name. All shards are placed here or in its group collections.': '输出集合名称；留空使用当前集合。同名集合必须可编辑且在当前视图层可见，只有不存在同名集合时才新建。全部碎块直接放入此集合或其中的分组集合。',
  'Prefix used for shard names, for example cell_001 without grouping or cell_L1G1_001 with grouping. It is never used for collection names.': '碎块名前缀：不分组时为 cell_001 这样的形式，分组时为 cell_L1G1_001；该前缀不会出现在集合名里。',
  'Shard Prefix': '碎块前缀',
  'Put the shards of each recursively cut shard into its own collection named L<level>_G<group>, inside the output collection. When off, every shard is linked directly into the output collection.': '把每个被递归切开的碎块的子块放进各自独立的集合（名为 L<层>_G<组>，位于输出集合之内）；关闭时所有碎块直接平铺在输出集合里。',
  'Group Shards': '碎块分组',
- 'Zero padding for the shard sequence number, so names sort in creation order in the Outliner.': '碎块序号的补零位数，便于在大纲里按生成顺序排序。',
+ 'Minimum digit width of the shard sequence number, padded with zeros. Does not pad level/group numbers or guarantee global creation-order sorting.': '碎块序号的最小补零位数；不对层号和组号补零，也不保证全局按创建顺序排序。',
  'Index Digits': '序号位数',
  'Collection': '集合',
  'Create a DebugPoints mesh showing sampled seeds, including recursive seeds. It is diagnostic geometry, not a shard.': '创建 '
@@ -328,28 +314,17 @@ PROPERTY_MESSAGES = {'Combine selected seed sources. Child means direct child ob
                                                                                                                         '网格显示采样种子，包含递归种子；它是诊断几何，不计为碎块。',
  'Refresh the viewport during cutting. Can slow large cuts; has no effect in background mode.': '切割过程中刷新视口，可能降低大规模切割速度；后台模式下无效。',
  'Show Progress Realtime': '实时显示进度',
- 'Keep un-applied Boolean modifiers on convex cells. Skip recursion, island splitting and interior finishing.': '在凸胞体上保留未应用的布尔修改器；此模式跳过递归、孤岛拆分和内部断面收尾。',
+ 'Keep enabled Boolean modifiers on convex base meshes; evaluated geometry still shows the intersection. Skip recursion, island splitting and interior finishing.': '在凸胞体基础网格上保留启用的布尔修改器，求值几何仍显示求交结果；跳过递归、孤岛拆分和内部断面收尾。',
  'Seed Limit': '种子点上限',
  'Recursion Seed Limit': '递归种子上限',
  'Seed Points': '显示种子点',
  'Unapplied Boolean': '保留布尔修改器'}
 
 
-# 这些参数的值会被写进数据名 (物体名、集合名、网格名), 默认值里的字面量
-# 会出现在用户的大纲里, 因此不能跟随界面语言变化 —— 给它们一个空翻译上下文,
-# 属性名与提示仍然照常翻译。
-DATA_NAME_KEYS = frozenset({'shard_prefix'})
-
-
 def property_definitions():
-    """按 PROPERTY_SPECS 生成一份属性定义, 供算子与属性组各自使用。
-
-    翻译上下文按参数区分: 界面文案走 CONTEXT; 会写进数据名的参数走空上下文,
-    让它们的默认值在任何语言下都保持原样。
-    """
+    """生成 RNA 属性；上下文用于标签，数据名的值不经过翻译函数。"""
     from bpy import props
     definitions = {}
     for key, (kind, options) in PROPERTY_SPECS.items():
-        context = "" if key in DATA_NAME_KEYS else CONTEXT
-        definitions[key] = getattr(props, kind)(translation_context=context, **options)
+        definitions[key] = getattr(props, kind)(translation_context=CONTEXT, **options)
     return definitions

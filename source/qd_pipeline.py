@@ -7,16 +7,8 @@ import bpy
 from mathutils import Vector
 
 from . import qd_fracture_setup as setup
+from .qd_errors import FractureError
 from .qd_settings import validated_values
-
-
-class FractureError(Exception):
-    """切割过程中的可预期错误; message 是可翻译文本, values 是格式化参数。"""
-
-    def __init__(self, message, **values):
-        super().__init__(message)
-        self.message = message
-        self.values = values
 
 
 def _visible_collection(context, collection):
@@ -119,7 +111,7 @@ def main_object(context, collection, obj, settings):
             if threshold and len(cells) >= threshold:
                 break
             # 每个父碎块的子块自成一"组": 组号在层内递增, 序号在组内从 1 重计
-            group = naming.group_counts.get(level, 0) + 1
+            group = naming.next_group(level)
             sub = naming.next_collection(level, group)
             children = _cut(context, collection, parent, settings, level, naming, group, sub)
             # 细分失败或结果为空时保留父碎块, 不能把它删掉; 刚建的组也要退回
@@ -145,7 +137,7 @@ def main_object(context, collection, obj, settings):
 
 
 def _restore_selection(context, selection, active):
-    """把选择集恢复成操作前的样子, 成功与失败都走这一条路径。"""
+    """设置选择集：成功时选中产物，失败时由调用方传入原选择。"""
     context.view_layer.update()
     for obj in context.view_layer.objects:
         # 物体可能已被删除而残留空条目, 需要跳过

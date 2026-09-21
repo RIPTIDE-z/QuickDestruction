@@ -9,6 +9,8 @@ import bpy
 import bmesh
 from mathutils import Vector
 
+from .qd_errors import FractureError
+
 # 焊接距离与抖动幅度按物体尺度派生, 不使用绝对量, 否则小物体会被焊掉真实几何
 WELD_SCALE_RATIO = 1.0e-4
 WELD_TO_JITTER_RATIO = 5.0
@@ -31,7 +33,8 @@ class CreatedData:
         """删除本次创建的数据; 已被替换或因递归移除的项直接跳过。"""
         for kind, items in self.ids.items():
             data = getattr(bpy.data, kind)
-            for item in items:
+            # 输出集合先创建、子集合后创建；逆序才能先清空孩子再回收父集合。
+            for item in reversed(items):
                 try:
                     # 名字被新数据占用说明该项已不是原来的对象, 不再处理
                     if data.get(item.name) != item:
@@ -80,8 +83,9 @@ TEMP_NAME_PREFIX = "QDTMP_"
 class NamingPlan:
     """一次切割操作内的层级命名与集合安排。
 
-    顶层没有层号: 第 0 层就是"还没被递归切开"的状态, 它的落点由输出集合决定 ——
-    不分组时就是输出集合本身, 分组时是其中的第 1 组 (L1_G1)。
+    首次切割为第 0 层，始终直接放入输出集合，不建立分组。
+    第 n 轮递归的产物使用层号 n，每个成功细分的父碎块对应一个逻辑组。
+    是否建立组集合只影响组织方式，不影响逻辑组编号。
 
     命名规则:
       组集合   L<层>_G<组>            从 L1 开始, 例如 L1_G1, L1_G2; 不带用户前缀
@@ -111,8 +115,6 @@ class NamingPlan:
         self.padding = max(0, int(padding))
         self.use_collections = use_collections
         self.tracker = tracker
-        # 层号从 1 开始, 每进入一次递归就加一层
-        self.tier = 0
         # 每层已经用到第几组, 用于给新组编号
         self.group_counts = {}
         # 切割期的临时名计数器; 最终名字由 apply_names() 统一分配
@@ -140,7 +142,6 @@ class NamingPlan:
                      bpy.data.collections.new(self.group_id(tier, group)))
         self.collection.children.link(coll)
         self.created_collections.append(coll)
-        self.group_counts[tier] = group
         return coll
 
     def drop_collection(self, coll, tier):
@@ -149,11 +150,12 @@ class NamingPlan:
         必须同时把引用从 created_collections 里摘掉: 否则收尾清理时会访问
         已经释放的集合, 抛 "StructRNA of type Collection has been removed"。
         """
+        # 平铺模式也分配了逻辑组号，空结果同样需要退回。
+        self.group_counts[tier] = max(0, self.group_counts.get(tier, 1) - 1)
         if coll is None:
             return
         if coll in self.created_collections:
             self.created_collections.remove(coll)
-        self.group_counts[tier] = max(0, self.group_counts.get(tier, 1) - 1)
         if not coll.objects and not coll.children:
             bpy.data.collections.remove(coll)
 
@@ -294,7 +296,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
                           tracker=None, naming=None, level=0, group=None, target=None):
     """采样种子点并生成凸胞体, 返回胞体物体列表。
 
-    naming 为 NamingPlan 时: group 是组标识 (层, 组) 或 None (表示不分组),
+    naming 为 NamingPlan 时: level 与 group 分别是整数层号和组号，
     target 是这批碎块要落进的组集合 (可能为 None, 表示直接落在输出集合)。
     这两项由调用方决定, 因为"这一批属于哪一组"是流程层面的信息, 这里不去猜。
     naming 为 None 时回落到旧的 "<源物体名>_cell" 命名, 便于单独调用本函数做测试。
@@ -331,7 +333,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
     if not verts:
         return []
     if any(not isfinite(value) for point in (*verts, *points) for value in point):
-        raise ValueError("Source geometry contains non-finite coordinates")
+        raise FractureError("Source geometry contains non-finite coordinates")
     # 用包围盒对角线作为整体尺度, 焊接与抖动都按它派生
     lo = [min(v[i] for v in verts) for i in range(3)]
     hi = [max(v[i] for v in verts) for i in range(3)]
@@ -373,8 +375,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
             for face in bm.faces:
                 face.smooth = use_smooth_faces
                 face.material_index = material_index
-            # 中间网格名与物体名同源但不同名, 避免 Blender 因为名字被物体占用而改成
-            # ".001"; 反正最终名字由 apply_names() 统一分配, 这里只需要互不重名
+            # 网格和物体属于不同命名空间；切割期间使用临时名，收尾统一命名。
             mesh = track(tracker, 'meshes', bpy.data.meshes.new(shard_name() + "_cell"))
             bm.to_mesh(mesh)
         if use_data_match:
@@ -388,7 +389,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
                                           domain=attribute.domain)
         cell = track(tracker, 'objects', bpy.data.objects.new(shard_name(), mesh))
         shard_collection().objects.link(cell)
-        # 胞体顶点是世界空间坐标, 所以把原点放到种子点位置即可对齐
+        # 胞体顶点相对于种子点，平移到 center 后恢复其世界空间位置。
         cell.location = center
         if naming is not None:
             naming.mark(cell, naming.source_name, level, group)
@@ -459,7 +460,7 @@ def cell_fracture_boolean(context, collection, obj, objects, use_debug_bool=Fals
         if use_debug_redraw:
             redraw()
     if results and use_island_split and not use_debug_bool:
-        # 借助编辑模式的 separate LOOSE 拆分不连通部分, 因此要先手动管理选择集。
+        # separate LOOSE 支持物体模式；先管理选择集，避免拆分其他物体。
         # 视图层里可能残留已失效的空条目 (递归删除上级碎块后尤其明显),
         # 所以每一项都先判空再访问, 否则这里会抛 NoneType 属性错误
         for item in context.view_layer.objects:
