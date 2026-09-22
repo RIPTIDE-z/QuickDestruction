@@ -15,7 +15,12 @@ UI_MESSAGES = {
     "Fracture": "切割",
     "Point Source": "种子点来源", "Recursive Shatter": "递归破碎",
     "Mesh Data": "网格数据", "Physics": "物理", "Object": "物体",
-    "Scene": "场景", "Debug": "调试", "Naming": "命名", "Collection": "集合",
+    "Debug": "调试", "Collection": "集合",
+    # 面板上的两处补充说明: RNA 提示在这两个参数上取不到 (逐项/分量绘制),
+    # 所以把最关键的前提直接画在分组里, 见 qd_panel._draw_group_notes()
+    "Seeds are existing geometry positions, not random points": "种子取自现成的几何位置, 不是随机撒点",
+    "Both seed limits act only below the parent shard vertex count; larger values change nothing":
+        "两个种子上限只在小于父碎块顶点数时起作用, 再大也不会有变化",
     "Reserved for Rigid Body; this tool never creates one": "为刚体预留; 本工具不创建刚体",
     "Presets": "预设", "Preset": "预设", "Name": "名称",
     "Name of the preset": "预设名称",
@@ -37,6 +42,7 @@ UI_MESSAGES = {
     "Preset must be a JSON object": "预设内容必须是 JSON 对象",
     "Preset file is too large": "预设文件过大",
     "Preset operation failed: {detail}": "预设操作失败：{detail}",
+    "Preset directory could not be read: {detail}": "无法读取预设目录：{detail}",
     "Preset already exists; enable Overwrite to replace it": "预设已存在，请勾选“覆盖”后替换",
     'Saved preset "{name}"': '已保存预设“{name}”',
     'Removed preset "{name}"': '已删除预设“{name}”',
@@ -51,8 +57,9 @@ UI_MESSAGES = {
     "Output collection must be editable and visible in the current view layer": "输出集合必须可编辑，并在当前视图层可见",
     'No valid shards were produced for "{name}"': '物体“{name}”未生成有效碎块',
     "Source geometry contains non-finite coordinates": "源几何包含非有限坐标",
+    'Boolean intersection for "{name}" contains non-finite coordinates': '物体“{name}”的布尔交集包含非有限坐标',
+    'Boolean intersection extends outside "{name}"; check for open or invalid source geometry': '布尔交集超出物体“{name}”的范围；请检查源网格的开口或无效几何',
 }
-
 # RNA 标签和枚举名使用属性上下文；RNA 提示与侧栏分类还需要默认上下文。
 # 保留双上下文兼容现有界面路径，数据名与用户预设名不送入翻译函数。
 MESSAGES = {**UI_MESSAGES, **PROPERTY_MESSAGES}

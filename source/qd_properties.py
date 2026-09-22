@@ -5,6 +5,7 @@ CONTEXT = "QuickDestruction"
 
 # 正下限与 RNA、预设校验和胞体计算共用，避免界面能输入执行时必定拒绝的零。
 CELL_SCALE_MIN = 0.001
+RANDOM_SEED_DEFAULT = 0
 
 # 参数的唯一来源: 算子与 PropertyGroup 都从这里生成属性, 避免两处接口分叉。
 # 键是参数标识, 值前半是 bpy.props 里的属性类型名, 后半是传给它的关键字参数。
@@ -48,6 +49,14 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
                    'max': 1.0,
                    'default': 0.5,
                    'precision': 3}),
+ 'random_seed': ('IntProperty',
+                 {'name': 'Random Seed',
+                  'description': 'Seed for sampling, noise, recursive selection and numerical jitter. '
+                                 'The same inputs and seed reproduce the cut within the same Blender '
+                                 'version. Change this value for a different pattern; 0 is a fixed seed.',
+                  'min': 0,
+                  'max': 2147483647,
+                  'default': RANDOM_SEED_DEFAULT}),
  'cell_scale': ('FloatVectorProperty',
                 {'name': 'Scale',
                  'description': 'Axis weights from 0.001 to 1 for cell dividing planes; changes their direction and distance, not object scale. Equal weights give the unscaled partition.',
@@ -65,7 +74,9 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
  'recursion_source_limit': ('IntProperty',
                             {'name': 'Recursion Seed Limit',
                              'description': 'Maximum seed points sampled for each recursively cut '
-                                            'shard, before deduplication; 0 keeps all available points.',
+                                            'shard, before deduplication; 0 keeps all available points. '
+                                            'Has no further effect once it reaches the parent shard\'s '
+                                            'vertex count.',
                              'min': 0,
                              'max': 5000,
                              'default': 8}),
@@ -201,7 +212,10 @@ PROPERTY_SPECS = {'source': ('EnumProperty',
                             'default': True}),
  'shard_index_padding': ('IntProperty',
                          {'name': 'Index Digits',
-                          'description': 'Minimum digit width of the shard sequence number, padded with zeros. Does not pad level/group numbers or guarantee global creation-order sorting.',
+                          'description': 'Minimum digit width of the shard sequence number, padded with zeros. '
+                                         'Beyond 3 digits this only shows when the stop threshold allows '
+                                         'more than 999 shards. Does not pad level/group numbers or '
+                                         'guarantee global creation-order sorting.',
                           'min': 0,
                           'max': 8,
                           'default': 3}),
@@ -238,13 +252,15 @@ PROPERTY_MESSAGES = {'Combine selected seed sources. Child means direct child ob
  'Random seed displacement, from 0 to this fraction of half the world-space bounding-box diagonal. 0 disables displacement.': '种子点随机位移，最大距离为世界空间包围盒对角线一半乘以此值；0 '
                                                                                                                               '表示不扰动。',
  'Noise': '噪波',
+ 'Random Seed': '随机种子',
+ 'Seed for sampling, noise, recursive selection and numerical jitter. The same inputs and seed reproduce the cut within the same Blender version. Change this value for a different pattern; 0 is a fixed seed.': '控制采样、噪波、递归选择与数值抖动的随机种子。同一 Blender 版本下，相同输入与种子可复现切割；修改此值可生成不同图案，0 也是固定种子。',
  'Axis weights from 0.001 to 1 for cell dividing planes; changes their direction and distance, not object scale. Equal weights give the unscaled partition.': '胞体分割平面的轴向权重，各轴为 0.001–1，改变平面方向和距离，不缩放物体；三轴权重相等时与未缩放分区相同。',
  'Scale': '胞体缩放',
  'Additional shatter rounds after the first cut. 0 disables recursion; growth also depends on the fraction and stopping threshold.': '首次切割后的额外细分轮数；0 '
                                                                                                                                      '表示不递归。增长量还受参与比例与停止阈值控制。',
  'Recursion': '递归',
- 'Maximum seed points sampled for each recursively cut shard, before deduplication; 0 keeps all available points.': '每个递归碎块在去重前最多采样的种子点数；0 '
-                                                                                                                    '表示保留全部可用点。',
+ 'Maximum seed points sampled for each recursively cut shard, before deduplication; 0 keeps all available points. Has no further effect once it reaches the parent shard\'s vertex count.': '每个递归碎块在去重前最多采样的种子点数；0 '
+                                                                                                                                                                                                  '表示保留全部可用点。达到父碎块顶点数后此项不再产生变化。',
  'Stop further recursion when the current shard count per source object reaches this threshold. One cut or island split may exceed it. 0 disables the threshold; the first cut is not limited.': '每个源物体的当前碎块数达到此阈值后停止继续递归；单次细分或孤岛拆分可能超出阈值。0 '
                                                                                                                                                                                                  '表示关闭阈值，首次切割不受此项限制。',
  'Shard Stop Threshold': '碎块停止阈值',
@@ -306,7 +322,7 @@ PROPERTY_MESSAGES = {'Combine selected seed sources. Child means direct child ob
  'Shard Prefix': '碎块前缀',
  'Put the shards of each recursively cut shard into its own collection named L<level>_G<group>, inside the output collection. When off, every shard is linked directly into the output collection.': '把每个被递归切开的碎块的子块放进各自独立的集合（名为 L<层>_G<组>，位于输出集合之内）；关闭时所有碎块直接平铺在输出集合里。',
  'Group Shards': '碎块分组',
- 'Minimum digit width of the shard sequence number, padded with zeros. Does not pad level/group numbers or guarantee global creation-order sorting.': '碎块序号的最小补零位数；不对层号和组号补零，也不保证全局按创建顺序排序。',
+ 'Minimum digit width of the shard sequence number, padded with zeros. Beyond 3 digits this only shows when the stop threshold allows more than 999 shards. Does not pad level/group numbers or guarantee global creation-order sorting.': '碎块序号的最小补零位数；超过 3 位只在停止阈值允许产生 999 个以上碎块时才看得出差别。不对层号和组号补零，也不保证全局按创建顺序排序。',
  'Index Digits': '序号位数',
  'Collection': '集合',
  'Create a DebugPoints mesh showing sampled seeds, including recursive seeds. It is diagnostic geometry, not a shard.': '创建 '
@@ -328,3 +344,12 @@ def property_definitions():
     for key, (kind, options) in PROPERTY_SPECS.items():
         definitions[key] = getattr(props, kind)(translation_context=CONTEXT, **options)
     return definitions
+
+
+def field_label(field):
+    """把字段标识换成界面上的参数名; 未知标识原样返回。
+
+    参数校验错误统一抛字段标识, 显示前必须经过这里。放在本模块是因为
+    PROPERTY_SPECS 在这里, 由 qd_errors.describe_error() 调用, 避免反向依赖。
+    """
+    return PROPERTY_SPECS.get(field, ('', {'name': field}))[1]['name']

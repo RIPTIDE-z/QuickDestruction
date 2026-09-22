@@ -12,9 +12,9 @@ import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy.types import Menu, Operator
 
-from .qd_properties import CONTEXT, PROPERTY_SPECS
+from .qd_properties import CONTEXT
 from .qd_settings import dict_to_settings, settings_to_dict, validated_values
-from .qd_errors import InvalidParameterError
+from .qd_errors import describe_error
 from .qd_translations import tr, tr_report
 
 # 预设存放在 Blender 用户脚本目录下, 与扩展本体分离, 重装扩展不会丢
@@ -98,13 +98,23 @@ def preset_filepath(name, create=False):
 
 
 def list_presets():
-    """列出可用预设名, 按不区分大小写排序。"""
+    """列出可用预设名, 按不区分大小写排序。
+
+    返回 (names, error): error 为 None 表示读取正常, 否则是 (消息键, 参数) 二元组。
+    区分两者是必要的 —— 目录解析不了或读不出来时, 菜单不该显示成"尚无预设",
+    否则用户会以为预设丢了。这里只返回消息键, 翻译交给调用方。
+    """
     try:
         directory = preset_directory()
-        return sorted((path.stem for path in directory.glob("*.json")
-                       if path.is_file() and not path.is_symlink()), key=str.casefold)
     except OSError:
-        return []
+        # 目录都定位不到: 用现成的消息键, 不再包一层
+        return [], ("Cannot resolve the preset directory", {})
+    try:
+        names = sorted((path.stem for path in directory.glob("*.json")
+                        if path.is_file() and not path.is_symlink()), key=str.casefold)
+    except OSError as error:
+        return [], ("Preset directory could not be read: {detail}", {"detail": str(error)})
+    return names, None
 
 
 def save_preset(name, data, overwrite=False):
@@ -140,12 +150,10 @@ class PresetTarget:
         return target_settings(context, self.session)
 
     def failure(self, error):
-        detail = str(error)
-        # 校验失败时抛的是字段标识, 换成界面上的参数名再显示
-        if isinstance(error, InvalidParameterError):
-            detail = tr_report("Invalid parameter: {name}",
-                               name=tr_report(PROPERTY_SPECS[error.field][1]['name']))
-        self.report({'ERROR'}, tr_report("Preset operation failed: {detail}", detail=tr_report(detail)))
+        # 字段标识换成界面参数名这件事由 describe_error() 统一处理
+        message, values = describe_error(error)
+        self.report({'ERROR'}, tr_report("Preset operation failed: {detail}",
+                                         detail=tr_report(message, **values)))
         return {'CANCELLED'}
 
 
@@ -275,7 +283,7 @@ class QD_MT_presets(Menu):
         save = row.operator("qd.preset_save", text="Save Preset...", text_ctxt=CONTEXT, icon='ADD')
         save.session = token
         save.name = preset_name(context, token)
-        names = list_presets()
+        names, error = list_presets()
         layout.separator()
         for name in names:
             # 加载立即执行, 删除需要确认
@@ -287,7 +295,10 @@ class QD_MT_presets(Menu):
             remove_row.operator_context = 'INVOKE_DEFAULT'
             remove = remove_row.operator("qd.preset_remove", text="", icon='X')
             remove.name, remove.session = name, token
-        if not names:
+        if error is not None:
+            # 读不出来时说明原因, 不能显示成"尚无预设", 否则用户会以为预设丢了
+            layout.label(text=tr_report(error[0], **error[1]), icon='ERROR')
+        elif not names:
             layout.label(text="No presets yet", text_ctxt=CONTEXT)
         layout.separator()
         layout.operator("qd.preset_open_directory", icon='FILE_FOLDER')

@@ -1,7 +1,7 @@
 """种子点采样、凸胞体生成, 以及布尔求交后的网格收尾。"""
 
 from contextlib import contextmanager
-from math import isfinite
+from math import cos, isfinite, sin, sqrt, tau
 import random
 import uuid
 
@@ -10,6 +10,8 @@ import bmesh
 from mathutils import Vector
 
 from .qd_errors import FractureError
+from . import qd_boolean
+from .qd_properties import RANDOM_SEED_DEFAULT
 
 # 焊接距离与抖动幅度按物体尺度派生, 不使用绝对量, 否则小物体会被焊掉真实几何
 WELD_SCALE_RATIO = 1.0e-4
@@ -288,20 +290,32 @@ def _points_from_object(context, depsgraph, obj, source):
     return points
 
 
+def _random_unit_vector(rng):
+    """用调用方的随机流在单位球面均匀采样, 避免 mathutils 的独立全局 RNG。"""
+    z = rng.uniform(-1.0, 1.0)
+    angle = rng.uniform(0.0, tau)
+    radius = sqrt(max(0.0, 1.0 - z * z))
+    return Vector((radius * cos(angle), radius * sin(angle), z))
+
+
 def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_OWN'}),
                           source_limit=0, source_noise=0.0, clean=True,
                           use_smooth_faces=False, use_data_match=False,
                           use_debug_points=False, margin=0.0, material_index=0,
                           use_debug_redraw=False, cell_scale=(1.0, 1.0, 1.0),
-                          tracker=None, naming=None, level=0, group=None, target=None):
+                          tracker=None, naming=None, level=0, group=None, target=None, rng=None):
     """采样种子点并生成凸胞体, 返回胞体物体列表。
 
     naming 为 NamingPlan 时: level 与 group 分别是整数层号和组号，
     target 是这批碎块要落进的组集合 (可能为 None, 表示直接落在输出集合)。
     这两项由调用方决定, 因为"这一批属于哪一组"是流程层面的信息, 这里不去猜。
     naming 为 None 时回落到旧的 "<源物体名>_cell" 命名, 便于单独调用本函数做测试。
+    rng 由管线在各轮间共享; 单独调用未提供时使用固定默认种子的局部随机流。
     """
     from .qd_fracture_calc import points_as_bmesh_cells
+
+    if rng is None:
+        rng = random.Random(RANDOM_SEED_DEFAULT)
 
     def shard_name():
         # 切割期只用临时名; 最终名字在全部切完后由 apply_names() 统一分配,
@@ -320,7 +334,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
         return []
     if source_limit and source_limit < len(points):
         # 先打乱再截断, 得到的是随机子集而不是前 N 个
-        random.shuffle(points)
+        rng.shuffle(points)
         points = points[:source_limit]
     # 精确去重: 按固定小数位取整会丢掉小尺寸物体的真实点
     points = list({tuple(point): point for point in points}.values())
@@ -341,8 +355,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
     weld_dist, jitter_half = _weld_distances(scale)
     if source_noise:
         # 扰动规则点阵, 避免出现过于整齐的切割面
-        from mathutils.noise import random_unit_vector
-        points = [p + random_unit_vector() * (source_noise * scale * 0.5 * random.random())
+        points = [p + _random_unit_vector(rng) * (source_noise * scale * 0.5 * rng.random())
                   for p in points]
     if use_debug_points:
         # 诊断几何, 用于查看实际采样到的种子点位置; 跟随碎块一起落点
@@ -356,7 +369,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
         with mesh_edit() as bm:
             # 轻微抖动有助焊接重合点, 抖动幅度远小于焊接距离
             for point in cell_points:
-                point = point + Vector(tuple(random.uniform(-jitter_half, jitter_half) for _ in range(3)))
+                point = point + Vector(tuple(rng.uniform(-jitter_half, jitter_half) for _ in range(3)))
                 bm.verts.new(point)
             bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
             # 少于四个顶点无法构成凸体, 直接丢弃
@@ -418,11 +431,13 @@ def cell_fracture_boolean(context, collection, obj, objects, use_debug_bool=Fals
     if use_interior_hide and level == 0:
         obj.data.polygons.foreach_set("hide", [False] * len(obj.data.polygons))
         obj.data.update()
+    # 求解策略只在布尔边界决定，每个源/递归父块检查一次，所有胞体共用。
+    source = qd_boolean.inspect_source(obj, context.evaluated_depsgraph_get())
     modifiers = {}
     for cell in objects:
         modifier = cell.modifiers.new(name="Boolean", type='BOOLEAN')
         modifier.object = obj
-        modifier.operation = 'INTERSECT'
+        qd_boolean.configure_intersection(modifier, source)
         modifiers[cell] = modifier
         if use_interior_hide and not use_debug_bool:
             # 先用隐藏标记区分内外表面, 收尾阶段再据此判定内部断面
@@ -438,6 +453,7 @@ def cell_fracture_boolean(context, collection, obj, objects, use_debug_bool=Fals
             evaluated = cell.evaluated_get(depsgraph)
             mesh = track(tracker, 'meshes', bpy.data.meshes.new_from_object(
                 evaluated, preserve_all_data_layers=True, depsgraph=depsgraph))
+            qd_boolean.validate_intersection(mesh, evaluated.matrix_world, source)
             old_mesh = cell.data
             cell.data = mesh
             cell.modifiers.remove(modifiers[cell])
@@ -456,6 +472,14 @@ def cell_fracture_boolean(context, collection, obj, objects, use_debug_bool=Fals
                     if remove_doubles:
                         bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
                     bm.to_mesh(mesh)
+        else:
+            # 保留修改器时检查求值结果；基础凸胞体超出源轮廓是正常的。
+            evaluated = cell.evaluated_get(depsgraph)
+            try:
+                mesh = evaluated.to_mesh()
+                qd_boolean.validate_intersection(mesh, evaluated.matrix_world, source)
+            finally:
+                evaluated.to_mesh_clear()
         results.append(cell)
         if use_debug_redraw:
             redraw()

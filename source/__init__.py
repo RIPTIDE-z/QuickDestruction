@@ -9,8 +9,8 @@ from bpy.types import Operator
 
 from . import qd_panel, qd_presets, qd_settings
 from .qd_pipeline import FractureError, main
-from .qd_errors import InvalidParameterError
-from .qd_properties import CONTEXT, PROPERTY_SPECS, property_definitions
+from .qd_errors import InvalidParameterError, describe_error
+from .qd_properties import CONTEXT, property_definitions
 from .qd_translations import TRANSLATIONS_DOMAIN, translations_dict, tr_report
 
 
@@ -54,13 +54,11 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
             self.report({'INFO'}, tr_report("Created {count} shards in {seconds:.2f} s",
                                     count=len(objects), seconds=seconds))
             return {'FINISHED'}
-        except FractureError as error:
-            self.report({'ERROR'}, tr_report(error.message, **error.values))
-        except InvalidParameterError as error:
-            # 参数校验失败时把字段标识换成可读名称再报错
-            field = error.field
-            label = PROPERTY_SPECS.get(field, ('', {'name': field}))[1]['name']
-            self.report({'ERROR'}, tr_report("Invalid parameter: {name}", name=tr_report(label)))
+        except (FractureError, InvalidParameterError) as error:
+            # 两类可预期错误都由 describe_error() 转成消息键与参数:
+            # 几何错误的 message 是消息原文, 校验错误的 field 需要换成界面参数名
+            message, values = describe_error(error)
+            self.report({'ERROR'}, tr_report(message, **values))
         except Exception as error:
             traceback.print_exc()
             self.report({'ERROR'}, tr_report("Fracture failed: {detail}", detail=tr_report(str(error))))
@@ -78,13 +76,6 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
                 setattr(self, key, value)
         qd_presets.end_session(self.preset_session)
         self.preset_session = qd_presets.new_session(self, context)
-        # 关于弹窗宽度, Blender 5.2 的实际行为 (见 wm_block_dialog_create):
-        #   data->width = width * UI_SCALE_FAC * ...
-        #   dialog_width = max(text_width + columnspace*2.5, data->width)
-        #   block_layout(..., dialog_width, ...) 里 dir 为纵向时 w = size
-        # 也就是说这个 width 只是"布局根的最小尺寸", 最终宽度由内容算出来
-        # (block_layout_resolve -> layout_end), 并且会被当前窗口宽度夹住。
-        # 真正决定宽度的是内容布局, 这里只给一个普通下限即可。
         return context.window_manager.invoke_props_dialog(self, width=520)
 
     def cancel(self, context):

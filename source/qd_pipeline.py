@@ -8,6 +8,7 @@ from mathutils import Vector
 
 from . import qd_fracture_setup as setup
 from .qd_errors import FractureError
+from .qd_properties import RANDOM_SEED_DEFAULT
 from .qd_settings import validated_values
 
 
@@ -21,7 +22,7 @@ def _visible_collection(context, collection):
     return visit(context.view_layer.layer_collection)
 
 
-def _cut(context, collection, obj, settings, level, naming, group=None, target=None):
+def _cut(context, collection, obj, settings, level, naming, group=None, target=None, rng=None):
     """对单个物体执行一次切割, 返回生成的碎块。
 
     level 为 0 表示首次切割, 大于 0 表示递归细分;
@@ -43,7 +44,7 @@ def _cut(context, collection, obj, settings, level, naming, group=None, target=N
         cells = setup.cell_fracture_objects(context, collection, obj,
                                             tracker=settings['_tracker'],
                                             naming=naming, level=level, group=group,
-                                            target=target, **options)
+                                            target=target, rng=rng, **options)
         cells = setup.cell_fracture_boolean(
             context, collection, obj, cells,
             use_island_split=settings['use_island_split'],
@@ -62,7 +63,7 @@ def _cut(context, collection, obj, settings, level, naming, group=None, target=N
         obj.data.update()
 
 
-def _select_recursion(cells, settings, cursor):
+def _select_recursion(cells, settings, cursor, rng=None):
     """按比例与选择方式挑出本轮参与递归的碎块。"""
     fraction = settings['recursion_chance']
     selected = list(cells)
@@ -70,7 +71,9 @@ def _select_recursion(cells, settings, cursor):
         return selected
     mode = settings['recursion_chance_select']
     if mode == 'RANDOM':
-        random.shuffle(selected)
+        if rng is None:
+            rng = random.Random(settings.get('random_seed', RANDOM_SEED_DEFAULT))
+        rng.shuffle(selected)
     elif mode.startswith('SIZE'):
         # 用世界空间包围盒体对角线长度排序, 省去开方
         selected.sort(key=lambda obj: (
@@ -84,8 +87,10 @@ def _select_recursion(cells, settings, cursor):
     return selected[:int(fraction * len(selected))]
 
 
-def main_object(context, collection, obj, settings):
+def main_object(context, collection, obj, settings, rng=None):
     """对单个源物体做首次切割并按需递归, 最后统一处理内部断面。"""
+    if rng is None:
+        rng = random.Random(settings.get('random_seed', RANDOM_SEED_DEFAULT))
     # 命名计划在这里建立: 源物体名只读这一次, 递归层沿用它, 避免旧实现里
     # 逐层追加 "_cell" 的问题; 分组集合也由它创建
     naming = setup.NamingPlan(
@@ -96,14 +101,14 @@ def main_object(context, collection, obj, settings):
         tracker=settings['_tracker'])
     # 首次切割是 tier 0: 不建任何组集合, 全部碎块直接落在输出集合 (顶层),
     # 名字是纯序号 (cell_001 ...); 之后第 n 次递归的产物用 tier n
-    cells = _cut(context, collection, obj, settings, 0, naming, 0, None)
+    cells = _cut(context, collection, obj, settings, 0, naming, 0, None, rng=rng)
     threshold = settings['recursion_clamp']
     # 调试布尔模式保留未应用的修改器, 递归会让引用失效, 因此直接跳过
     rounds = 0 if settings['use_debug_bool'] else settings['recursion']
     for level in range(1, rounds + 1):
         if not cells or (threshold and len(cells) >= threshold):
             break
-        candidates = _select_recursion(cells, settings, context.scene.cursor.location)
+        candidates = _select_recursion(cells, settings, context.scene.cursor.location, rng=rng)
         if not candidates:
             break
         for parent in candidates:
@@ -113,7 +118,7 @@ def main_object(context, collection, obj, settings):
             # 每个父碎块的子块自成一"组": 组号在层内递增, 序号在组内从 1 重计
             group = naming.next_group(level)
             sub = naming.next_collection(level, group)
-            children = _cut(context, collection, parent, settings, level, naming, group, sub)
+            children = _cut(context, collection, parent, settings, level, naming, group, sub, rng=rng)
             # 细分失败或结果为空时保留父碎块, 不能把它删掉; 刚建的组也要退回
             if not children:
                 naming.drop_collection(sub, level)
@@ -154,7 +159,9 @@ def main(context, **settings):
     返回 (碎块列表, 耗时秒数)。
     """
     settings = validated_values(settings)
-    sources = [obj for obj in context.selected_editable_objects if obj.type == 'MESH']
+    # 固定多源处理顺序, 不让选择顺序改变同一随机流的分配。
+    sources = sorted((obj for obj in context.selected_editable_objects if obj.type == 'MESH'),
+                     key=lambda obj: obj.name_full)
     if context.mode != 'OBJECT' or not sources:
         raise FractureError("Select editable mesh objects in Object Mode")
     # 先做完全部前置检查再动手, 避免切到一半才发现参数非法
@@ -170,6 +177,9 @@ def main(context, **settings):
     # 只记录并回收本次显式创建的数据, 不碰其它插件新增的内容
     tracker = setup.CreatedData()
     settings['_tracker'] = tracker
+    # 一次运行共用局部随机流, 不读取或修改 Python/mathutils 的全局随机状态。
+    # 旧脚本未传 random_seed 时仍可执行, 默认种子与 RNA 一致。
+    rng = random.Random(settings.get('random_seed', RANDOM_SEED_DEFAULT))
     started = perf_counter()
     context.window_manager.progress_begin(0, len(sources))
     try:
@@ -184,7 +194,7 @@ def main(context, **settings):
             raise FractureError("Output collection must be editable and visible in the current view layer")
         cells = []
         for index, obj in enumerate(sources):
-            created = main_object(context, collection, obj, settings)
+            created = main_object(context, collection, obj, settings, rng=rng)
             if not created:
                 raise FractureError('No valid shards were produced for "{name}"', name=obj.name)
             cells.extend(created)

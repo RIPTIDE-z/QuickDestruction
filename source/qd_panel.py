@@ -20,6 +20,7 @@ ROW_LAYOUT = (
     ("Point Source", (
         ('source',),
         ('source_limit', 'source_noise'),
+        ('random_seed',),
         ('cell_scale',),
     )),
     ("Recursive Shatter", (
@@ -80,8 +81,15 @@ def _compact_rows(title):
 #   use_sharp_edges / use_sharp_edges_apply   内部收尾被整段跳过, 锐边不会标记
 #   use_interior_vgroup                       同上, 不会创建"内部"顶点组
 #   use_island_split                          跳过拆分，求交结果保留在启用的修改器中
+#   use_shard_collections                     递归被整段跳过, 不建任何组集合
+#   recursion                                 递归在这里被禁用, 而不是只灰掉从属项;
+#                                             这是刻意的 —— 该模式确实不递归, 但用户
+#                                             要回到正常递归必须先关掉 use_debug_bool,
+#                                             而它在 Debug 分组, 不在本组
 # 反例: use_smooth_faces / margin / use_recenter / use_debug_points 在两种模式下都有效,
 #       所以它们不能一并置灰 —— 这也是旧逻辑里最误导人的地方。
+# 注意 recursion 与 use_shard_collections 不属于 DEBUG_INACTIVE: 前者按自己的分支
+# 判定, 后者同时受 recursion 与 use_debug_bool 影响, 见 _param_enabled()。
 DEBUG_INACTIVE = frozenset({'use_sharp_edges', 'use_sharp_edges_apply',
                             'use_interior_vgroup', 'use_island_split'})
 # 递归为 0 时无人读取的参数
@@ -92,7 +100,19 @@ PHYSICS_KEYS = frozenset({'mass_mode', 'mass'})
 
 
 def _param_enabled(owner, key):
-    """按执行阶段判断参数可用性，不将依赖关系扩散到同一显示行。"""
+    """按执行阶段判断参数可用性，不将依赖关系扩散到同一显示行。
+
+    依赖关系全部来自代码里的实际读取条件:
+      物理            没有任何代码读取, 见 PHYSICS_KEYS
+      锐边拆分        仅在 use_sharp_edges 打开且未开调试布尔时才有对象可拆
+      调试布尔失效项  见 DEBUG_INACTIVE
+      递归开关        调试布尔下禁用 (该模式整段跳过递归)
+      递归从属项      需要 recursion > 0 且未开调试布尔, 见 RECURSION_DEPENDENT
+      递归选择方式    在上一行的基础上, 还要求参与比例严格介于 0 与 1 之间
+      移除上级碎块    与递归从属项同条件 (移除发生在递归替换成功之后)
+      碎块分组        只在会产生递归产物时起作用, 因此与递归从属项同条件
+      材质索引        仅在 use_data_match 打开时索引才与源物体槽位对应
+    """
     if key in PHYSICS_KEYS:
         return False
     if key == 'use_sharp_edges_apply':
@@ -147,10 +167,32 @@ def draw_parameters(layout, owner, compact=False):
                     _draw_component_row(row, owner, key)
                     continue
                 row.prop(owner, key)
-        if title == "Physics":
-            # 说明为什么这一组是灰的, 以及它为何还留着
-            box.label(text="Reserved for Rigid Body; this tool never creates one",
-                      text_ctxt=CONTEXT, icon='INFO')
+        _draw_group_notes(box, title)
+
+
+# 分组末尾的补充说明。只给"属性提示取不到"或"提示里没有、但用户一定会踩"的前提用,
+# 不重复 RNA 描述里已经写清楚的内容。
+GROUP_NOTES = {
+    "Point Source": (
+        # source 逐项画成按钮、cell_scale 按分量画, 两者都取不到属性级提示,
+        # 而"种子不是随机撒点"是理解整组参数的前提
+        "Seeds are existing geometry positions, not random points",
+    ),
+    "Recursive Shatter": (
+        # 两个种子上限在超过父碎块顶点数后不再有任何效果, 界面上下界却是 5000
+        "Both seed limits act only below the parent shard vertex count; larger values change nothing",
+    ),
+    # 说明为什么这一组是灰的, 以及它为何还留着
+    "Physics": (
+        "Reserved for Rigid Body; this tool never creates one",
+    ),
+}
+
+
+def _draw_group_notes(box, title):
+    """在分组末尾画补充说明; 没有说明的分组什么都不画。"""
+    for message in GROUP_NOTES.get(title, ()):
+        box.label(text=message, text_ctxt=CONTEXT, icon='INFO')
 
 
 # 数组型参数的分量轴名。Blender 原生向量的 X/Y/Z 标签是绘制时在 C 端生成的,
