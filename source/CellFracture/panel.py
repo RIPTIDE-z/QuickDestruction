@@ -2,9 +2,8 @@
 
 from bpy.types import Panel
 
-from .settings import CONTEXT, PROPERTY_SPECS
 from .presets import draw_presets
-from .settings import operator_keywords
+from .settings import CONTEXT, PROPERTY_SPECS, operator_keywords
 
 # 面板排布的唯一数据源: 分组 -> 每行的参数标识, 行内顺序就是显示顺序
 #

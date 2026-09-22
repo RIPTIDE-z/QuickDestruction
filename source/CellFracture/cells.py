@@ -5,9 +5,9 @@ from math import isfinite, sqrt
 from mathutils import Vector
 from mathutils.geometry import points_in_planes
 
-from .errors import FractureError
 from ..common.errors import InvalidParameterError
 from .constants import CELL_SCALE_MIN
+from .errors import FractureError
 
 
 def points_as_bmesh_cells(verts, points, points_scale=None,

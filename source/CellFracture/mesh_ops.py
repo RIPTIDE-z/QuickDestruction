@@ -1,17 +1,24 @@
 """胞体建网格与布尔结果收尾"""
-from math import isfinite
 import random
 import uuid
-import bpy
+from math import isfinite
+
 import bmesh
+import bpy
 from mathutils import Vector
-from ..common.created_data import track
+
 from ..common.blender_context import mesh_edit
-from .errors import FractureError
+from ..common.created_data import track
 from . import boolean
-from .constants import (RANDOM_SEED_DEFAULT, WELD_SCALE_RATIO, WELD_TO_JITTER_RATIO,
-                        INTERIOR_VGROUP_NAME)
+from .constants import (
+    INTERIOR_VGROUP_NAME,
+    RANDOM_SEED_DEFAULT,
+    WELD_SCALE_RATIO,
+    WELD_TO_JITTER_RATIO,
+)
+from .errors import FractureError
 from .sampling import _points_from_object, _random_unit_vector
+
 
 def _weld_distances(scale):
     """由物体尺度推出焊接距离与抖动半幅, 抖动取焊接距离的几分之一"""

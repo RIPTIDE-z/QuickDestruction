@@ -1,6 +1,7 @@
 """本次新建 Blender 数据的所有权与回收"""
 import bpy
 
+
 class CreatedData:
     """只记录本次显式创建的数据, 便于失败时精确回收"""
 
@@ -25,9 +26,7 @@ class CreatedData:
                         continue
                     if kind == 'objects':
                         data.remove(item, do_unlink=True)
-                    elif kind == 'meshes' and item.users == 0:
-                        data.remove(item)
-                    elif kind == 'collections' and not item.objects and not item.children:
+                    elif kind == 'meshes' and item.users == 0 or kind == 'collections' and not item.objects and not item.children:
                         data.remove(item)
                 except ReferenceError:
                     continue

@@ -1,6 +1,8 @@
 """种子来源与局部随机流采样"""
 from math import cos, sin, sqrt, tau
+
 from mathutils import Vector
+
 
 def _points_from_object(context, depsgraph, obj, source):
     """按来源选项收集种子点, 结果统一为世界空间坐标"""

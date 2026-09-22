@@ -1,6 +1,8 @@
 """接收参数规格的校验与序列化 - 不依赖 Blender"""
 import math
+
 from .errors import InvalidParameterError
+
 
 def settings_to_dict(owner, specs):
     """把参数读成纯数据字典; 算子与属性组两种持有者都能用"""

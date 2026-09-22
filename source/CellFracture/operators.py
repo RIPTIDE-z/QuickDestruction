@@ -5,15 +5,14 @@ import traceback
 from bpy.props import StringProperty
 from bpy.types import Operator
 
-from . import panel, presets
-from . import settings
-from .errors import FractureError
-from .api import fracture
 from ..common.blender_context import restore_selection
 from ..common.errors import InvalidParameterError
+from ..i18n import tr_report
+from . import panel, presets, settings
+from .api import fracture
+from .errors import FractureError
 from .presentation import describe_error
 from .settings import CONTEXT, property_definitions
-from ..i18n import tr_report
 
 
 class OBJECT_OT_add_quick_destruction_objects(Operator):

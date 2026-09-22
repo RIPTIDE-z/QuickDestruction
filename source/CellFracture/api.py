@@ -1,7 +1,8 @@
 """预切割阶段公共入口 - 显式输入与交互状态隔离"""
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from collections.abc import Mapping
+
 from ..common.blender_context import preserve_selection
 from .settings import PROPERTY_SPECS, validated_values
 

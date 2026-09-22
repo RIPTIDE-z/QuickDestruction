@@ -1,5 +1,6 @@
 """碎块与递归组的命名和集合安排"""
 import bpy
+
 from ..common.created_data import track
 
 _SOURCE_MARK = '_qd_source'

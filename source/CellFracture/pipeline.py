@@ -6,11 +6,11 @@ from time import perf_counter
 import bpy
 from mathutils import Vector
 
-from . import mesh_ops
-from .naming import NamingPlan
 from ..common.created_data import CreatedData
-from .errors import FractureError
+from . import mesh_ops
 from .constants import RANDOM_SEED_DEFAULT
+from .errors import FractureError
+from .naming import NamingPlan
 
 
 def _visible_collection(context, collection):

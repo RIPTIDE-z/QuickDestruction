@@ -1,18 +1,17 @@
 """共享的 JSON 预设: 面板与对话框各自定位编辑目标, 写入采用原子替换"""
 
 import os
-from pathlib import Path
 import uuid
-from ..common import preset_storage as storage
+from pathlib import Path
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy.types import Menu, Operator
 
-from .settings import CONTEXT
-from .settings import dict_to_settings, settings_to_dict, validated_values
-from .presentation import describe_error
+from ..common import preset_storage as storage
 from ..i18n import tr, tr_report
+from .presentation import describe_error
+from .settings import CONTEXT, dict_to_settings, settings_to_dict, validated_values
 
 # 预设存放在 Blender 用户脚本目录下, 与扩展本体分离, 重装扩展不会丢
 PRESET_SUBDIR = os.path.join("quick_destruction", "presets")

@@ -1,6 +1,8 @@
 """BMesh 生命周期与 Blender 选择状态适配"""
 from contextlib import contextmanager
+
 import bmesh
+
 
 @contextmanager
 def mesh_edit(mesh=None):

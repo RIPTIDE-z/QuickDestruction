@@ -1,13 +1,15 @@
 """扩展装配 - 注册顺序与原入口保持一致"""
 import bpy
 from bpy.app.handlers import persistent
-from .CellFracture import panel, presets
-from .CellFracture.properties import CellFractureSettings
-from .properties import QDSettings
 from bpy.props import PointerProperty
-from .CellFracture.operators import OBJECT_OT_add_quick_destruction_objects
+
+from .CellFracture import panel, presets
 from .CellFracture.constants import CONTEXT
+from .CellFracture.operators import OBJECT_OT_add_quick_destruction_objects
+from .CellFracture.properties import CellFractureSettings
 from .i18n import TRANSLATIONS_DOMAIN, translations_dict
+from .properties import QDSettings
+
 
 @persistent
 def clear_sessions(_unused):

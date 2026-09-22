@@ -1,6 +1,6 @@
 """预切割参数唯一来源与阶段转换接口"""
-from ..common import schema, rna
-from .constants import CONTEXT, CELL_SCALE_MIN, RANDOM_SEED_DEFAULT
+from ..common import rna, schema
+from .constants import CELL_SCALE_MIN, CONTEXT, RANDOM_SEED_DEFAULT
 
 PROPERTY_SPECS = {'source': ('EnumProperty',
             {'name': 'Source',
