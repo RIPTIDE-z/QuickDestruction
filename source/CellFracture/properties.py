@@ -1,4 +1,5 @@
 """预切割持久化参数组"""
+
 from bpy.types import PropertyGroup
 
 from .settings import property_definitions

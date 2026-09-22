@@ -1,4 +1,5 @@
 """胞体建网格与布尔结果收尾"""
+
 import random
 import uuid
 from math import isfinite
@@ -25,24 +26,43 @@ def _weld_distances(scale):
     distance = scale * WELD_SCALE_RATIO
     return distance, distance / WELD_TO_JITTER_RATIO
 
+
 def redraw():
     """后台模式下没有窗口, 跳过重绘"""
     if not bpy.app.background:
-        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+        bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)
+
 
 def remove_generated_object(obj):
     """删除物体, 并回收随之失去用户的网格数据"""
-    mesh = obj.data if obj.type == 'MESH' else None
+    mesh = obj.data if obj.type == "MESH" else None
     bpy.data.objects.remove(obj, do_unlink=True)
     if mesh is not None and mesh.users == 0:
         bpy.data.meshes.remove(mesh)
 
-def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_OWN'}),
-                          source_limit=0, source_noise=0.0, clean=True,
-                          use_smooth_faces=False, use_data_match=False,
-                          use_debug_points=False, margin=0.0, material_index=0,
-                          use_debug_redraw=False, cell_scale=(1.0, 1.0, 1.0),
-                          tracker=None, naming=None, level=0, group=None, target=None, rng=None):
+
+def cell_fracture_objects(
+    context,
+    collection,
+    obj,
+    source=frozenset({"PARTICLE_OWN"}),
+    source_limit=0,
+    source_noise=0.0,
+    clean=True,
+    use_smooth_faces=False,
+    use_data_match=False,
+    use_debug_points=False,
+    margin=0.0,
+    material_index=0,
+    use_debug_redraw=False,
+    cell_scale=(1.0, 1.0, 1.0),
+    tracker=None,
+    naming=None,
+    level=0,
+    group=None,
+    target=None,
+    rng=None,
+):
     """采样种子点并生成凸胞体, 返回胞体物体列表
 
     naming 为 NamingPlan 时: level 与 group 分别是整数层号和组号,
@@ -70,7 +90,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
     points = _points_from_object(context, depsgraph, obj, source)
     # 选定来源一个点都没有时回退到自身顶点, 避免白跑一趟
     if not points:
-        points = _points_from_object(context, depsgraph, obj, {'VERT_OWN'})
+        points = _points_from_object(context, depsgraph, obj, {"VERT_OWN"})
     if not points:
         return []
     if source_limit and source_limit < len(points):
@@ -96,13 +116,15 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
     weld_dist, jitter_half = _weld_distances(scale)
     if source_noise:
         # 扰动规则点阵, 避免出现过于整齐的切割面
-        points = [p + _random_unit_vector(rng) * (source_noise * scale * 0.5 * rng.random())
-                  for p in points]
+        points = [
+            p + _random_unit_vector(rng) * (source_noise * scale * 0.5 * rng.random())
+            for p in points
+        ]
     if use_debug_points:
         # 诊断几何, 用于查看实际采样到的种子点位置; 跟随碎块一起落点
-        mesh = track(tracker, 'meshes', bpy.data.meshes.new("DebugPoints"))
+        mesh = track(tracker, "meshes", bpy.data.meshes.new("DebugPoints"))
         mesh.from_pydata(points, [], [])
-        debug_object = track(tracker, 'objects', bpy.data.objects.new("DebugPoints", mesh))
+        debug_object = track(tracker, "objects", bpy.data.objects.new("DebugPoints", mesh))
         shard_collection().objects.link(debug_object)
     cells = points_as_bmesh_cells(verts, points, cell_scale, margin_cell=margin)
     objects = []
@@ -110,7 +132,9 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
         with mesh_edit() as bm:
             # 轻微抖动有助焊接重合点, 抖动幅度远小于焊接距离
             for point in cell_points:
-                point = point + Vector(tuple(rng.uniform(-jitter_half, jitter_half) for _ in range(3)))
+                point = point + Vector(
+                    tuple(rng.uniform(-jitter_half, jitter_half) for _ in range(3))
+                )
                 bm.verts.new(point)
             bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
             # 少于四个顶点无法构成凸体, 直接丢弃
@@ -130,7 +154,7 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
                 face.smooth = use_smooth_faces
                 face.material_index = material_index
             # 网格和物体属于不同命名空间;切割期间使用临时名,收尾统一命名
-            mesh = track(tracker, 'meshes', bpy.data.meshes.new(shard_name() + "_cell"))
+            mesh = track(tracker, "meshes", bpy.data.meshes.new(shard_name() + "_cell"))
             bm.to_mesh(mesh)
         if use_data_match:
             # 复制材质槽与 UV/颜色层, 让布尔插值能带上外表面数据
@@ -139,9 +163,10 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
             for layer in obj.data.uv_layers:
                 mesh.uv_layers.new(name=layer.name)
             for attribute in obj.data.color_attributes:
-                mesh.color_attributes.new(name=attribute.name, type=attribute.data_type,
-                                          domain=attribute.domain)
-        cell = track(tracker, 'objects', bpy.data.objects.new(shard_name(), mesh))
+                mesh.color_attributes.new(
+                    name=attribute.name, type=attribute.data_type, domain=attribute.domain
+                )
+        cell = track(tracker, "objects", bpy.data.objects.new(shard_name(), mesh))
         shard_collection().objects.link(cell)
         # 胞体顶点相对于种子点,平移到 center 后恢复其世界空间位置
         cell.location = center
@@ -159,14 +184,26 @@ def cell_fracture_objects(context, collection, obj, source=frozenset({'PARTICLE_
     context.view_layer.update()
     return objects
 
-def cell_fracture_boolean(context, obj, objects, use_debug_bool=False,
-                          clean=True, use_island_split=False, use_interior_hide=False,
-                          use_debug_redraw=False, level=0, remove_doubles=True, tracker=None):
+
+def cell_fracture_boolean(
+    context,
+    obj,
+    objects,
+    use_debug_bool=False,
+    clean=True,
+    use_island_split=False,
+    use_interior_hide=False,
+    use_debug_redraw=False,
+    level=0,
+    remove_doubles=True,
+    tracker=None,
+):
     """把每个胞体与源物体求交, 得到贴合表面的碎块, 返回碎块列表"""
     # 焊接距离按源物体包围盒对角线派生, 与胞体阶段保持同一套尺度
     corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-    diagonal = Vector(tuple(max(p[i] for p in corners) - min(p[i] for p in corners)
-                            for i in range(3))).length
+    diagonal = Vector(
+        tuple(max(p[i] for p in corners) - min(p[i] for p in corners) for i in range(3))
+    ).length
     weld_dist = _weld_distances(diagonal)[0]
     if use_interior_hide and level == 0:
         obj.data.polygons.foreach_set("hide", [False] * len(obj.data.polygons))
@@ -175,7 +212,7 @@ def cell_fracture_boolean(context, obj, objects, use_debug_bool=False,
     source = boolean.inspect_source(obj, context.evaluated_depsgraph_get())
     modifiers = {}
     for cell in objects:
-        modifier = cell.modifiers.new(name="Boolean", type='BOOLEAN')
+        modifier = cell.modifiers.new(name="Boolean", type="BOOLEAN")
         modifier.object = obj
         boolean.configure_intersection(modifier, source)
         modifiers[cell] = modifier
@@ -191,8 +228,13 @@ def cell_fracture_boolean(context, obj, objects, use_debug_bool=False,
             # 求值后的网格就是布尔结果, 直接取出来替换胞体网格并移除修改器
             # 名字这里不管: 全部切完后 apply_names() 会把物体与网格一起定名
             evaluated = cell.evaluated_get(depsgraph)
-            mesh = track(tracker, 'meshes', bpy.data.meshes.new_from_object(
-                evaluated, preserve_all_data_layers=True, depsgraph=depsgraph))
+            mesh = track(
+                tracker,
+                "meshes",
+                bpy.data.meshes.new_from_object(
+                    evaluated, preserve_all_data_layers=True, depsgraph=depsgraph
+                ),
+            )
             boolean.validate_intersection(mesh, evaluated.matrix_world, source)
             old_mesh = cell.data
             cell.data = mesh
@@ -207,8 +249,9 @@ def cell_fracture_boolean(context, obj, objects, use_debug_bool=False,
                 with mesh_edit(mesh) as bm:
                     if clean:
                         bm.normal_update()
-                        bmesh.ops.dissolve_limit(bm, verts=list(bm.verts), edges=list(bm.edges),
-                                                angle_limit=0.001)
+                        bmesh.ops.dissolve_limit(
+                            bm, verts=list(bm.verts), edges=list(bm.edges), angle_limit=0.001
+                        )
                     if remove_doubles:
                         bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
                     bm.to_mesh(mesh)
@@ -238,22 +281,28 @@ def cell_fracture_boolean(context, obj, objects, use_debug_bool=False,
         # 这样即使别的插件改动了选择集也不会认错
         token = uuid.uuid4().hex
         for cell in results:
-            cell['_qd_split_owner'] = token
+            cell["_qd_split_owner"] = token
         try:
-            with context.temp_override(object=results[0], active_object=results[0],
-                                       selected_objects=results, selected_editable_objects=results):
-                bpy.ops.mesh.separate(type='LOOSE')
+            with context.temp_override(
+                object=results[0],
+                active_object=results[0],
+                selected_objects=results,
+                selected_editable_objects=results,
+            ):
+                bpy.ops.mesh.separate(type="LOOSE")
         finally:
-            results = [cell for cell in bpy.data.objects if cell.get('_qd_split_owner') == token]
+            results = [cell for cell in bpy.data.objects if cell.get("_qd_split_owner") == token]
             for cell in results:
-                track(tracker, 'objects', cell)
-                track(tracker, 'meshes', cell.data)
-                del cell['_qd_split_owner']
+                track(tracker, "objects", cell)
+                track(tracker, "meshes", cell.data)
+                del cell["_qd_split_owner"]
     context.view_layer.update()
     return results
 
-def cell_fracture_interior_handle(objects, use_interior_vgroup=False,
-                                  use_sharp_edges=False, use_sharp_edges_apply=False):
+
+def cell_fracture_interior_handle(
+    objects, use_interior_vgroup=False, use_sharp_edges=False, use_sharp_edges_apply=False
+):
     """全部切割完成后统一处理内部断面: 顶点组/锐边/以及取消隐藏"""
     for cell in objects:
         with mesh_edit(cell.data) as bm:

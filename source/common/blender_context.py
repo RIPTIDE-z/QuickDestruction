@@ -1,4 +1,5 @@
 """BMesh 生命周期与 Blender 选择状态适配"""
+
 from contextlib import contextmanager
 
 import bmesh
@@ -15,6 +16,7 @@ def mesh_edit(mesh=None):
     finally:
         bm.free()
 
+
 def restore_selection(context, selection, active):
     """恢复指定选择集与活动物体 - 跳过视图层中的空条目"""
     context.view_layer.update()
@@ -25,6 +27,7 @@ def restore_selection(context, selection, active):
     for obj in selection:
         obj.select_set(True)
     context.view_layer.objects.active = active
+
 
 @contextmanager
 def preserve_selection(context):

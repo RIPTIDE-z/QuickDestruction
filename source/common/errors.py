@@ -1,5 +1,6 @@
 """通用字段校验异常"""
 
+
 class InvalidParameterError(ValueError):
     """保留 ValueError 兼容性,同时明确指出出错字段"""
 

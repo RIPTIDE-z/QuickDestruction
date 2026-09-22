@@ -23,13 +23,13 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
     bl_description = "Cut selected editable meshes into shards; source objects are kept"
     bl_translation_context = CONTEXT
     # 参数预设由自定义 JSON 菜单处理,几何操作支持撤销
-    bl_options = {'UNDO'}
+    bl_options = {"UNDO"}
 
     # 属性与 PropertyGroup 共用同一份定义, 避免两处接口分叉;
     # preset_session 是隐藏字段, 只用于把对话框预设指向本次对话框而非侧栏
     __annotations__ = {
         **property_definitions(),
-        'preset_session': StringProperty(options={'HIDDEN', 'SKIP_SAVE'}),
+        "preset_session": StringProperty(options={"HIDDEN", "SKIP_SAVE"}),
     }
 
     # 这里刻意不定义 poll()上游 Cell Fracture 同样没有 poll, 菜单项因此任何时候
@@ -42,8 +42,9 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
         try:
             data = settings.settings_to_dict(self)
             keywords = settings.validated_values(data)
-            result = fracture(context, context.selected_editable_objects, keywords,
-                              keywords['collection_name'])
+            result = fracture(
+                context, context.selected_editable_objects, keywords, keywords["collection_name"]
+            )
             objects, seconds = result.shards, result.seconds
             # 交互算子在服务恢复原状态后主动选中本次产物
             restore_selection(context, objects, objects[0])
@@ -51,27 +52,39 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
             try:
                 settings.dict_to_settings(context.scene.qd_settings.fracture, data)
                 if self.preset_session:
-                    context.scene.qd_settings.preset_name = presets.preset_name(context, self.preset_session)
+                    context.scene.qd_settings.preset_name = presets.preset_name(
+                        context, self.preset_session
+                    )
             except Exception as error:
                 traceback.print_exc()
-                self.report({'WARNING'}, tr_report(
-                    "Shards were created, but sidebar settings could not be synchronized: {detail}",
-                    detail=tr_report(str(error))))
-            self.report({'INFO'}, tr_report("Created {count} shards in {seconds:.2f} s",
-                                    count=len(objects), seconds=seconds))
-            return {'FINISHED'}
+                self.report(
+                    {"WARNING"},
+                    tr_report(
+                        "Shards were created, but sidebar settings could not be synchronized: {detail}",
+                        detail=tr_report(str(error)),
+                    ),
+                )
+            self.report(
+                {"INFO"},
+                tr_report(
+                    "Created {count} shards in {seconds:.2f} s", count=len(objects), seconds=seconds
+                ),
+            )
+            return {"FINISHED"}
         except (FractureError, InvalidParameterError) as error:
             # 两类可预期错误都由 describe_error() 转成消息键与参数:
             # 几何错误的 message 是消息原文, 校验错误的 field 需要换成界面参数名
             message, values = describe_error(error)
-            self.report({'ERROR'}, tr_report(message, **values))
+            self.report({"ERROR"}, tr_report(message, **values))
         except Exception as error:
             traceback.print_exc()
-            self.report({'ERROR'}, tr_report("Fracture failed: {detail}", detail=tr_report(str(error))))
+            self.report(
+                {"ERROR"}, tr_report("Fracture failed: {detail}", detail=tr_report(str(error)))
+            )
         finally:
             presets.end_session(self.preset_session)
-            self.preset_session = ''
-        return {'CANCELLED'}
+            self.preset_session = ""
+        return {"CANCELLED"}
 
     def invoke(self, context, event):
         # 调用方显式传入的参数优先, 其余字段从侧栏当前值补齐
@@ -89,7 +102,7 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
         # 取消时结束会话, 保证对话框里的临时改动不会写回侧栏
         """结束当前对话框会话 - 不写回侧栏参数"""
         presets.end_session(self.preset_session)
-        self.preset_session = ''
+        self.preset_session = ""
 
     def draw(self, context):
         # F9 重做没有活动对话框会话, 此时不显示预设操作, 以免误指到侧栏

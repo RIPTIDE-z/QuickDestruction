@@ -10,8 +10,7 @@ from .constants import CELL_SCALE_MIN
 from .errors import FractureError
 
 
-def points_as_bmesh_cells(verts, points, points_scale=None,
-                         margin_bounds=0.05, margin_cell=0.0):
+def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, margin_cell=0.0):
     """为每个种子点求出一个胞体, 返回 [(种子点, 顶点列表), ...]
 
     做法是从包围盒六个面出发, 依次用"种子点与邻居连线的中垂面"去切,
@@ -23,7 +22,7 @@ def points_as_bmesh_cells(verts, points, points_scale=None,
         raise FractureError("Source geometry contains non-finite coordinates")
     scale = tuple(points_scale) if points_scale is not None else (1.0, 1.0, 1.0)
     if len(scale) != 3 or any(not isfinite(v) or v < CELL_SCALE_MIN for v in scale):
-        raise InvalidParameterError('cell_scale')
+        raise InvalidParameterError("cell_scale")
     isotropic = scale[0] == scale[1] == scale[2]
     # 三轴权重相等时不改变上游的平面构造, 走等轴快路径
     points_scale = None if isotropic else scale
@@ -31,9 +30,14 @@ def points_as_bmesh_cells(verts, points, points_scale=None,
     # 包围盒外扩一点作为初始半空间, 保证单种子时也有界
     lo = [min(v[i] for v in verts) - margin_bounds for i in range(3)]
     hi = [max(v[i] for v in verts) + margin_bounds for i in range(3)]
-    bounds = [Vector((1, 0, 0, -hi[0])), Vector((-1, 0, 0, lo[0])),
-              Vector((0, 1, 0, -hi[1])), Vector((0, -1, 0, lo[1])),
-              Vector((0, 0, 1, -hi[2])), Vector((0, 0, -1, lo[2]))]
+    bounds = [
+        Vector((1, 0, 0, -hi[0])),
+        Vector((-1, 0, 0, lo[0])),
+        Vector((0, 1, 0, -hi[1])),
+        Vector((0, -1, 0, lo[1])),
+        Vector((0, 0, 1, -hi[2])),
+        Vector((0, 0, -1, lo[2])),
+    ]
     cells = []
     for center in points:
         planes = [plane.copy() for plane in bounds]
@@ -42,7 +46,7 @@ def points_as_bmesh_cells(verts, points, points_scale=None,
             plane.w += plane.xyz.dot(center)
         # 只有一个种子点时, 包围盒本身就是合法的胞体
         vertices, _indices = points_in_planes(planes)
-        distance_max = float('inf')
+        distance_max = float("inf")
         # 由近到远试邻居, 近处的邻居才会真正切到这个胞体
         neighbors = sorted(points, key=lambda point: (point - center).length_squared)
         for neighbor in neighbors:

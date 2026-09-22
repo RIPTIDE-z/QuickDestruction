@@ -15,42 +15,53 @@ from .settings import CONTEXT, PROPERTY_SPECS, operator_keywords
 # use_remove_original 属于内部收尾阶段, 所以放在网格数据组,
 # 它只在 recursion > 0 时有意义, 由置灰逻辑体现
 ROW_LAYOUT = (
-    ("Point Source", (
-        ('source',),
-        ('source_limit', 'source_noise'),
-        ('random_seed',),
-        ('cell_scale',),
-    )),
-    ("Recursive Shatter", (
-        # 递归开关保持独立;从属参数按实际执行条件分别置灰
-        ('recursion',),
-        ('recursion_source_limit', 'recursion_clamp'),
-        # 递归方式与参与比例同处一行; 枚举用普通 prop 绘制, 因此是下拉而不是
-        # 之前那排横铺按钮 (横铺来自 prop(..., expand=True), 这里刻意不再使用)
-        ('recursion_chance', 'recursion_chance_select'),
-    )),
-    ("Mesh Data", (
-        ('use_smooth_faces', 'use_sharp_edges', 'use_sharp_edges_apply', 'use_data_match'),
-        ('material_index', 'use_interior_vgroup'),
-        ('margin', 'use_island_split'),
-        ('use_remove_original',),
-    )),
-    ("Object", (
-        ('use_recenter',),
-    )),
+    (
+        "Point Source",
+        (
+            ("source",),
+            ("source_limit", "source_noise"),
+            ("random_seed",),
+            ("cell_scale",),
+        ),
+    ),
+    (
+        "Recursive Shatter",
+        (
+            # 递归开关保持独立;从属参数按实际执行条件分别置灰
+            ("recursion",),
+            ("recursion_source_limit", "recursion_clamp"),
+            # 递归方式与参与比例同处一行; 枚举用普通 prop 绘制, 因此是下拉而不是
+            # 之前那排横铺按钮 (横铺来自 prop(..., expand=True), 这里刻意不再使用)
+            ("recursion_chance", "recursion_chance_select"),
+        ),
+    ),
+    (
+        "Mesh Data",
+        (
+            ("use_smooth_faces", "use_sharp_edges", "use_sharp_edges_apply", "use_data_match"),
+            ("material_index", "use_interior_vgroup"),
+            ("margin", "use_island_split"),
+            ("use_remove_original",),
+        ),
+    ),
+    ("Object", (("use_recenter",),)),
     # 集合这一组只有两栏: 第 1 栏选输出集合, 第 2 栏是碎块前缀加分组勾选
     # 序号补零位数属于命名格式细节, 放到调试组, 不占这里的版面
-    ("Collection", (
-        ('collection_name',),
-        ('shard_prefix', 'use_shard_collections'),
-    )),
-    ("Debug", (
-        ('use_debug_redraw', 'use_debug_points', 'use_debug_bool'),
-        ('shard_index_padding',),
-    )),
-    ("Physics", (
-        ('mass_mode', 'mass'),
-    )),
+    (
+        "Collection",
+        (
+            ("collection_name",),
+            ("shard_prefix", "use_shard_collections"),
+        ),
+    ),
+    (
+        "Debug",
+        (
+            ("use_debug_redraw", "use_debug_points", "use_debug_bool"),
+            ("shard_index_padding",),
+        ),
+    ),
+    ("Physics", (("mass_mode", "mass"),)),
 )
 
 
@@ -88,36 +99,38 @@ def _compact_rows(title):
 #       所以它们不能一并置灰 -- 这也是旧逻辑里最误导人的地方
 # 注意 recursion 与 use_shard_collections 不属于 DEBUG_INACTIVE: 前者按自己的分支
 # 判定, 后者同时受 recursion 与 use_debug_bool 影响, 见 _param_enabled()
-DEBUG_INACTIVE = frozenset({'use_sharp_edges', 'use_sharp_edges_apply',
-                            'use_interior_vgroup', 'use_island_split'})
+DEBUG_INACTIVE = frozenset(
+    {"use_sharp_edges", "use_sharp_edges_apply", "use_interior_vgroup", "use_island_split"}
+)
 # 递归为 0 时无人读取的参数
-RECURSION_DEPENDENT = frozenset({'recursion_source_limit', 'recursion_clamp',
-                                 'recursion_chance', 'recursion_chance_select'})
+RECURSION_DEPENDENT = frozenset(
+    {"recursion_source_limit", "recursion_clamp", "recursion_chance", "recursion_chance_select"}
+)
 # 本工具不创建刚体, 质量相关参数没有任何代码读取
-PHYSICS_KEYS = frozenset({'mass_mode', 'mass'})
+PHYSICS_KEYS = frozenset({"mass_mode", "mass"})
 
 
 def _param_enabled(owner, key):
     """根据实际执行条件控制每个参数的启用状态"""
     if key in PHYSICS_KEYS:
         return False
-    if key == 'use_sharp_edges_apply':
+    if key == "use_sharp_edges_apply":
         # 拆分是锐边标记的后续动作, 没有标记就没有可拆的边;
         # 同时调试布尔会跳过整段内部收尾, 所以两个条件要同时成立
         # 注意这里不能并进下面的 DEBUG_INACTIVE 分支, 那会覆盖掉对锐边的依赖
         return owner.use_sharp_edges and not owner.use_debug_bool
     if key in DEBUG_INACTIVE:
         return not owner.use_debug_bool
-    if key == 'recursion':
+    if key == "recursion":
         return not owner.use_debug_bool
     recursion_enabled = owner.recursion > 0 and not owner.use_debug_bool
-    if key == 'recursion_chance_select':
+    if key == "recursion_chance_select":
         return recursion_enabled and 0 < owner.recursion_chance < 1
-    if key in RECURSION_DEPENDENT or key == 'use_remove_original':
+    if key in RECURSION_DEPENDENT or key == "use_remove_original":
         return recursion_enabled
-    if key == 'use_shard_collections':
+    if key == "use_shard_collections":
         return recursion_enabled
-    if key == 'material_index':
+    if key == "material_index":
         # 关掉匹配数据后, 布尔会自行带入刀刃物体的材质槽,
         # 碎块槽位与源物体槽位不再一一对应, 同一个索引会指到别的材质,
         # 越界时更是静默无效, 因此此时不提供调节
@@ -140,10 +153,10 @@ def draw_parameters(layout, owner, compact=False):
             _draw_compact_group(box, owner, title)
         else:
             for key in _group_fields(title):
-                if key == 'source':
+                if key == "source":
                     choices = box.grid_flow(columns=2, align=True)
                     choices.use_property_split = False
-                    for identifier, name, _description in PROPERTY_SPECS[key][1]['items']:
+                    for identifier, name, _description in PROPERTY_SPECS[key][1]["items"]:
                         choices.prop_enum(owner, key, identifier, text=name, text_ctxt=CONTEXT)
                     continue
                 row = box.row()
@@ -169,16 +182,14 @@ GROUP_NOTES = {
         "Both seed limits act only below the parent shard vertex count; larger values change nothing",
     ),
     # 说明为什么这一组是灰的, 以及它为何还留着
-    "Physics": (
-        "Reserved for Rigid Body; this tool never creates one",
-    ),
+    "Physics": ("Reserved for Rigid Body; this tool never creates one",),
 }
 
 
 def _draw_group_notes(box, title):
     """在分组末尾画补充说明; 没有说明的分组什么都不画"""
     for message in GROUP_NOTES.get(title, ()):
-        box.label(text=message, text_ctxt=CONTEXT, icon='INFO')
+        box.label(text=message, text_ctxt=CONTEXT, icon="INFO")
 
 
 # 数组型参数的分量轴名Blender 原生向量的 X/Y/Z 标签是绘制时在 C 端生成的,
@@ -190,7 +201,7 @@ def _draw_group_notes(box, title):
 #   prop(owner, key, text=" ")       -> 空格视为空文本, 标签被抹掉, 什么都不显示
 # 而且 row.use_property_split = False 时不会自动画左侧标签列,
 # 所以属性名必须自己用 label 画, 轴名则显式传给每个分量
-COMPONENT_AXES = {'cell_scale': ('X', 'Y', 'Z')}
+COMPONENT_AXES = {"cell_scale": ("X", "Y", "Z")}
 
 
 def _draw_component_row(row, owner, key):
@@ -199,9 +210,9 @@ def _draw_component_row(row, owner, key):
     属性名与轴名都显式绘制, 不依赖 Blender 的自动标签 -- 见上面记录的规则
     """
     row.use_property_split = False
-    row.alignment = 'EXPAND'
+    row.alignment = "EXPAND"
     # 属性名占最左一格; 传翻译上下文, 中文界面下会显示为"胞体缩放"
-    row.label(text=PROPERTY_SPECS[key][1]['name'], text_ctxt=CONTEXT)
+    row.label(text=PROPERTY_SPECS[key][1]["name"], text_ctxt=CONTEXT)
     for index, axis in enumerate(COMPONENT_AXES[key]):
         if index:
             # 分量之间留一点间距, 三个数字框不至于糊成一片
@@ -219,9 +230,9 @@ def _draw_compact_group(box, owner, title):
             # 子布局分别禁用,不能让从属开关禁用它自己的控制开关
             item = row.row(align=True)
             item.enabled = _param_enabled(owner, key)
-            if key == 'source':
+            if key == "source":
                 item.use_property_split = False
-                for identifier, name, _description in PROPERTY_SPECS[key][1]['items']:
+                for identifier, name, _description in PROPERTY_SPECS[key][1]["items"]:
                     item.prop_enum(owner, key, identifier, text=name, text_ctxt=CONTEXT)
                 continue
             if key in COMPONENT_AXES:
@@ -240,17 +251,21 @@ def configure_operator(operator, owner):
 
 def can_apply(context):
     """侧栏仅在物体模式且选中可编辑网格时启用应用按钮"""
-    return (context.mode == 'OBJECT' and context.scene is not None
-            and any(obj.type == 'MESH' for obj in context.selected_editable_objects))
+    return (
+        context.mode == "OBJECT"
+        and context.scene is not None
+        and any(obj.type == "MESH" for obj in context.selected_editable_objects)
+    )
 
 
 class QD_PT_settings(Panel):
     """预切割侧栏面板 - 参数保存在当前场景"""
+
     bl_idname = "QD_PT_settings"
     bl_label = "Quick Destruction Effect"
     bl_translation_context = CONTEXT
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
     bl_category = "QuickDestruction"
 
     def draw(self, context):
@@ -265,15 +280,20 @@ class QD_PT_settings(Panel):
         ready = can_apply(context)
         actions = layout.column(align=True)
         actions.enabled = ready
-        actions.operator_context = 'EXEC_DEFAULT'
-        apply = actions.operator("object.add_quick_destruction_objects", text="Fracture",
-                                 text_ctxt=CONTEXT, icon='MOD_EXPLODE')
+        actions.operator_context = "EXEC_DEFAULT"
+        apply = actions.operator(
+            "object.add_quick_destruction_objects",
+            text="Fracture",
+            text_ctxt=CONTEXT,
+            icon="MOD_EXPLODE",
+        )
         # 传面板当前值, 不依赖算子默认值
         configure_operator(apply, owner)
         # 置灰时给出原因, 否则光看到一个灰按钮会不知道差什么
         if not ready:
-            layout.label(text="Select editable mesh objects in Object Mode",
-                         text_ctxt=CONTEXT, icon='INFO')
+            layout.label(
+                text="Select editable mesh objects in Object Mode", text_ctxt=CONTEXT, icon="INFO"
+            )
         # 这里不再放"打开对话框"按钮: 同一个对话框已经由
         # 物体 -> 快速效果 菜单提供, 面板里再放一个是多余的入口
         # 两边参数互通 -- 对话框打开时复制当前参数, 确认后同步回面板

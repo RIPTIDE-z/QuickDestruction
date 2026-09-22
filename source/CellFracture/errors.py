@@ -1,5 +1,6 @@
 """预切割领域异常 - 仅保存消息键和参数"""
 
+
 class FractureError(Exception):
     """message 保存消息键 - values 保存翻译后填入的参数"""
 

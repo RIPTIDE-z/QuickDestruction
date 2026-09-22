@@ -22,8 +22,11 @@ SESSIONS = {}
 def new_session(owner, context):
     """为一个对话框建立会话, 记录它正在编辑谁"""
     token = uuid.uuid4().hex
-    SESSIONS[token] = {'owner': owner, 'scene': context.scene,
-                       'name': context.scene.qd_settings.preset_name}
+    SESSIONS[token] = {
+        "owner": owner,
+        "scene": context.scene,
+        "name": context.scene.qd_settings.preset_name,
+    }
     return token
 
 
@@ -37,23 +40,23 @@ def target_settings(context, token=""):
     if token:
         session = SESSIONS.get(token)
         # 场景已经换掉说明那个对话框早就失效了
-        if session is None or session['scene'] != context.scene:
+        if session is None or session["scene"] != context.scene:
             raise ValueError("The parameter dialog has closed")
-        return session['owner']
+        return session["owner"]
     return context.scene.qd_settings.fracture
 
 
 def preset_name(context, token=""):
     """读取会话或侧栏当前显示的预设名"""
     if token:
-        return SESSIONS.get(token, {}).get('name', '')
+        return SESSIONS.get(token, {}).get("name", "")
     return context.scene.qd_settings.preset_name
 
 
 def set_preset_name(context, token, name):
     """记录最近使用的预设名, 并刷新界面上的显示"""
     if token:
-        SESSIONS[token]['name'] = name
+        SESSIONS[token]["name"] = name
     else:
         context.scene.qd_settings.preset_name = name
     if context.area:
@@ -62,7 +65,7 @@ def set_preset_name(context, token, name):
 
 def preset_directory(create=False):
     """预设目录, 取不到时抛错而不是静默失败"""
-    path = bpy.utils.user_resource('SCRIPTS', path=PRESET_SUBDIR, create=create)
+    path = bpy.utils.user_resource("SCRIPTS", path=PRESET_SUBDIR, create=create)
     if not path:
         raise OSError("Cannot resolve the preset directory")
     directory = Path(path)
@@ -112,31 +115,42 @@ class PresetTarget:
         # 字段标识换成界面参数名这件事由 describe_error() 统一处理
         """翻译预设错误并返回取消状态"""
         message, values = describe_error(error)
-        self.report({'ERROR'}, tr_report("Preset operation failed: {detail}",
-                                         detail=tr_report(message, **values)))
-        return {'CANCELLED'}
+        self.report(
+            {"ERROR"},
+            tr_report("Preset operation failed: {detail}", detail=tr_report(message, **values)),
+        )
+        return {"CANCELLED"}
 
 
 def target_properties():
     """预设算子共用的两个隐藏/临时字段"""
     return {
-        'session': StringProperty(options={'HIDDEN', 'SKIP_SAVE'}),
-        'name': StringProperty(name="Name", description="Name of the preset",
-                               translation_context=CONTEXT, options={'SKIP_SAVE'}),
+        "session": StringProperty(options={"HIDDEN", "SKIP_SAVE"}),
+        "name": StringProperty(
+            name="Name",
+            description="Name of the preset",
+            translation_context=CONTEXT,
+            options={"SKIP_SAVE"},
+        ),
     }
 
 
 class QD_OT_preset_save(PresetTarget, Operator):
     """保存当前目标参数为 JSON 预设"""
+
     bl_idname = "qd.preset_save"
     bl_label = "Save Preset"
     bl_description = "Save the parameters currently shown in this panel or dialog as a JSON preset"
     bl_translation_context = CONTEXT
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
     __annotations__ = {
         **target_properties(),
-        'overwrite': BoolProperty(name="Overwrite", description="Replace the existing preset with this name",
-                                  translation_context=CONTEXT, options={'SKIP_SAVE'}),
+        "overwrite": BoolProperty(
+            name="Overwrite",
+            description="Replace the existing preset with this name",
+            translation_context=CONTEXT,
+            options={"SKIP_SAVE"},
+        ),
     }
 
     def invoke(self, context, _event):
@@ -157,21 +171,24 @@ class QD_OT_preset_save(PresetTarget, Operator):
             name = save_preset(self.name, settings_to_dict(self.target(context)), self.overwrite)
             set_preset_name(context, self.session, name)
         except FileExistsError:
-            self.report({'WARNING'}, tr_report("Preset already exists; enable Overwrite to replace it"))
-            return {'CANCELLED'}
+            self.report(
+                {"WARNING"}, tr_report("Preset already exists; enable Overwrite to replace it")
+            )
+            return {"CANCELLED"}
         except (OSError, ValueError, TypeError, ReferenceError) as error:
             return self.failure(error)
-        self.report({'INFO'}, tr_report('Saved preset "{name}"', name=name))
-        return {'FINISHED'}
+        self.report({"INFO"}, tr_report('Saved preset "{name}"', name=name))
+        return {"FINISHED"}
 
 
 class QD_OT_preset_load(PresetTarget, Operator):
     """验证 JSON 后载入当前目标参数"""
+
     bl_idname = "qd.preset_load"
     bl_label = "Load Preset"
     bl_description = "Load a JSON preset into the parameters currently shown here"
     bl_translation_context = CONTEXT
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
     __annotations__ = target_properties()
 
     def execute(self, context):
@@ -184,17 +201,18 @@ class QD_OT_preset_load(PresetTarget, Operator):
             set_preset_name(context, self.session, path.stem)
         except (OSError, ValueError, TypeError, ReferenceError, OverflowError) as error:
             return self.failure(error)
-        self.report({'INFO'}, tr_report("Loaded {count} parameters", count=count))
-        return {'FINISHED'}
+        self.report({"INFO"}, tr_report("Loaded {count} parameters", count=count))
+        return {"FINISHED"}
 
 
 class QD_OT_preset_remove(PresetTarget, Operator):
     """确认后删除当前名称对应的预设"""
+
     bl_idname = "qd.preset_remove"
     bl_label = "Remove Preset"
     bl_description = "Permanently delete this JSON preset after confirmation"
     bl_translation_context = CONTEXT
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
     __annotations__ = target_properties()
 
     def invoke(self, context, _event):
@@ -210,29 +228,33 @@ class QD_OT_preset_remove(PresetTarget, Operator):
             path.unlink()
             # 删掉的正好是当前预设时, 清空显示的名称
             if preset_name(context, self.session) == path.stem:
-                set_preset_name(context, self.session, '')
+                set_preset_name(context, self.session, "")
         except (OSError, ValueError, ReferenceError) as error:
             return self.failure(error)
-        self.report({'INFO'}, tr_report('Removed preset "{name}"', name=path.stem))
-        return {'FINISHED'}
+        self.report({"INFO"}, tr_report('Removed preset "{name}"', name=path.stem))
+        return {"FINISHED"}
 
 
 class QD_OT_preset_open_directory(Operator):
     """打开本阶段的用户预设目录"""
+
     bl_idname = "qd.preset_open_directory"
     bl_label = "Open Preset Directory"
     bl_description = "Open the folder containing the shared JSON presets"
     bl_translation_context = CONTEXT
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
 
     def execute(self, context):
         """执行本算子并按成功或失败返回 Blender 状态"""
         try:
             bpy.ops.wm.path_open(filepath=str(preset_directory(create=True)))
         except (OSError, RuntimeError) as error:
-            self.report({'ERROR'}, tr_report("Preset operation failed: {detail}", detail=tr_report(str(error))))
-            return {'CANCELLED'}
-        return {'FINISHED'}
+            self.report(
+                {"ERROR"},
+                tr_report("Preset operation failed: {detail}", detail=tr_report(str(error))),
+            )
+            return {"CANCELLED"}
+        return {"FINISHED"}
 
 
 class QD_MT_presets(Menu):
@@ -245,11 +267,11 @@ class QD_MT_presets(Menu):
     def draw(self, context):
         """绘制当前目标的控件并保留独立的启用条件"""
         layout = self.layout
-        owner = getattr(context, 'qd_preset_target', None)
-        token = getattr(owner, 'preset_session', '')
+        owner = getattr(context, "qd_preset_target", None)
+        token = getattr(owner, "preset_session", "")
         row = layout.row()
-        row.operator_context = 'INVOKE_DEFAULT'
-        save = row.operator("qd.preset_save", text="Save Preset...", text_ctxt=CONTEXT, icon='ADD')
+        row.operator_context = "INVOKE_DEFAULT"
+        save = row.operator("qd.preset_save", text="Save Preset...", text_ctxt=CONTEXT, icon="ADD")
         save.session = token
         save.name = preset_name(context, token)
         names, error = list_presets()
@@ -257,20 +279,20 @@ class QD_MT_presets(Menu):
         for name in names:
             # 加载立即执行, 删除需要确认
             row = layout.row(align=True)
-            row.operator_context = 'EXEC_DEFAULT'
-            load = row.operator("qd.preset_load", text=name, translate=False, icon='PRESET')
+            row.operator_context = "EXEC_DEFAULT"
+            load = row.operator("qd.preset_load", text=name, translate=False, icon="PRESET")
             load.name, load.session = name, token
             remove_row = row.row(align=True)
-            remove_row.operator_context = 'INVOKE_DEFAULT'
-            remove = remove_row.operator("qd.preset_remove", text="", icon='X')
+            remove_row.operator_context = "INVOKE_DEFAULT"
+            remove = remove_row.operator("qd.preset_remove", text="", icon="X")
             remove.name, remove.session = name, token
         if error is not None:
             # 读不出来时说明原因, 不能显示成"尚无预设", 否则用户会以为预设丢了
-            layout.label(text=tr_report(error[0], **error[1]), icon='ERROR')
+            layout.label(text=tr_report(error[0], **error[1]), icon="ERROR")
         elif not names:
             layout.label(text="No presets yet", text_ctxt=CONTEXT)
         layout.separator()
-        layout.operator("qd.preset_open_directory", icon='FILE_FOLDER')
+        layout.operator("qd.preset_open_directory", icon="FILE_FOLDER")
 
 
 def draw_presets(layout, context, owner, token=""):
@@ -279,12 +301,17 @@ def draw_presets(layout, context, owner, token=""):
     layout.context_pointer_set("qd_preset_target", owner)
     row = layout.row(align=True)
     name = preset_name(context, token)
-    row.menu("QD_MT_presets", text=name or tr("Presets"), translate=False, icon='PRESET')
-    row.operator_context = 'INVOKE_DEFAULT'
-    save = row.operator("qd.preset_save", text="", icon='ADD')
+    row.menu("QD_MT_presets", text=name or tr("Presets"), translate=False, icon="PRESET")
+    row.operator_context = "INVOKE_DEFAULT"
+    save = row.operator("qd.preset_save", text="", icon="ADD")
     save.session = token
     save.name = name
 
 
-CLASSES = (QD_OT_preset_save, QD_OT_preset_load, QD_OT_preset_remove,
-           QD_OT_preset_open_directory, QD_MT_presets)
+CLASSES = (
+    QD_OT_preset_save,
+    QD_OT_preset_load,
+    QD_OT_preset_remove,
+    QD_OT_preset_open_directory,
+    QD_MT_presets,
+)

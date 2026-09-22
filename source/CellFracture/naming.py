@@ -1,15 +1,17 @@
 """碎块与递归组的命名和集合安排"""
+
 import bpy
 
 from ..common.created_data import track
 
-_SOURCE_MARK = '_qd_source'
+_SOURCE_MARK = "_qd_source"
 
-_LEVEL_MARK = '_qd_level'
+_LEVEL_MARK = "_qd_level"
 
-_GROUP_MARK = '_qd_group'
+_GROUP_MARK = "_qd_group"
 
 TEMP_NAME_PREFIX = "QDTMP_"
+
 
 class NamingPlan:
     """本次切割的命名与集合状态
@@ -18,13 +20,20 @@ class NamingPlan:
     递归每个父块的子块对应一个 Ln_Gm 组
     完成切割后仅对保留的碎块连续编号"""
 
-    def __init__(self, source_object, collection, use_collections=True, prefix='cell',
-                 padding=3, tracker=None):
+    def __init__(
+        self,
+        source_object,
+        collection,
+        use_collections=True,
+        prefix="cell",
+        padding=3,
+        tracker=None,
+    ):
         """保存构造参数并初始化本实例状态"""
         self.source_name = source_object.name
         self.collection = collection
         # 碎块名前缀, 只用于碎块名, 不进集合名
-        self.prefix = prefix or ''
+        self.prefix = prefix or ""
         self.padding = max(0, int(padding))
         self.use_collections = use_collections
         self.tracker = tracker
@@ -51,8 +60,9 @@ class NamingPlan:
         """建立一个组集合; 集合名只用层组号, 不加用户前缀"""
         if not self.use_collections:
             return None
-        coll = track(self.tracker, 'collections',
-                     bpy.data.collections.new(self.group_id(tier, group)))
+        coll = track(
+            self.tracker, "collections", bpy.data.collections.new(self.group_id(tier, group))
+        )
         self.collection.children.link(coll)
         self.created_collections.append(coll)
         return coll
@@ -98,8 +108,9 @@ class NamingPlan:
         因此这类碎块一律按整批连续编号, 不会出现 L0G0 这种层组标识
         """
         if self.use_collections:
-            ordered = sorted(range(len(cells)),
-                             key=lambda i: (cells[i][_LEVEL_MARK], cells[i][_GROUP_MARK], i))
+            ordered = sorted(
+                range(len(cells)), key=lambda i: (cells[i][_LEVEL_MARK], cells[i][_GROUP_MARK], i)
+            )
         else:
             ordered = list(range(len(cells)))
         counters = {}
@@ -109,8 +120,7 @@ class NamingPlan:
             if self.use_collections and tier > 0:
                 key = (tier, group)
                 counters[key] = counters.get(key, 0) + 1
-                name = "%s_L%dG%d_%0*d" % (self.prefix, tier, group,
-                                           self.padding, counters[key])
+                name = "%s_L%dG%d_%0*d" % (self.prefix, tier, group, self.padding, counters[key])
             else:
                 counters[None] = counters.get(None, 0) + 1
                 name = "%s_%0*d" % (self.prefix, self.padding, counters[None])

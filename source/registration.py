@@ -1,4 +1,5 @@
 """扩展装配 - 注册顺序与原入口保持一致"""
+
 import bpy
 from bpy.app.handlers import persistent
 from bpy.props import PointerProperty
@@ -21,8 +22,9 @@ def menu_func(self, context):
     """3D 视图 物体 -> 快速效果 里的入口, 与上游保持同样的分隔线写法"""
     layout = self.layout
     layout.separator()
-    layout.operator("object.add_quick_destruction_objects",
-                    text="Quick Destruction Effect", text_ctxt=CONTEXT)
+    layout.operator(
+        "object.add_quick_destruction_objects", text="Quick Destruction Effect", text_ctxt=CONTEXT
+    )
 
 
 # 属性依赖先注册 - Scene 指针之后才接入交互类

@@ -1,4 +1,5 @@
 """本次新建 Blender 数据的所有权与回收"""
+
 import bpy
 
 
@@ -7,7 +8,7 @@ class CreatedData:
 
     def __init__(self):
         """保存构造参数并初始化本实例状态"""
-        self.ids = {'objects': [], 'meshes': [], 'collections': []}
+        self.ids = {"objects": [], "meshes": [], "collections": []}
 
     def track(self, kind, item):
         """记录本次创建的数据并返回原对象"""
@@ -24,12 +25,19 @@ class CreatedData:
                     # 名字被新数据占用说明该项已不是原来的对象, 不再处理
                     if data.get(item.name) != item:
                         continue
-                    if kind == 'objects':
+                    if kind == "objects":
                         data.remove(item, do_unlink=True)
-                    elif kind == 'meshes' and item.users == 0 or kind == 'collections' and not item.objects and not item.children:
+                    elif (
+                        kind == "meshes"
+                        and item.users == 0
+                        or kind == "collections"
+                        and not item.objects
+                        and not item.children
+                    ):
                         data.remove(item)
                 except ReferenceError:
                     continue
+
 
 def track(tracker, kind, item):
     """tracker 允许为空, 便于单独调用底层函数做测试"""

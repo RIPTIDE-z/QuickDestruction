@@ -1,4 +1,5 @@
 """错误呈现适配 - 将字段标识转换为界面标签"""
+
 from ..common.errors import InvalidParameterError
 from .errors import FractureError
 from .settings import field_label

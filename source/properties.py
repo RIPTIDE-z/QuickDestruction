@@ -1,4 +1,5 @@
 """场景设置聚合根 - 保留持久化数据路径"""
+
 from bpy.props import PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 
