@@ -14,3 +14,7 @@ copyright = [
 
 [permissions]
 files = "Read and write user parameter presets"
+
+[build]
+# Python caches are not extension runtime files
+paths_exclude_pattern = ["__pycache__/", "*.pyc"]

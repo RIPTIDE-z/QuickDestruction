@@ -1,32 +1,11 @@
-"""持久化设置, 以及界面与算子之间的纯数据参数交换。"""
-
+"""接收参数规格的校验与序列化 - 不依赖 Blender"""
 import math
+from .errors import InvalidParameterError
 
-import bpy
-from bpy.props import PointerProperty, StringProperty
-from bpy.types import PropertyGroup
-
-from .qd_properties import CONTEXT, PROPERTY_SPECS, property_definitions
-from .qd_errors import InvalidParameterError
-
-
-class CellFractureSettings(PropertyGroup):
-    """与算子字段逐一对应的参数组, 用于侧栏常驻保存。"""
-
-    __annotations__ = property_definitions()
-
-
-class QDSettings(PropertyGroup):
-    """挂在场景上的总设置, 目前只包含参数组和最近使用的预设名。"""
-
-    fracture: PointerProperty(type=CellFractureSettings)
-    preset_name: StringProperty(name="Preset", translation_context=CONTEXT)
-
-
-def settings_to_dict(owner):
-    """把参数读成纯数据字典; 算子与属性组两种持有者都能用。"""
+def settings_to_dict(owner, specs):
+    """把参数读成纯数据字典; 算子与属性组两种持有者都能用"""
     data = {}
-    for key, (kind, _options) in PROPERTY_SPECS.items():
+    for key, (kind, _options) in specs.items():
         value = getattr(owner, key)
         # 枚举集合与向量要转成可 JSON 化的类型
         if kind == 'EnumProperty' and isinstance(value, set):
@@ -36,13 +15,12 @@ def settings_to_dict(owner):
         data[key] = value
     return data
 
-
-def validated_values(data):
-    """先整体校验再返回可赋值的数据; 旧预设缺字段时仍可正常载入。"""
+def validated_values(data, specs):
+    """先整体校验再返回可赋值的数据; 旧预设缺字段时仍可正常载入"""
     if not isinstance(data, dict):
         raise ValueError("Preset must be a JSON object")
     values = {}
-    for key, (kind, options) in PROPERTY_SPECS.items():
+    for key, (kind, options) in specs.items():
         if key not in data:
             # 缺字段直接跳过, 保留界面上的当前值
             continue
@@ -73,9 +51,6 @@ def validated_values(data):
                 and math.isfinite(number)
                 and options.get('min', -math.inf) <= number <= options.get('max', math.inf)
                 for number in numbers)
-            # 胞体缩放必须为正, 否则分割平面方向无意义
-            if key == 'cell_scale':
-                valid = valid and all(number > 0 for number in numbers)
             if valid and is_vector:
                 value = tuple(value)
         if not valid:
@@ -84,12 +59,11 @@ def validated_values(data):
         values[key] = value
     return values
 
-
-def dict_to_settings(owner, data):
-    """把校验后的数据写入属性组; 中途失败则回滚已改动的字段。"""
-    values = validated_values(data)
+def dict_to_settings(owner, data, specs):
+    """把校验后的数据写入属性组; 中途失败则回滚已改动的字段"""
+    values = validated_values(data, specs)
     previous = {key: getattr(owner, key) for key in values}
-    previous = {key: tuple(value) if key == 'cell_scale' else value
+    previous = {key: tuple(value) if specs[key][0] == 'FloatVectorProperty' else value
                 for key, value in previous.items()}
     try:
         for key, value in values.items():
@@ -100,23 +74,10 @@ def dict_to_settings(owner, data):
         raise
     return len(values)
 
-
-def operator_keywords(owner):
-    """取可传给算子的关键字参数, 枚举集合转成 set。"""
-    data = settings_to_dict(owner)
-    for key, (kind, options) in PROPERTY_SPECS.items():
+def operator_keywords(owner, specs):
+    """取可传给算子的关键字参数, 枚举集合转成 set"""
+    data = settings_to_dict(owner, specs)
+    for key, (kind, options) in specs.items():
         if kind == 'EnumProperty' and 'ENUM_FLAG' in options.get('options', ()):
             data[key] = set(data[key])
     return data
-
-
-def register():
-    bpy.utils.register_class(CellFractureSettings)
-    bpy.utils.register_class(QDSettings)
-    bpy.types.Scene.qd_settings = PointerProperty(type=QDSettings)
-
-
-def unregister():
-    del bpy.types.Scene.qd_settings
-    bpy.utils.unregister_class(QDSettings)
-    bpy.utils.unregister_class(CellFractureSettings)

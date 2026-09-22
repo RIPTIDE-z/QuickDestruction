@@ -24,7 +24,7 @@
 install.bat              :: 自动定位 zip 与 Blender 配置版本并安装
 install.bat 5.2          :: 指定 Blender 配置版本目录
 install.bat 5.2 -Force   :: 覆盖已安装版本时不询问
-install.bat /nopause     :: 结束后不等待按键，可用于自动化测速
+install.bat /nopause     :: 结束后不等待按键，可用于自动化测试
 ```
 
 安装器优先搜索脚本所在目录，再搜索父目录；每个目录按修改时间从新到旧选择首个 QuickDestruction ZIP。脚本目录中已有合格包时，不会被父目录的包替换。
@@ -40,4 +40,4 @@ install.bat /nopause     :: 结束后不等待按键，可用于自动化测速
 
 弹窗打开时读取侧栏设置，取消不写回；切割成功后同步设置。若几何已经生成但侧栏同步失败，会保留切割结果并报告警告，仍可撤销。默认开启一轮递归，因此最终碎块数不等于初始种子数。
 
-更多使用、参数和算法说明见 [CellFracture](doc/CellFracture.md)。开发验证步骤见 [测试说明](tests/README.md)。
+更多使用、参数和算法说明见 [CellFracture](doc/CellFracture.md)。模块与接口见 [Architecture](doc/Architecture.md), 验收记录见 [Validation](doc/Validation.md)。

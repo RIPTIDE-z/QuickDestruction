@@ -10,15 +10,15 @@ rem    install.bat /nopause    do not wait for a key press at the end
 rem
 rem  Flow: find and validate ZIP -> pick Blender config -> extract to a stage
 rem        directory -> verify file count -> back up the old install ->
-rem        publish -> roll back on failure.
+rem        publish -> roll back on failure
 rem
 rem  If an installation already exists and -Force was not given, the script asks
-rem  before replacing it. The default answer is yes: pressing Enter replaces the
-rem  existing installation. Only Enter or y/Y continues; other input cancels.
+rem  before replacing it The default answer is yes: pressing Enter replaces the
+rem  existing installation Only Enter or y/Y continues; other input cancels
 rem
 rem  Only cmd builtins and the tar.exe shipped with Windows are used, so there
-rem  is no PowerShell dependency. Every line of output is plain ASCII, which
-rem  makes it code-page independent.
+rem  is no PowerShell dependency Every line of output is plain ASCII, which
+rem  makes it code-page independent
 rem ============================================================================
 
 setlocal EnableExtensions EnableDelayedExpansion
@@ -26,7 +26,7 @@ set "SCRIPT_DIR=%~dp0"
 set "TARGET_VERSION="
 set "FORCE="
 set "PAUSE_AT_END=1"
-rem Cleanup may only use paths created by this invocation, never inherited variables.
+rem Cleanup may only use paths created by this invocation, never inherited variables
 set "MANIFEST="
 set "STAGE="
 set "BACKUP="
@@ -39,7 +39,7 @@ if /i "%ARG%"=="-Force"   set "FORCE=1" & shift & goto parse_args
 if /i "%ARG%"=="/Force"   set "FORCE=1" & shift & goto parse_args
 if /i "%ARG%"=="/nopause" set "PAUSE_AT_END=" & shift & goto parse_args
 if /i "%ARG%"=="nopause"  set "PAUSE_AT_END=" & shift & goto parse_args
-rem Anything else is taken as the Blender version number.
+rem Anything else is taken as the Blender version number
 set "TARGET_VERSION=%ARG%"
 shift
 goto parse_args
@@ -78,9 +78,9 @@ if errorlevel 1 (
   goto finish
 )
 rem Only the three top-level scalar fields we need are selected, so section
-rem headers such as [permissions] can never be misread as a key.
+rem headers such as [permissions] can never be misread as a key
 rem Key and value are split on the first '=' and each side is stripped of
-rem spaces, quotes and a possible UTF-8 BOM without using a nested for loop.
+rem spaces, quotes and a possible UTF-8 BOM without using a nested for loop
 for /f "usebackq tokens=1,2 delims==" %%A in ("%MANIFEST%") do (
   set "KEY=%%A"
   set "VALUE=%%B"
@@ -99,7 +99,7 @@ if not "!PKG_ID!"=="quick_destruction" (
   set "RESULT=1"
   goto finish
 )
-rem Version fields must look like x.y.z.
+rem Version fields must look like x.y.z
 echo !PKG_VERSION!| findstr /r "^[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$" >nul
 if errorlevel 1 (
   echo [ERROR] Invalid manifest field: version = !PKG_VERSION!
@@ -126,8 +126,8 @@ if not exist "%CONFIG_ROOT%" (
 )
 
 if not defined TARGET_VERSION (
-  rem Compare versions numerically. Sorting the names as strings would put
-  rem 5.10 before 5.9.
+  rem Compare versions numerically Sorting the names as strings would put
+  rem 5.10 before 5.9
   set "BEST_MAJOR=0"
   set "BEST_MINOR=0"
   for /d %%D in ("%CONFIG_ROOT%\*") do (
@@ -161,7 +161,7 @@ if not exist "%CONFIG_DIR%" (
   goto finish
 )
 
-rem Reject a configuration older than the minimum the package declares.
+rem Reject a configuration older than the minimum the package declares
 for /f "tokens=1,2 delims=." %%X in ("%TARGET_VERSION%") do (
   set "CFG_MAJOR=%%X"
   set "CFG_MINOR=%%Y"
@@ -188,10 +188,10 @@ if exist "%DESTINATION%" if not defined FORCE (
   echo.
   echo   An installation already exists at:
   echo     %DESTINATION%
-  rem Default is yes: pressing Enter with no input replaces the existing install.
-  rem Only Enter or y/Y continues; all other input cancels.
+  rem Default is yes: pressing Enter with no input replaces the existing install
+  rem Only Enter or y/Y continues; all other input cancels
   rem The closing paren is escaped with ^ because a bare ")" inside an if block
-  rem would be taken as the end of the block and would never be printed.
+  rem would be taken as the end of the block and would never be printed
   echo   Replace the installed extension? [Y/n]  (Enter = Y, replace; N = cancel^)
   set "ANSWER="
   set /p "ANSWER=  > "
@@ -314,21 +314,21 @@ endlocal & exit /b %RESULT%
 
 rem ------------------------------------------------------------------ subroutines
 rem Search the script directory and its parent, newest first, and accept the first
-rem ZIP whose manifest declares quick_destruction. The documented build command
+rem ZIP whose manifest declares quick_destruction The documented build command
 rem writes the package into the project root, so there is no build subdirectory to
-rem look in. The listing is read once per directory into numbered variables:
+rem look in The listing is read once per directory into numbered variables:
 rem expanding %%F and !TRY! inside a nested for block proved unreliable, so
-rem candidates are processed by index.
+rem candidates are processed by index
 :find_package
 for %%D in ("%SCRIPT_DIR%." "%SCRIPT_DIR%..") do call :try_directory "%%~fD"
 exit /b 0
 
 :try_directory
-rem The script directory has priority over its parent, even if the parent is newer.
+rem The script directory has priority over its parent, even if the parent is newer
 if defined PACKAGE exit /b 0
 set "TRY_DIR=%~1"
 if not exist "%TRY_DIR%" exit /b 0
-rem Reset the count per directory; old slots beyond this count are never read.
+rem Reset the count per directory; old slots beyond this count are never read
 set "DIR_INDEX=0"
 set "TRY_LIST="
 for /f "delims=" %%F in ('dir /b /a-d /o-d "%TRY_DIR%\*.zip" 2^>nul') do (
@@ -342,7 +342,7 @@ set "INDEX=0"
 set /a "INDEX+=1"
 if %INDEX% GTR %DIR_INDEX% exit /b 0
 set "NAME="
-rem SET uses a prefix match: accept only the exact variable (TRY_1 is not TRY_10).
+rem SET uses a prefix match: accept only the exact variable (TRY_1 is not TRY_10)
 for /f "tokens=1,* delims==" %%A in ('set TRY_%INDEX% 2^>nul') do if "%%A"=="TRY_%INDEX%" set "NAME=%%B"
 if not defined NAME exit /b 0
 set "CANDIDATE=%TRY_DIR%\%NAME%"
@@ -351,7 +351,7 @@ tar -xOf "%CANDIDATE%" ./blender_manifest.toml >"%MANIFEST%" 2>nul
 if not errorlevel 1 (
   findstr /b /c:"id = \"quick_destruction\"" "%MANIFEST%" >nul 2>&1
   if not errorlevel 1 (
-    rem The caller reads the accepted package again; release this probe file now.
+    rem The caller reads the accepted package again; release this probe file now
     set "PACKAGE=%CANDIDATE%"
     del "%MANIFEST%" >nul 2>&1
     set "MANIFEST="

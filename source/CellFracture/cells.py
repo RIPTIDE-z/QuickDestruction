@@ -1,20 +1,21 @@
-"""用半空间求交构造有界 Voronoi 胞体。"""
+"""用半空间求交构造有界 Voronoi 胞体"""
 
 from math import isfinite, sqrt
 
 from mathutils import Vector
 from mathutils.geometry import points_in_planes
 
-from .qd_errors import FractureError, InvalidParameterError
-from .qd_properties import CELL_SCALE_MIN
+from .errors import FractureError
+from ..common.errors import InvalidParameterError
+from .constants import CELL_SCALE_MIN
 
 
 def points_as_bmesh_cells(verts, points, points_scale=None,
                          margin_bounds=0.05, margin_cell=0.0):
-    """为每个种子点求出一个胞体, 返回 [(种子点, 顶点列表), ...]。
+    """为每个种子点求出一个胞体, 返回 [(种子点, 顶点列表), ...]
 
     做法是从包围盒六个面出发, 依次用"种子点与邻居连线的中垂面"去切,
-    只保留仍然切得到的那一侧, 最终得到该种子点的 Voronoi 胞体。
+    只保留仍然切得到的那一侧, 最终得到该种子点的 Voronoi 胞体
     """
     if not verts or not points:
         return []
