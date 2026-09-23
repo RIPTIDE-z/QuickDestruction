@@ -1,4 +1,4 @@
-"""预切割阶段公共入口 - 显式输入与交互状态隔离"""
+"""MeshFracture 阶段入口: 显式输入与 Blender 交互状态隔离。"""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -36,7 +36,7 @@ def fracture(context, sources, config, output_collection, *, rng=None):
     output_collection 接受集合对象或集合名 - None 或空名使用当前集合
     config 仅包含用户字段 - rng 与资源所有权由运行层独立管理
     """
-    from .pipeline import run
+    from .core.pipeline import run
 
     settings = complete_config(config)
     # 固定输入快照 - 后续 Blender 算子改变选择时不会改变阶段输入

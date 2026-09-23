@@ -1,8 +1,8 @@
-# CellFracture
+# MeshFracture - 网格破碎
 
 预切割流程：点源采样 → 有界胞体 → 凸包 → Exact 布尔求交 → 递归与断面收尾。
 
-源物体始终保留，不创建刚体或动画。工具位于 3D 视图 **QuickDestruction** 标签页的 **Quick Destruction Effect** 子面板，也可从物体菜单的快速效果组打开参数弹窗。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
+源物体始终保留。工具位于 3D 视图 **QuickDestruction** 标签页的 **MeshFracture／网格破碎** 子面板，点击 **Generate Fragments／生成碎块** 执行；也可从物体菜单的快速效果组打开参数弹窗。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
 
 ## 点源与数量
 
@@ -92,20 +92,14 @@
 递归组 `L1_G1` 中命名为 `cell_L1G1_001`, 关闭分组后整批连续编号
 重名由 Blender 添加后缀, 名称不是稳定身份标识
 
-## 兼容参数
-
-| 参数 | 字段 | 默认 / 范围 | 状态 |
-| --- | --- | --- | --- |
-| 质量模式 | `mass_mode` | `VOLUME` / `VOLUME`, `UNIFORM` | 界面禁用, 仅兼容旧预设 |
-| 质量 | `mass` | 1 kg / 0.001–1000 | 不赋值质量, 不创建刚体 |
-
 ## 复现、预设与输入边界
 
 - 相同 Blender 版本、源名称、几何、修改器、点源、帧、相关游标位置和参数可复现几何
 - 多源按 `name_full` 排序并共享局部 RNG, 增删或重命名源物体可能改变后续随机分配
 - 预设缺字段保留界面当前值；阶段 API 配置缺 `random_seed` 时使用 0
-- 新预设写入 `quick_destruction/presets/cell_fracture/`，包含 `format_version`、`tool_id` 和 `values`；旧的无信封 JSON 仍可从原目录 `quick_destruction/presets/` 载入
-- 载入前校验工具身份、格式版本和字段；未知字段不会再被静默忽略。同名新旧预设同时存在时，新目录优先
+- 新预设写入 `quick_destruction/presets/mesh_fracture/`，包含 `format_version`、`tool_id: "mesh_fracture"` 和 `values`
+- 原目录 `quick_destruction/presets/` 的无信封预设，以及 `quick_destruction/presets/cell_fracture/` 的旧格式文件仍可载入；其中已移除的占位字段会在读取时忽略
+- 载入前校验工具身份、格式版本和其他字段；未知字段不会被静默忽略。同名文件存在于多个目录时，新目录优先
 - 布尔策略检查实际求值网格, 开放或非流形输入启用 Hole Tolerant
 - 非有限或明显超出源包围盒的结果拒绝并回收本次新建数据, 不修复源几何
 - 孔洞容错和包围盒检查不保证凹形体内包含或水密

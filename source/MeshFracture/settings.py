@@ -1,7 +1,9 @@
 """预切割参数唯一来源与阶段转换接口"""
 
 from ..common import rna, schema
+from ..common.errors import InvalidParameterError
 from .constants import CELL_SCALE_MIN, CONTEXT, RANDOM_SEED_DEFAULT
+from .errors import FractureError
 
 PROPERTY_SPECS = {
     "source": (
@@ -252,41 +254,11 @@ PROPERTY_SPECS = {
             "default": False,
         },
     ),
-    "mass_mode": (
-        "EnumProperty",
-        {
-            "name": "Mass Mode",
-            "items": (
-                (
-                    "VOLUME",
-                    "By Volume",
-                    "Inactive legacy option: proportional mass distribution by bounding-box volume is not performed.",
-                ),
-                (
-                    "UNIFORM",
-                    "Uniform",
-                    "Inactive legacy option: uniform mass assignment is not performed.",
-                ),
-            ),
-            "default": "VOLUME",
-            "description": "Compatibility placeholder for old presets. The fracture pipeline does not use this field or create or modify rigid bodies; no mass is assigned.",
-        },
-    ),
-    "mass": (
-        "FloatProperty",
-        {
-            "name": "Mass",
-            "description": "Compatibility placeholder in kilograms, kept for old presets. The fracture pipeline does not assign mass or create rigid bodies.",
-            "min": 0.001,
-            "max": 1000.0,
-            "default": 1.0,
-        },
-    ),
     "use_recenter": (
         "BoolProperty",
         {
             "name": "Recenter",
-            "description": "Move each shard origin to its geometry center using MEDIAN, without moving its geometry. This is not a volume-based center of mass.",
+            "description": "Move each shard origin to its geometry center using MEDIAN, without moving its geometry.",
             "default": True,
         },
     ),
@@ -374,6 +346,15 @@ PROPERTY_SPECS = {
 def field_label(field):
     """从参数规格读取界面标签 - 未知字段原样返回"""
     return PROPERTY_SPECS.get(field, ("", {"name": field}))[1]["name"]
+
+
+def describe_error(error):
+    """把字段错误映射为参数标签, 保留领域错误的消息键。"""
+    if isinstance(error, InvalidParameterError):
+        return "Invalid parameter: {name}", {"name": field_label(error.field)}
+    if isinstance(error, FractureError):
+        return error.message, dict(error.values)
+    return str(error), {}
 
 
 def property_definitions():

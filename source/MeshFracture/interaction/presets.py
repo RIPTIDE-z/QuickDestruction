@@ -1,4 +1,4 @@
-"""共享的 JSON 预设: 面板与对话框各自定位编辑目标, 写入采用原子替换"""
+"""MeshFracture 预设交互: 面板与弹窗分别定位目标, 文件原子保存。"""
 
 import uuid
 from pathlib import Path
@@ -8,17 +8,17 @@ import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy.types import Menu, Operator
 
-from ..common import preset_storage as storage
-from ..i18n import tr, tr_report
-from .errors import FractureError
-from .presentation import describe_error
+from ...common import preset_storage as storage
+from ...i18n import tr, tr_report
+from ..errors import FractureError
+from ..settings import CONTEXT, describe_error, dict_to_settings, settings_to_dict
 from .preset_format import decode, encode
-from .settings import CONTEXT, dict_to_settings, settings_to_dict
 
 # 预设存放在 Blender 用户脚本目录下, 与扩展本体分离, 重装扩展不会丢
 # 常量本身用 Path 表达目录层级, 交给 Blender 时再转回 str
 PRESET_ROOT = Path("quick_destruction") / "presets"
-PRESET_SUBDIR = PRESET_ROOT / "cell_fracture"
+PRESET_SUBDIR = PRESET_ROOT / "mesh_fracture"
+PREVIOUS_SUBDIR = PRESET_ROOT / "cell_fracture"
 # 以一次性令牌区分"对话框参数"与"侧栏参数"两个编辑目标, 不依赖 active_operator
 SESSIONS = {}
 
@@ -67,10 +67,12 @@ def set_preset_name(context, token, name):
         context.area.tag_redraw()
 
 
-def preset_directory(create=False, *, legacy=False):
-    """返回本工具目录, 或用于读取旧预设的原目录。"""
+def preset_directory(create=False, *, legacy=False, previous=False):
+    """返回当前目录或前两代预设目录, 仅为当前目录创建文件夹。"""
     # user_resource 是 C 接口, 只接受 str, 传 Path 会抛 TypeError
-    subdir = PRESET_ROOT if legacy else PRESET_SUBDIR
+    if legacy and previous:
+        raise ValueError("Only one legacy preset directory can be selected")
+    subdir = PRESET_ROOT if legacy else PREVIOUS_SUBDIR if previous else PRESET_SUBDIR
     path = bpy.utils.user_resource("SCRIPTS", path=str(subdir), create=create)
     if not path:
         raise OSError("Cannot resolve the preset directory")
@@ -81,12 +83,15 @@ def preset_directory(create=False, *, legacy=False):
 
 
 def preset_filepath(name, create=False):
-    """优先定位新目录; 旧文件作为读取或删除的回退目标。"""
+    """优先定位新目录, 再依次查找改名前和无信封的旧目录。"""
     current = storage.preset_filepath(preset_directory(create=create), name)
     if create or current.exists():
         return current
-    old = storage.preset_filepath(preset_directory(legacy=True), name)
-    return old if old.exists() else current
+    for directory in (preset_directory(previous=True), preset_directory(legacy=True)):
+        old = storage.preset_filepath(directory, name)
+        if old.exists():
+            return old
+    return current
 
 
 def list_presets():
@@ -97,15 +102,19 @@ def list_presets():
     否则用户会以为预设丢了这里只返回消息键, 翻译交给调用方
     """
     try:
-        directory = preset_directory()
-        legacy_directory = preset_directory(legacy=True)
+        directories = (
+            preset_directory(legacy=True),
+            preset_directory(previous=True),
+            preset_directory(),
+        )
     except OSError:
         # 目录都定位不到: 用现成的消息键, 不再包一层
         return [], ("Cannot resolve the preset directory", {})
     try:
-        # 同名时新目录优先; 删除新文件后仍可看到旧文件。
-        names = {name.casefold(): name for name in storage.list_presets(legacy_directory)}
-        names.update({name.casefold(): name for name in storage.list_presets(directory)})
+        # 后面的目录覆盖前面同名文件; 删除新文件后旧文件仍可见。
+        names = {}
+        for directory in directories:
+            names.update({name.casefold(): name for name in storage.list_presets(directory)})
     except OSError as error:
         return [], ("Preset directory could not be read: {detail}", {"detail": str(error)})
     return sorted(names.values(), key=str.casefold), None
@@ -210,8 +219,10 @@ class QD_OT_preset_load(PresetTarget, Operator):
         try:
             path = preset_filepath(self.name)
             # 只读取有限大小的文件, 且只当数据解析, 绝不执行其中内容
-            legacy = path.parent.resolve() == preset_directory(legacy=True).resolve()
-            data = decode(storage.read_preset(path), legacy=legacy)
+            parent = path.parent.resolve()
+            legacy = parent == preset_directory(legacy=True).resolve()
+            previous = parent == preset_directory(previous=True).resolve()
+            data = decode(storage.read_preset(path), legacy=legacy, previous=previous)
             count = dict_to_settings(self.target(context), data)
             set_preset_name(context, self.session, path.stem)
         except (
@@ -262,7 +273,7 @@ class QD_OT_preset_open_directory(Operator):
 
     bl_idname = "qd.preset_open_directory"
     bl_label = "Open Preset Directory"
-    bl_description = "Open the folder for new Cell Fracture JSON presets"
+    bl_description = "Open the folder for new MeshFracture JSON presets"
     bl_translation_context = CONTEXT
     bl_options: ClassVar[set[str]] = {"INTERNAL"}
 

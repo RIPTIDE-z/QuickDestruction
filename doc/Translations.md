@@ -9,13 +9,14 @@
   "schema_version": 2,
   "locale": "zh_HANS",
   "modules": {
-    "CellFracture": {
+    "MeshFracture": {
       "properties": {
         "source_limit.name": "种子点上限",
         "source_limit.description": "去重前最多保留的种子点数，0 表示全部保留。"
       },
       "messages": {
-        "Quick Destruction Effect": "快速破坏效果"
+        "MeshFracture": "网格破碎",
+        "Generate Fragments": "生成碎块"
       }
     }
   }
@@ -30,6 +31,6 @@
 
 - 新语言：复制现有语言 JSON，修改文件名、`locale` 和所有模块译文；不需要逐个在 Python 中登记语言。
 - 新工具：定义工具描述中的 `translation_module`、`translation_context` 和 `property_specs`，加入 `tool_registry.TOOLS`，并在每个语言 JSON 的 `modules` 中增加对应分组。
-- 同一英文文案在不同工具中需要不同译法时，为工具使用独立上下文。Cell Fracture 保留 `QuickDestruction` 与 `*` 上下文，以维持现有界面译文。
+- 同一英文文案在不同工具中需要不同译法时，为工具使用独立上下文。MeshFracture 当前使用 `QuickDestruction` 与 `*` 上下文。
 
 `zh_CN` 当前是 `zh_HANS` 的别名，配置在 `i18n.LOCALE_ALIASES`，不需要第二份相同 JSON。界面消息通过 `tr()`，报告消息通过 `tr_report()` 获取译文；工具专属消息应显式传入该工具的 `context`。

@@ -6,22 +6,23 @@ from typing import ClassVar
 from bpy.props import StringProperty
 from bpy.types import Operator
 
-from ..common.blender_context import restore_selection
-from ..common.errors import InvalidParameterError
-from ..i18n import tr_report
-from . import panel, presets, settings
-from .api import fracture
-from .errors import FractureError
-from .presentation import describe_error
-from .settings import CONTEXT, property_definitions
+from ...common.blender_context import restore_selection
+from ...common.errors import InvalidParameterError
+from ...i18n import tr_report
+from .. import settings
+from ..api import fracture
+from ..errors import FractureError
+from ..settings import CONTEXT, describe_error, property_definitions
+from . import panel, presets
 
 
 class OBJECT_OT_add_quick_destruction_objects(Operator):
-    """按当前参数把选中的网格切成碎块; 源物体保留, 结果可撤销"""
+    """根据当前参数生成网格碎块, 保留源物体并支持撤销。"""
 
+    # 旧算子 ID 供已有脚本和 Blender 重做记录继续调用。
     bl_idname = "object.add_quick_destruction_objects"
-    bl_label = "Quick Destruction Selected Mesh Objects"
-    bl_description = "Cut selected editable meshes into shards; source objects are kept"
+    bl_label = "Generate Fragments"
+    bl_description = "Generate fragments from selected editable meshes; source objects are kept"
     bl_translation_context = CONTEXT
     # 参数预设由自定义 JSON 菜单处理,几何操作支持撤销;
     # ClassVar 说明这是 Blender 读取的类级配置, 不随实例变化
@@ -34,10 +35,7 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
         "preset_session": StringProperty(options={"HIDDEN", "SKIP_SAVE"}),
     }
 
-    # 这里刻意不定义 poll()上游 Cell Fracture 同样没有 poll, 菜单项因此任何时候
-    # 都可点; 一旦加上"必须选中网格"这类条件, Blender 会把它在菜单里置灰,
-    # 未选择物体时连点都点不了选不到物体的情形改由 execute 走正常报错路径,
-    # 由阶段 API 抛出可翻译的 "Select editable mesh objects in Object Mode"
+    # 菜单入口不使用 poll: 无选中网格时由阶段 API 报出具体原因。
 
     def execute(self, context):
         """执行本算子并按成功或失败返回 Blender 状态"""
@@ -81,7 +79,8 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
         except Exception as error:
             traceback.print_exc()
             self.report(
-                {"ERROR"}, tr_report("Fracture failed: {detail}", detail=tr_report(str(error)))
+                {"ERROR"},
+                tr_report("Fragment generation failed: {detail}", detail=tr_report(str(error))),
             )
         finally:
             presets.end_session(self.preset_session)
@@ -113,4 +112,4 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
             presets.draw_presets(self.layout, context, self, self.preset_session)
         # 与侧栏一致使用横向紧凑排布: 参数并排而非每行一个,
         # 这样弹窗天然更宽更矮, 也不会再被"最小宽度"这类设置牵着走
-        panel.draw_parameters(self.layout, self, compact=True)
+        panel.draw_parameters(self.layout, self)

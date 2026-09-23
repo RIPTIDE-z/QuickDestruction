@@ -2,7 +2,7 @@
 
 import bpy
 
-from ..common.created_data import track
+from ...common.created_data import track
 
 _SOURCE_MARK = "_qd_source"
 

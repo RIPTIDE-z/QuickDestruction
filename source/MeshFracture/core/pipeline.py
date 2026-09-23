@@ -6,10 +6,10 @@ from time import perf_counter
 import bpy
 from mathutils import Vector
 
-from ..common.created_data import CreatedData
+from ...common.created_data import CreatedData
+from ..constants import RANDOM_SEED_DEFAULT
+from ..errors import FractureError
 from . import mesh_ops
-from .constants import RANDOM_SEED_DEFAULT
-from .errors import FractureError
 from .naming import NamingPlan
 
 
@@ -58,7 +58,7 @@ def _cut(
         obj.select_set(False)
         if settings["use_debug_redraw"]:
             obj.display_type = "WIRE"
-        cells = mesh_ops.cell_fracture_objects(
+        cells = mesh_ops.build_cells(
             context,
             collection,
             obj,
@@ -70,7 +70,7 @@ def _cut(
             rng=rng,
             **options,
         )
-        cells = mesh_ops.cell_fracture_boolean(
+        cells = mesh_ops.intersect_cells(
             context,
             obj,
             cells,
@@ -132,8 +132,7 @@ def main_object(context, collection, obj, settings, rng=None, *, tracker):
     """对单个源物体做首次切割并按需递归, 最后统一处理内部断面"""
     if rng is None:
         rng = random.Random(settings.get("random_seed", RANDOM_SEED_DEFAULT))
-    # 命名计划在这里建立: 源物体名只读这一次, 递归层沿用它, 避免旧实现里
-    # 逐层追加 "_cell" 的问题; 分组集合也由它创建
+    # 源名称在首次切割前固定, 递归层沿用该名称生成碎块与分组标识。
     naming = NamingPlan(
         obj,
         collection,
@@ -191,7 +190,7 @@ def main_object(context, collection, obj, settings, rng=None, *, tracker):
         and not settings["use_debug_bool"]
         and (settings["use_interior_vgroup"] or settings["use_sharp_edges"])
     ):
-        mesh_ops.cell_fracture_interior_handle(
+        mesh_ops.finish_interior(
             cells,
             use_interior_vgroup=settings["use_interior_vgroup"],
             use_sharp_edges=settings["use_sharp_edges"],
@@ -220,7 +219,7 @@ def run(context, sources, settings, output_collection, *, rng=None):
     # 只记录并回收本次显式创建的数据, 不碰其它插件新增的内容
     tracker = CreatedData()
     # 一次运行共用局部随机流, 不读取或修改 Python/mathutils 的全局随机状态
-    # 旧脚本未传 random_seed 时仍可执行, 默认种子与 RNA 一致
+    # 未传随机流时使用规格默认种子, 保持显式 API 的可复现性。
     if rng is None:
         rng = random.Random(settings.get("random_seed", RANDOM_SEED_DEFAULT))
     started = perf_counter()

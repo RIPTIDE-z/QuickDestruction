@@ -8,7 +8,7 @@ from .tool_registry import TOOLS
 
 
 class QDSettings(PropertyGroup):
-    """每个工具拥有独立参数组; 旧预设名字段为 CellFracture 保留。"""
+    """每个工具拥有独立参数组; 预设名字段沿用原场景存储路径。"""
 
     __annotations__ = {
         tool.settings_attr: PointerProperty(type=tool.settings_class)

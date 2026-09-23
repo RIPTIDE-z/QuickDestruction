@@ -2,8 +2,8 @@
 
 from ..constants import UI_CONTEXT
 
-TOOL_ID = "cell_fracture"
-# 保留现有翻译上下文和预设的英文消息键。
+TOOL_ID = "mesh_fracture"
+# 翻译上下文沿用扩展域; 工具 ID 独立用于预设归属。
 CONTEXT = UI_CONTEXT
 
 CELL_SCALE_MIN = 0.001

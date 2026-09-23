@@ -8,16 +8,16 @@ import bmesh
 import bpy
 from mathutils import Vector
 
-from ..common.blender_context import mesh_edit
-from ..common.created_data import track
-from . import boolean
-from .constants import (
+from ...common.blender_context import mesh_edit
+from ...common.created_data import track
+from ..constants import (
     INTERIOR_VGROUP_NAME,
     RANDOM_SEED_DEFAULT,
     WELD_SCALE_RATIO,
     WELD_TO_JITTER_RATIO,
 )
-from .errors import FractureError
+from ..errors import FractureError
+from . import boolean
 from .sampling import points_from_object, random_unit_vector
 
 
@@ -41,7 +41,7 @@ def remove_generated_object(obj):
         bpy.data.meshes.remove(mesh)
 
 
-def cell_fracture_objects(
+def build_cells(
     context,
     collection,
     obj,
@@ -68,7 +68,7 @@ def cell_fracture_objects(
     naming 为 NamingPlan 时: level 与 group 分别是整数层号和组号,
     target 是这批碎块要落进的组集合 (可能为 None, 表示直接落在输出集合)
     这两项由调用方决定, 因为"这一批属于哪一组"是流程层面的信息, 这里不去猜
-    naming 为 None 时回落到旧的 "<源物体名>_cell" 命名, 便于单独调用本函数做测试
+    naming 为 None 时使用 "<源物体名>_cell", 允许独立调用本阶段
     rng 由管线在各轮间共享; 单独调用未提供时使用固定默认种子的局部随机流
     """
     from .cells import points_as_bmesh_cells
@@ -189,7 +189,7 @@ def cell_fracture_objects(
     return objects
 
 
-def cell_fracture_boolean(
+def intersect_cells(
     context,
     obj,
     objects,
@@ -304,7 +304,7 @@ def cell_fracture_boolean(
     return results
 
 
-def cell_fracture_interior_handle(
+def finish_interior(
     objects, use_interior_vgroup=False, use_sharp_edges=False, use_sharp_edges_apply=False
 ):
     """全部切割完成后统一处理内部断面: 顶点组/锐边/以及取消隐藏"""

@@ -4,7 +4,7 @@
 
 ## 修改工具
 
-Cell Fracture 的参数在 `source/CellFracture/settings.py` 中集中声明。变更字段时同步检查 `panel.py` 的布局覆盖与启用条件、`source/locales/*.json` 的参数译文，以及预设读取兼容性。工具的公开计算入口在 `api.py`；算子、子面板和预设交互由本工具包负责。
+MeshFracture 的参数在 `source/MeshFracture/settings.py` 中集中声明。变更字段时同步检查 `interaction/panel.py` 的布局覆盖与启用条件、`source/locales/*.json` 的参数译文，以及旧预设读取兼容性。工具的公开计算入口在 `api.py`；算法实现位于 `core/`，算子、子面板和预设交互位于 `interaction/`。
 
 新增工具应创建独立包及 `ToolSpec` 声明，并加入 `source/tool_registry.py`。根层负责注册顺序、侧栏父面板、场景指针和翻译目录；工具之间不互相导入。详细契约见 [架构文档](Architecture.md)。
 

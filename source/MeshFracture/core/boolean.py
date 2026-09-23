@@ -5,7 +5,7 @@ from math import isfinite, sqrt
 
 import bmesh
 
-from .errors import FractureError
+from ..errors import FractureError
 
 
 @dataclass(frozen=True)

@@ -2,12 +2,12 @@
 
 - 若要进行代码开发工作，请阅读 [开发文档](doc/Developer.md)
 
-# 快速破坏效果工具
+# MeshFracture - 网格破碎
 
 本工具为破坏动画流程生成预切割碎块，含有以下功能：
 
-- [x] `CellFracture` 参考并派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)
-    - 在种子点上构建 3D Voronoi 图，把每个胞体做成凸多面体，再与原物体做**布尔求交**，得到贴合原表面的碎块，用于刚体破坏预切割
+- [x] `MeshFracture` 参考并派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)
+    - 在种子点上构建 3D Voronoi 图，把每个胞体做成凸多面体，再与原物体做**布尔求交**，得到贴合原表面的碎块，用于破坏动画预切割
 - [] 破坏动画生成
 - [] 自动绑定以及动画烘焙
 
@@ -39,9 +39,9 @@ install.bat /nopause     :: 结束后不等待按键，可用于自动化测试
 
 有两个入口，参数同一套逻辑，可混用：
 
-1. 菜单（弹窗）：3D 视图 → **物体** → **快速效果** → **快速破坏效果**
-2. 侧栏面板（常驻）：3D 视图按 **N** → **QuickDestruction** 标签页（中文界面显示为 **快速破坏**）
+1. 菜单（弹窗）：3D 视图 → **物体** → **快速效果** → **网格破碎**
+2. 侧栏面板（常驻）：3D 视图按 **N** → **QuickDestruction** 标签页（中文界面显示为 **快速破坏**）→ **网格破碎**，点击 **Generate Fragments** 生成碎块
 
 弹窗打开时读取侧栏设置，取消不写回；切割成功后同步设置。若几何已经生成但侧栏同步失败，会保留切割结果并报告警告，仍可撤销。默认开启一轮递归，因此最终碎块数不等于初始种子数。
 
-更多使用、参数和算法说明见 [CellFracture](doc/CellFracture.md)。模块与接口见 [Architecture](doc/Architecture.md), 验收记录见 [Validation](doc/Validation.md)。
+更多使用、参数和算法说明见 [MeshFracture](doc/MeshFracture.md)。模块与接口见 [Architecture](doc/Architecture.md)。
