@@ -3,7 +3,7 @@
 from bpy.props import PointerProperty
 from bpy.types import PropertyGroup
 
-from .tool_registry import TOOLS
+from .tool_registry import ordered_tools
 
 
 class QDSettings(PropertyGroup):
@@ -13,6 +13,6 @@ class QDSettings(PropertyGroup):
     # 未声明参数组的工具不会出现在这里, 因此场景上也不会有它的持久化路径
     __annotations__ = {
         tool.settings_attr: PointerProperty(type=tool.settings_class)
-        for tool in TOOLS
+        for tool in ordered_tools()
         if tool.settings_class is not None
     }

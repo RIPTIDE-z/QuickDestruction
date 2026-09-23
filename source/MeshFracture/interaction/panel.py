@@ -4,6 +4,7 @@ from bpy.types import Panel
 
 from ...constants import SIDEBAR_CATEGORY
 from ..settings import CONTEXT, PROPERTY_SPECS, operator_keywords
+from ..tool import scene_settings
 from .presets import draw_presets
 
 # 每个字段只在这里排布一次; 一行内的字段独立判断启用状态
@@ -133,7 +134,7 @@ def draw_parameters(layout, owner):
         box = layout.box()
         box.label(text=title, text_ctxt=CONTEXT)
         _draw_group(box, owner, rows)
-        # 分组末尾附上 RNA 提示里没有写、但用户一定会踩的前提
+        # 分组末尾附上 RNA 提示里没有写, 但用户一定会踩的前提
         for message in GROUP_NOTES.get(title, ()):
             box.label(text=message, text_ctxt=CONTEXT, icon="INFO")
 
@@ -167,9 +168,9 @@ class MESH_FRACTURE_PT_settings(Panel):
     bl_category = SIDEBAR_CATEGORY
 
     def draw(self, context):
-        """绘制预设, 参数和使用当前侧栏值的生成按钮"""
+        """绘制预设入口, 全部参数与生成按钮"""
         layout = self.layout
-        owner = context.scene.qd_settings.mesh_fracture
+        owner = scene_settings(context)
         # 预设入口在参数之上, 与弹窗里的顺序保持一致
         draw_presets(layout, context, owner)
         draw_parameters(layout, owner)

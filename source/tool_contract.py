@@ -16,7 +16,7 @@ class ToolSpec:
     translation_context: str
     # 该工具的 27 类参数规格; 供翻译目录与 RNA 生成共用, 无参数时为空字典
     property_specs: dict
-    # 返回本工具要注册的算子与面板类; 用函数延迟导入, 避免根翻译目录建立前形成导入环
+    # 返回本工具要注册的算子与面板类; 元组顺序就是注册顺序, 元素必须是类
     classes: Callable[[], tuple[type, ...]]
     # 场景参数组的字段名与类型: 两者必须同时提供或同时省略
     settings_attr: str | None = None
@@ -25,5 +25,12 @@ class ToolSpec:
     menu_hooks: tuple[tuple[type, Callable], ...] = ()
     # 加载新文件前的回调, 用于丢弃与旧文件绑定的状态
     load_pre: Callable | None = None
+    # 加载新文件后的回调, 用于按新场景重建状态
+    load_post: Callable | None = None
     # 只在卸载时执行的回调, 用于清空对话框会话
     clear_sessions: Callable[[], None] | None = None
+    # 在根侧栏父面板里画一行本工具的入口, 回调签名 (layout, context);
+    # 提供与否由工具决定, 不提供时父面板不给它留版面
+    panel_row: Callable | None = None
+    # 工具顺序权重: 数值小的排在前面, 权重相同则按 TOOLS 中的声明顺序
+    weight: int = 0

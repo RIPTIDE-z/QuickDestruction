@@ -3,6 +3,8 @@
 from ..constants import UI_CONTEXT
 
 TOOL_ID = "mesh_fracture"
+# QDSettings 上的字段名; 由 TOOL_ID 派生, 因此工具改名只需要改上面一行
+SETTINGS_ATTR = TOOL_ID
 # 翻译上下文沿用扩展域; 工具 ID 独立用于预设归属
 CONTEXT = UI_CONTEXT
 

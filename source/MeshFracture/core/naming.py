@@ -29,7 +29,11 @@ class NamingPlan:
         padding=3,
         tracker=None,
     ):
-        """保存构造参数并初始化本实例状态"""
+        """从源物体与调用参数建立命名计划
+
+        source_name 在首次切割前固定, 递归层沿用它生成碎块与分组标识;
+        group_counts 按层记录已用组号, temp_counter 供切割期临时名使用
+        """
         self.source_name = source_object.name
         self.collection = collection
         # 碎块名前缀, 只用于碎块名, 不进集合名

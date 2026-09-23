@@ -10,8 +10,7 @@ def points_from_object(context, depsgraph, obj, source):
     points = []
 
     def from_verts(item):
-        # 网格直接取原始顶点; 曲线/曲面/文字/融球取求值后的几何
-        """收集原始网格顶点或可转换物体的求值顶点"""
+        """收集种子点用的顶点: 网格取原始顶点, 曲线与其它可转换类型取求值几何"""
         if item.type == "MESH":
             points.extend(item.matrix_world @ v.co for v in item.data.vertices)
         elif item.type in {"CURVE", "SURFACE", "FONT", "META"}:

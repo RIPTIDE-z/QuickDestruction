@@ -6,7 +6,7 @@ import bpy
 
 from .common.localization import build_translations, load_catalogs
 from .constants import UI_CONTEXT
-from .tool_registry import TOOLS
+from .tool_registry import ordered_tools
 
 TRANSLATIONS_DOMAIN = __package__
 
@@ -14,7 +14,7 @@ TRANSLATIONS_DOMAIN = __package__
 # 每个工具贡献一个模块: 上下文元组决定它的消息进入哪些翻译上下文
 MODULES = {
     tool.translation_module: ((tool.translation_context, "*"), tool.property_specs)
-    for tool in TOOLS
+    for tool in ordered_tools()
 }
 # 启动时一次性读入并校验全部语言文件, 之后绘制与报告都不再读磁盘
 CATALOGS = load_catalogs(Path(__file__).resolve().parent / "locales", MODULES)

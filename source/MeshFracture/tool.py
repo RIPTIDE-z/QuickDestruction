@@ -6,7 +6,7 @@ from bpy.props import StringProperty
 from bpy.types import PropertyGroup
 
 from ..tool_contract import ToolSpec
-from .constants import CONTEXT, TOOL_ID
+from .constants import CONTEXT, SETTINGS_ATTR, TOOL_ID
 from .settings import PROPERTY_SPECS, property_definitions
 
 
@@ -55,13 +55,22 @@ def load_pre(_unused):
     clear_sessions()
 
 
+def scene_settings(context):
+    """取本工具在当前场景的参数组
+
+    字段名来自 SETTINGS_ATTR, 是交互层访问场景参数的唯一入口:
+    工具改名时只需改常量, 各处调用不必跟着改
+    """
+    return getattr(context.scene.qd_settings, SETTINGS_ATTR)
+
+
 TOOL = ToolSpec(
     tool_id=TOOL_ID,
     translation_module="MeshFracture",
     translation_context=CONTEXT,
     property_specs=PROPERTY_SPECS,
-    # QDSettings 上的字段名, 与交互层读取的 Scene.qd_settings.mesh_fracture 一致
-    settings_attr="mesh_fracture",
+    # QDSettings 上的字段名, 与 scene_settings() 读取的路径同源
+    settings_attr=SETTINGS_ATTR,
     settings_class=MeshFractureSettings,
     classes=classes,
     # 物体菜单中的入口

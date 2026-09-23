@@ -13,6 +13,7 @@ from .. import settings
 from ..api import generate_fragments
 from ..errors import MeshFractureError
 from ..settings import CONTEXT, describe_error, property_definitions
+from ..tool import scene_settings
 from . import panel, presets
 
 
@@ -37,7 +38,7 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
     # 菜单入口不使用 poll: 无选中网格时由阶段 API 报出具体原因
 
     def execute(self, context):
-        """执行本算子并按成功或失败返回 Blender 状态"""
+        """按当前参数切割选中物体, 成功后选中产物并把参数回写侧栏"""
         try:
             # 算子字段是本次调用的参数快照: 侧栏按钮与对话框都会把自己的值写进来
             data = settings.settings_to_dict(self)
@@ -51,12 +52,11 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
             restore_selection(context, objects, objects[0])
             # API 返回即提交几何 - 侧栏同步失败不能伪装成未执行
             try:
-                settings.dict_to_settings(context.scene.qd_settings.mesh_fracture, data)
+                owner = scene_settings(context)
+                settings.dict_to_settings(owner, data)
                 if self.preset_session:
                     # 对话框里的改动只写回名称, 参数本身不覆盖侧栏
-                    context.scene.qd_settings.mesh_fracture.preset_name = presets.preset_name(
-                        context, self.preset_session
-                    )
+                    owner.preset_name = presets.preset_name(context, self.preset_session)
             except Exception as error:
                 # 几何已经生成, 这里只提示同步失败, 不做回滚
                 traceback.print_exc()
@@ -91,12 +91,14 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
         return {"CANCELLED"}
 
     def invoke(self, context, _event):
-        # 调用方显式传入的参数优先, 其余字段从侧栏当前值补齐
-        """初始化本次交互并打开参数或确认对话框"""
-        owner = context.scene.qd_settings.mesh_fracture
+        """用侧栏当前值补齐未显式设置的字段, 建立预设会话并打开参数对话框
+
+        调用方显式传入的参数优先, 用 is_property_set 判断,
+        使 F9 重做时带上上次的参数而不是被侧栏覆盖
+        """
+        owner = scene_settings(context)
         defaults = settings.operator_keywords(owner)
         for key, value in defaults.items():
-            # 已经由调用方设置过的字段不覆盖: F9 重做时会带上上次的参数
             if not self.properties.is_property_set(key):
                 setattr(self, key, value)
         # 会话令牌把本次对话框与侧栏区分开, 预设算子据此定位读写目标
@@ -105,16 +107,16 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
         return context.window_manager.invoke_props_dialog(self, width=520)
 
     def cancel(self, _context):
-        # 取消时结束会话, 保证对话框里的临时改动不会写回侧栏
-        """结束当前对话框会话 - 不写回侧栏参数"""
+        """结束对话框会话 - 保证未确认的临时改动不会写回侧栏"""
         presets.end_session(self.preset_session)
         self.preset_session = ""
 
     def draw(self, context):
-        # F9 重做没有活动对话框会话, 此时不显示预设操作, 以免误指到侧栏
-        """绘制当前目标的控件并保留独立的启用条件"""
+        """绘制预设入口与全部参数, 与侧栏共用同一套紧凑布局
+
+        F9 重做没有活动会话, 此时不画预设操作, 以免误指到侧栏
+        """
         if self.preset_session:
             presets.draw_presets(self.layout, context, self, self.preset_session)
-        # 与侧栏一致使用横向紧凑排布: 参数并排而非每行一个,
-        # 这样弹窗天然更宽更矮, 也不会再被"最小宽度"这类设置牵着走
+        # 参数并排而非每行一个, 弹窗因此更宽更矮
         panel.draw_parameters(self.layout, self)

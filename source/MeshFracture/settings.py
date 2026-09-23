@@ -381,6 +381,11 @@ def validated_values(data):
     return schema.validated_values(data, PROPERTY_SPECS)
 
 
+def frozen_values(data):
+    """校验后转成不可变配置, 供阶段 API 冻结本次运行的参数"""
+    return schema.frozen_values(data, PROPERTY_SPECS)
+
+
 def dict_to_settings(owner, data):
     """整体校验后写回字段 - 赋值失败恢复旧值"""
     return schema.dict_to_settings(owner, data, PROPERTY_SPECS)

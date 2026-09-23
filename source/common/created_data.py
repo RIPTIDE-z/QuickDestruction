@@ -7,7 +7,7 @@ class CreatedData:
     """只记录本次显式创建的数据, 便于失败时精确回收"""
 
     def __init__(self):
-        """保存构造参数并初始化本实例状态"""
+        """初始化三类 ID 列表, 键名与 bpy.data 的集合名一致"""
         # 键与 bpy.data 的集合名一致, 回滚时可直接 getattr(bpy.data, kind)
         self.ids = {"objects": [], "meshes": [], "collections": []}
 

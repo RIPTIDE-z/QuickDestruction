@@ -10,12 +10,16 @@ from bpy.types import Menu, Operator
 
 from ...common import preset_storage as storage
 from ...i18n import tr, tr_report
+from ..constants import TOOL_ID
 from ..errors import MeshFractureError
 from ..settings import CONTEXT, describe_error, dict_to_settings, settings_to_dict
+from ..tool import scene_settings
 from .preset_format import decode, encode
 
 # 预设留在 Blender 用户脚本目录, 不随扩展重装而删除
-PRESET_SUBDIR = Path("quick_destruction") / "presets" / "mesh_fracture"
+# 末级目录名由 TOOL_ID 派生: 预设归属校验用的也是同一个常量
+# 首级 quick_destruction 是扩展 ID, 以 blender_manifest.toml 的 id 为准
+PRESET_SUBDIR = Path("quick_destruction") / "presets" / TOOL_ID
 # 以一次性令牌区分"对话框参数"与"侧栏参数"两个编辑目标, 不依赖 active_operator
 # 结构: {令牌: {"owner": 参数持有者, "scene": 归属场景, "name": 当前预设名}}
 SESSIONS = {}
@@ -28,7 +32,7 @@ def new_session(owner, context):
     SESSIONS[token] = {
         "owner": owner,
         "scene": context.scene,
-        "name": context.scene.qd_settings.mesh_fracture.preset_name,
+        "name": scene_settings(context).preset_name,
     }
     return token
 
@@ -47,7 +51,8 @@ def target_settings(context, token=""):
         if session is None or session["scene"] != context.scene:
             raise ValueError("The parameter dialog has closed")
         return session["owner"]
-    return context.scene.qd_settings.mesh_fracture
+    # 没有令牌说明调用来自侧栏, 目标是本工具的场景参数组
+    return scene_settings(context)
 
 
 def preset_name(context, token=""):
@@ -55,7 +60,7 @@ def preset_name(context, token=""):
     if token:
         # 会话里的名称只在本次对话框内有效, 会话结束即丢弃
         return SESSIONS.get(token, {}).get("name", "")
-    return context.scene.qd_settings.mesh_fracture.preset_name
+    return scene_settings(context).preset_name
 
 
 def set_preset_name(context, token, name):
@@ -63,7 +68,7 @@ def set_preset_name(context, token, name):
     if token:
         SESSIONS[token]["name"] = name
     else:
-        context.scene.qd_settings.mesh_fracture.preset_name = name
+        scene_settings(context).preset_name = name
     # 名称显示在面板上, 需要主动重绘才会立刻变化
     if context.area:
         context.area.tag_redraw()
@@ -122,8 +127,10 @@ class PresetTarget:
         return target_settings(context, self.session)
 
     def failure(self, error):
-        # 字段标识换成界面参数名这件事由 describe_error() 统一处理
-        """翻译预设错误并返回取消状态"""
+        """把预设异常翻译成界面消息并返回取消状态
+
+        字段标识换成界面参数名这件事由 describe_error() 统一处理
+        """
         message, values = describe_error(error)
         self.report(
             {"ERROR"},
@@ -168,19 +175,18 @@ class MESH_FRACTURE_OT_preset_save(PresetTarget, Operator):
     }
 
     def invoke(self, context, _event):
-        # 默认沿用当前预设名, 覆盖开关每次都从关闭开始
-        """初始化本次交互并打开参数或确认对话框"""
+        """沿用当前预设名并重置覆盖开关, 打开保存对话框"""
         self.name = self.name or preset_name(context, self.session)
         self.overwrite = False
         return context.window_manager.invoke_props_dialog(self, width=360)
 
     def draw(self, _context):
-        """绘制当前目标的控件并保留独立的启用条件"""
+        """绘制预设名与覆盖开关两个字段"""
         self.layout.prop(self, "name")
         self.layout.prop(self, "overwrite")
 
     def execute(self, context):
-        """执行本算子并按成功或失败返回 Blender 状态"""
+        """读出目标参数并以信封格式写入本工具目录"""
         try:
             # 从当前目标读出参数, 加上信封后原子写入本工具目录
             name = save_preset(self.name, settings_to_dict(self.target(context)), self.overwrite)
@@ -209,7 +215,7 @@ class MESH_FRACTURE_OT_preset_load(PresetTarget, Operator):
     __annotations__ = target_properties()
 
     def execute(self, context):
-        """执行本算子并按成功或失败返回 Blender 状态"""
+        """读取并校验预设文件, 把其中的参数整体写回当前目标"""
         try:
             path = preset_filepath(self.name)
             # 只读取有限大小的文件, 且只当数据解析, 绝不执行其中内容
@@ -241,12 +247,11 @@ class MESH_FRACTURE_OT_preset_remove(PresetTarget, Operator):
     __annotations__ = target_properties()
 
     def invoke(self, context, _event):
-        # 删除不可撤销, 因此先弹确认
-        """初始化本次交互并打开参数或确认对话框"""
+        """先弹确认对话框再删除 - 删除不可撤销"""
         return context.window_manager.invoke_confirm(self, _event)
 
     def execute(self, context):
-        """执行本算子并按成功或失败返回 Blender 状态"""
+        """删除当前名称对应的预设文件, 必要时清空显示的名称"""
         try:
             # 先解析目标: 对话框已关闭时在这里就报错, 不会误删别的目录
             self.target(context)
@@ -262,7 +267,7 @@ class MESH_FRACTURE_OT_preset_remove(PresetTarget, Operator):
 
 
 class MESH_FRACTURE_OT_preset_open_directory(Operator):
-    """打开本阶段的用户预设目录"""
+    """打开本工具的用户预设目录"""
 
     bl_idname = "mesh_fracture.preset_open_directory"
     bl_label = "Open Preset Directory"
@@ -271,7 +276,7 @@ class MESH_FRACTURE_OT_preset_open_directory(Operator):
     bl_options: ClassVar[set[str]] = {"INTERNAL"}
 
     def execute(self, _context):
-        """执行本算子并按成功或失败返回 Blender 状态"""
+        """在系统文件管理器中打开本工具的预设目录; 目录不存在时先创建"""
         try:
             bpy.ops.wm.path_open(filepath=str(preset_directory(create=True)))
         except (OSError, RuntimeError) as error:
@@ -291,7 +296,10 @@ class MESH_FRACTURE_MT_presets(Menu):
     bl_translation_context = CONTEXT
 
     def draw(self, context):
-        """绘制当前目标的控件并保留独立的启用条件"""
+        """列出保存入口, 每个预设的载入与删除项, 以及打开目录项
+
+        编辑目标由绘制方挂在 context 上, 这里只取它的会话令牌
+        """
         layout = self.layout
         owner = getattr(context, "mesh_fracture_preset_target", None)
         token = getattr(owner, "preset_session", "")

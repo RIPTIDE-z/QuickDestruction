@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from ..common.blender_context import preserve_selection
-from .settings import PROPERTY_SPECS, validated_values
+from .settings import PROPERTY_SPECS, frozen_values
 
 
 @dataclass(frozen=True)
@@ -23,17 +23,15 @@ class MeshFractureResult:
 
 
 def complete_config(config):
-    """从唯一规格补齐默认值并冻结运行配置"""
+    """从唯一规格补齐默认值并冻结运行配置
+
+    默认值与调用方字段一起校验一次; 多选枚举在冻结时转成升序元组
+    """
     # 先铺默认值再用调用方字段覆盖, 因此 config 允许只给一部分
     values = {key: options.get("default", "") for key, (_kind, options) in PROPERTY_SPECS.items()}
-    values.update(validated_values(dict(config)))
-    # 再校验一次是为了连默认值一起校验; 枚举集合转有序元组, 便于冻结与比较
-    values = {
-        key: tuple(sorted(value)) if isinstance(value, set) else value
-        for key, value in validated_values(values).items()
-    }
+    values.update(config)
     # 只读映射: 计算层据此读取, 不允许回写配置
-    return MappingProxyType(values)
+    return MappingProxyType(frozen_values(values))
 
 
 def generate_fragments(context, sources, config, output_collection, *, rng=None):

@@ -1,27 +1,64 @@
-"""规格引擎 - 按规格读取, 校验与写回字段, 供算子与属性组共用, 不依赖 Blender"""
+"""规格引擎 - 按规格读取, 校验与写回字段, 供算子与属性组共用, 不依赖 Blender
+
+值的形态只有三种, 转换全部集中在本模块:
+    RNA 形态      Blender 属性上的原值: 多选枚举是 set, 向量是 mathutils 数组
+    数据形态      可 JSON 化的纯数据: 多选枚举是有序 list, 向量是 list
+    冻结形态      只读配置里的值: 多选枚举是升序 tuple, 向量是 tuple
+读取与写回各只走一步转换, 不再来回倒手
+"""
 
 import math
 
 from .errors import InvalidParameterError
 
 
+def _is_flag_enum(kind, options):
+    """多选枚举: 值是一组字符串标识"""
+    return kind == "EnumProperty" and "ENUM_FLAG" in options.get("options", ())
+
+
+def _is_vector(kind):
+    """向量: 值是固定长度的数值序列"""
+    return kind == "FloatVectorProperty"
+
+
+def to_data_value(value, kind, options):
+    """RNA 形态 -> 数据形态: 多选枚举转有序列表, 向量转列表"""
+    if _is_flag_enum(kind, options) and isinstance(value, set):
+        return sorted(value)
+    if _is_vector(kind):
+        return list(value)
+    return value
+
+
+def to_rna_value(value, kind, options):
+    """数据形态 -> RNA 形态: 多选枚举转集合, 向量转元组"""
+    if _is_flag_enum(kind, options):
+        return set(value)
+    if _is_vector(kind):
+        return tuple(value)
+    return value
+
+
 def settings_to_dict(owner, specs):
-    """把参数读成纯数据字典; 算子与属性组两种持有者都能用"""
+    """把参数读成数据形态; 算子与属性组两种持有者都能用"""
     data = {}
     # 只读规格里声明的字段, 因此算子实例与场景属性组可以共用同一份规格
-    for key, (kind, _options) in specs.items():
-        value = getattr(owner, key)
-        # 枚举集合是 set, 向量是 mathutils 数组, 两者都要转成可 JSON 化的类型
-        if kind == "EnumProperty" and isinstance(value, set):
-            value = sorted(value)
-        elif kind == "FloatVectorProperty":
-            value = list(value)
-        data[key] = value
+    for key, (kind, options) in specs.items():
+        data[key] = to_data_value(getattr(owner, key), kind, options)
     return data
 
 
+def operator_keywords(owner, specs):
+    """把参数读成 RNA 形态, 直接作为关键字参数传给算子"""
+    keywords = {}
+    for key, (kind, options) in specs.items():
+        keywords[key] = to_rna_value(getattr(owner, key), kind, options)
+    return keywords
+
+
 def validated_values(data, specs):
-    """先整体校验再返回可赋值的数据; 预设缺字段时保留界面当前值"""
+    """先整体校验再返回 RNA 形态的数据; 预设缺字段时保留界面当前值"""
     if not isinstance(data, dict):
         raise ValueError("Preset must be a JSON object")
     values = {}
@@ -40,20 +77,17 @@ def validated_values(data, specs):
             valid = isinstance(value, str) and "\x00" not in value
         elif kind == "EnumProperty":
             choices = {item[0] for item in options["items"]}
-            if "ENUM_FLAG" in options.get("options", ()):
+            if _is_flag_enum(kind, options):
                 # 多选枚举: 元素必须是合法标识, 允许 list / tuple / set 三种输入
                 valid = isinstance(value, (list, tuple, set)) and all(
                     isinstance(item, str) and item in choices for item in value
                 )
-                if valid:
-                    # 统一成 set, 与 ENUM_FLAG 在 RNA 上的期望类型一致
-                    value = set(value)
             else:
                 # 单选枚举: 必须是字符串且落在候选项内
                 valid = isinstance(value, str) and value in choices
         else:
             # 数值项统一检查类型, 有限性与范围; 向量还要检查长度
-            is_vector = kind == "FloatVectorProperty"
+            is_vector = _is_vector(kind)
             # 向量按分量检查, 标量包成单元素列表走同一段判断
             numbers = value if is_vector and isinstance(value, (list, tuple)) else [value]
             # 向量长度必须等于规格声明的 size
@@ -67,26 +101,36 @@ def validated_values(data, specs):
                 and options.get("min", -math.inf) <= number <= options.get("max", math.inf)
                 for number in numbers
             )
-            if valid and is_vector:
-                # 统一成元组, 便于冻结与比较
-                value = tuple(value)
         if not valid:
             # 只抛出字段标识, 界面文案由调用方翻译
             raise InvalidParameterError(key)
-        values[key] = value
+        values[key] = to_rna_value(value, kind, options)
     return values
+
+
+def frozen_values(data, specs):
+    """校验全部字段并转成冻结形态, 供只读运行配置使用
+
+    多选枚举在这里转成升序元组而不是集合: 冻结的配置必须真的不可变
+    """
+    values = validated_values(data, specs)
+    return {
+        key: tuple(sorted(value)) if isinstance(value, set) else value
+        for key, value in values.items()
+    }
+
+
+def _rna_snapshot(owner, keys, specs):
+    """记录若干字段的 RNA 形态现值, 供写回失败时回滚"""
+    # 向量在这里就转成元组, 避免快照持有已经失效的临时数组
+    return {key: to_rna_value(getattr(owner, key), specs[key][0], specs[key][1]) for key in keys}
 
 
 def dict_to_settings(owner, data, specs):
     """把校验后的数据写入属性组; 中途失败则回滚已改动的字段"""
     # 先整体校验: 避免写了一半才发现后面的字段非法
     values = validated_values(data, specs)
-    previous = {key: getattr(owner, key) for key in values}
-    # 向量读回来是 mathutils 数组, 先转元组, 否则回滚时会把临时对象写回 RNA
-    previous = {
-        key: tuple(value) if specs[key][0] == "FloatVectorProperty" else value
-        for key, value in previous.items()
-    }
+    previous = _rna_snapshot(owner, values, specs)
     try:
         for key, value in values.items():
             setattr(owner, key, value)
@@ -97,13 +141,3 @@ def dict_to_settings(owner, data, specs):
         raise
     # 返回实际写入的字段数, 供界面报告"载入了几个参数"
     return len(values)
-
-
-def operator_keywords(owner, specs):
-    """取可传给算子的关键字参数, 枚举集合转成 set"""
-    data = settings_to_dict(owner, specs)
-    for key, (kind, options) in specs.items():
-        # settings_to_dict 把多选枚举转成了有序列表, 传给算子时要还原成 set
-        if kind == "EnumProperty" and "ENUM_FLAG" in options.get("options", ()):
-            data[key] = set(data[key])
-    return data
