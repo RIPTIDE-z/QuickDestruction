@@ -6,7 +6,7 @@
 | --- | --- |
 | `source/__init__.py`、`registration.py` | Blender 扩展入口、类与 RNA ID 校验、顺序注册和逆序清理。 |
 | `source/tool_contract.py`、`tool_registry.py` | 工具声明结构与有序工具清单。 |
-| `source/properties.py`、`panel.py`、`constants.py` | 场景参数聚合根、侧栏父面板和扩展级界面标识。 |
+| `source/properties.py`、`constants.py` | 场景参数聚合根与扩展级界面标识。 |
 | `source/preset_ui.py` | 通用预设界面：会话、目录解析、算子与菜单，对全部工具共用。 |
 | `source/i18n.py`、`locales/*.json` | 根据工具清单构建翻译目录，并提供一个与工具无关的框架分组；每种语言一个 JSON。 |
 | `source/common/` | 参数校验、RNA 属性生成、包围盒测量、译文取词、预设存储与信封、翻译目录构建及 Blender 数据与上下文辅助。 |
@@ -18,7 +18,7 @@
 
 ## 工具装配
 
-`tool_registry.TOOLS` 是工具顺序来源，`ordered_tools()` 按 `weight` 给出界面顺序，注册、父面板与翻译目录共用它。每个 `ToolSpec` 声明：
+`tool_registry.TOOLS` 是工具顺序来源，`ordered_tools()` 按 `weight` 给出界面顺序，注册与翻译目录共用它。每个 `ToolSpec` 声明：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -28,12 +28,26 @@
 | `settings_attr`、`settings_class` | 可选的场景属性组字段名与类型，两者必须同时提供或同时省略。 |
 | `preset` | 可选的 `PresetSpec`，声明后获得通用预设界面。 |
 | `menu_hooks`、`load_pre`、`load_post`、`clear_sessions` | 菜单入口与文件加载前后的回调。 |
-| `panel_row` | 可选，在根侧栏父面板里画一行本工具的入口。 |
 | `weight` | 界面顺序权重，数值小的排在前面。 |
+| `default_closed` | 次要工具的标记：为 `True` 时它的侧栏面板默认收起。注册层据此设置面板类的 `bl_options`，因此以本字段为唯一来源。 |
 
-注册层先检查类名与 `bl_idname` 唯一性、工具身份与预设归属的唯一性，再注册参数组、`Scene.qd_settings`、父面板、通用预设类、工具类和外部入口。停用或注册失败时按相反顺序清理。
+注册层先检查类名与 `bl_idname` 唯一性、工具身份与预设归属的唯一性，再把 `default_closed` 落到面板类上，然后注册参数组、`Scene.qd_settings`、通用预设类、工具类和外部入口。停用或注册失败时按相反顺序清理。
 
-新增一个工具只需要在自己的包内声明 `ToolSpec` 并加入 `TOOLS`：需要持久化参数时同时给出属性组类与 `QDSettings` 字段名，需要预设时给出 `PresetSpec`，需要侧栏界面时把子面板挂到 `QD_PT_main` 下，并在每种语言的 JSON 里补上该模块的分组（见[翻译维护](Translations.md)）。根层负责注册顺序、父面板、场景指针、通用预设界面和翻译目录，工具之间不互相导入。
+新增一个工具只需要在自己的包内声明 `ToolSpec` 并加入 `TOOLS`：需要持久化参数时同时给出属性组类与 `QDSettings` 字段名，需要预设时给出 `PresetSpec`，需要侧栏界面时在工具包里声明一个顶层 `Panel`，次要工具再把 `default_closed` 设为 `True`，并在每种语言的 JSON 里补上该模块的分组（见[翻译维护](Translations.md)）。根层负责注册顺序、场景指针、通用预设界面和翻译目录，工具之间不互相导入。
+
+## 侧栏界面
+
+同一分类下并列多个**顶层面板**，每个工具一个，各自独立折叠，不设父面板：
+
+| 约定 | 说明 |
+| --- | --- |
+| `bl_space_type` / `bl_region_type` | 固定为 `VIEW_3D` / `UI`，也就是 3D 视图的侧栏。 |
+| `bl_category` | 取 `constants.SIDEBAR_CATEGORY`，决定它属于侧栏的哪个标签页。 |
+| `bl_parent_id` | 留空。面板之间是并列关系，不嵌套；需要子分节时才可以指向本工具的面板。 |
+| 排列顺序 | 同分类的顶层面板按 `bl_order` 升序排列，值相同时按注册顺序；注册顺序由 `ordered_tools()` 决定，因此 `weight` 就是界面顺序。不设 `bl_order` 时全部视为 0，顺序完全由工具声明决定。 |
+| 初始折叠 | 由 `ToolSpec.default_closed` 决定，注册层把它写成面板类的 `bl_options`，工具不需要自己写这个选项。收起的面板不会被 Blender 调用 `draw`，所以界面验证里"内容画得出来"由驱动面板负责，侧栏那一轮只核对注册、摆放与折叠状态。 |
+
+分类标签页的标题来自 `bl_category` 本身，与面板数量无关；去掉父面板后标签页里直接就是各工具的面板。
 
 ## 通用预设
 
@@ -73,7 +87,7 @@
 | --- | --- |
 | `tool.py` | `ToolSpec` 声明、场景属性组、菜单入口、会话清理与文件加载回调。 |
 | `settings.py` | 27 项参数规格、场景参数组访问器、预设归属，以及校验与序列化入口。 |
-| `interaction/` | 子面板与参数布局、生成算子；预设界面来自根层。 |
+| `interaction/` | 侧栏顶层面板与参数布局、生成算子；预设界面来自根层。 |
 | `api.py` | 可直接调用的生成入口与结果对象。 |
 | `core/` | 纯计算：种子采样、胞体构造、布尔策略、网格操作、命名与递归编排。 |
 | `constants.py`、`errors.py` | 领域常量与领域异常。 |
@@ -82,7 +96,7 @@
 
 ### 场景参数与界面标识
 
-场景参数位于 `Scene.qd_settings.mesh_fracture`，其中 `preset_name` 只记录本工具当前预设名。侧栏子面板 ID 为 `MESH_FRACTURE_PT_settings`，生成算子 ID 为 `mesh_fracture.generate_fragments`。工具菜单与子面板都显示 **MeshFracture／网格破碎**；生成动作显示 **Generate Fragments／生成碎块**。
+场景参数位于 `Scene.qd_settings.mesh_fracture`，其中 `preset_name` 只记录本工具当前预设名。侧栏面板 ID 为 `MESH_FRACTURE_PT_settings`，生成算子 ID 为 `mesh_fracture.generate_fragments`。工具菜单与侧栏面板都显示 **MeshFracture／网格破碎**；生成动作显示 **Generate Fragments／生成碎块**。
 
 ### 阶段 API
 

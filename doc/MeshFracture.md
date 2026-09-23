@@ -2,7 +2,7 @@
 
 预切割流程：点源采样 → 有界胞体 → 凸包 → Exact 布尔求交 → 递归与断面收尾。
 
-源物体始终保留。工具位于 3D 视图 **QuickDestruction** 标签页的 **MeshFracture／网格破碎** 子面板，点击 **Generate Fragments／生成碎块** 执行；也可从物体菜单的快速效果组打开参数弹窗。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
+源物体始终保留。工具位于 3D 视图 **QuickDestruction** 标签页的 **MeshFracture／网格破碎** 面板，点击 **Generate Fragments／生成碎块** 执行；也可从物体菜单的快速效果组打开参数弹窗。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
 
 ## 点源与数量
 

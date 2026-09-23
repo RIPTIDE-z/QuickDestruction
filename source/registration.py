@@ -7,7 +7,6 @@ import bpy
 from bpy.props import PointerProperty
 
 from .i18n import COMMON_MODULE, TRANSLATIONS_DOMAIN, translations_dict
-from .panel import QD_PT_main
 from .preset_ui import CLASSES as PRESET_CLASSES
 from .properties import QDSettings
 from .tool_registry import ordered_tools
@@ -27,6 +26,25 @@ def _collect_classes(tools):
         except Exception as error:
             raise RuntimeError(f"Tool {tool.tool_id} failed to provide its classes") from error
     return tuple(groups)
+
+
+def _apply_panel_state(tools, tool_classes):
+    """把工具声明的初始折叠状态落到它的面板类上
+
+    Blender 在注册面板类时读取 bl_options, 因此必须在注册之前设置;
+    以 ToolSpec.default_closed 为唯一来源: 声明收起就加上 DEFAULT_CLOSED,
+    否则去掉, 工具自己写在面板类上的同名选项会被这里覆盖
+    """
+    for tool, group in zip(tools, tool_classes, strict=True):
+        for cls in group:
+            if not (isinstance(cls, type) and issubclass(cls, bpy.types.Panel)):
+                continue
+            options = set(getattr(cls, "bl_options", ()) or ())
+            if tool.default_closed:
+                options.add("DEFAULT_CLOSED")
+            else:
+                options.discard("DEFAULT_CLOSED")
+            cls.bl_options = options
 
 
 def _check_unique(tools, tool_classes):
@@ -57,9 +75,9 @@ def _check_unique(tools, tool_classes):
         if len(values) != len(set(values)):
             raise ValueError(f"Duplicate preset {field}")
 
-    # 汇总本次要注册的全部类: 根层参数组与父面板, 框架的通用预设类,
+    # 汇总本次要注册的全部类: 根层参数组, 框架的通用预设类,
     # 各工具的参数组, 各工具声明的交互类
-    classes = (QDSettings, QD_PT_main, *PRESET_CLASSES)
+    classes = (QDSettings, *PRESET_CLASSES)
     classes += tuple(tool.settings_class for tool in tools if tool.settings_class is not None)
     classes += tuple(cls for group in tool_classes for cls in group)
     # Blender 对重复 bl_idname 不报错, 而是静默用后注册的实现顶替先注册的,
@@ -102,16 +120,18 @@ def _release(applied):
 
 
 def register():
-    """先注册参数类型, 再接场景指针, 父子面板和菜单"""
+    """先注册参数类型, 再接场景指针, 预设类, 工具类与外部入口"""
     # 已经注册过就整体拒绝: 重复注册会让后一份类顶替前一份, 留下无法注销的残骸
     if _undo_steps:
         raise RuntimeError("QuickDestruction is already registered")
-    # 工具集合按 weight 排序取一次, 注册顺序与父面板, 翻译目录共用同一份
+    # 工具集合按 weight 排序取一次, 注册顺序与翻译目录共用同一份
     tools = ordered_tools()
     # 交互类由各工具的 classes() 提供, 这里一次性取齐, 以便在改动任何
     # Blender 状态之前完成唯一性检查; 取类本身也会完成工具包的首次导入
     tool_classes = _collect_classes(tools)
     _check_unique(tools, tool_classes)
+    # 初始折叠只认 bl_options, 必须在注册之前落到类上
+    _apply_panel_state(tools, tool_classes)
     # applied 记录本次已经成功的每一步及其逆操作; 中途失败时按它回滚
     applied = []
     try:
@@ -144,20 +164,14 @@ def register():
             lambda: delattr(bpy.types.Scene, "qd_settings"),
             applied,
         )
-        # 5) 父面板: 子面板的 bl_parent_id 指向它, 必须已存在
-        _apply(
-            lambda: bpy.utils.register_class(QD_PT_main),
-            lambda: bpy.utils.unregister_class(QD_PT_main),
-            applied,
-        )
-        # 6) 框架的通用预设算子与菜单: 各工具的子面板绘制时会引用它们
+        # 5) 框架的通用预设算子与菜单: 各工具的侧栏面板绘制时会引用它们
         for cls in PRESET_CLASSES:
             _apply(
                 lambda cls=cls: bpy.utils.register_class(cls),
                 lambda cls=cls: bpy.utils.unregister_class(cls),
                 applied,
             )
-        # 7) 工具声明的交互类: 生成算子, 菜单与子面板
+        # 6) 工具声明的交互类: 生成算子, 菜单与侧栏面板
         for group in tool_classes:
             for cls in group:
                 _apply(
@@ -165,7 +179,7 @@ def register():
                     lambda cls=cls: bpy.utils.unregister_class(cls),
                     applied,
                 )
-        # 8) 外部入口最后挂: 菜单与 handler 一旦生效就可能被用户触发,
+        # 7) 外部入口最后挂: 菜单与 handler 一旦生效就可能被用户触发,
         #    因此回滚时它们会最先被摘掉
         for tool in tools:
             if tool.clear_sessions is not None:

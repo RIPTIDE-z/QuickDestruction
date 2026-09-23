@@ -156,14 +156,17 @@ def can_apply(context):
 
 
 class MESH_FRACTURE_PT_settings(Panel):
-    """当前场景的 MeshFracture 参数和生成入口"""
+    """当前场景的 MeshFracture 参数和生成入口
+
+    顶层面板: 与其它工具的侧栏面板并列在同一个分类下, 各自独立折叠
+    """
 
     bl_idname = "MESH_FRACTURE_PT_settings"
-    bl_parent_id = "QD_PT_main"
     bl_label = "MeshFracture"
     bl_translation_context = CONTEXT
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
+    # 分类名决定 3D 视图侧栏的标签页; 同分类的顶层面板按注册顺序排列
     bl_category = SIDEBAR_CATEGORY
 
     def draw(self, context):

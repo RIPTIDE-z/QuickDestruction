@@ -44,8 +44,8 @@ class ToolSpec:
     load_post: Callable | None = None
     # 只在卸载时执行的回调, 用于清空对话框会话
     clear_sessions: Callable[[], None] | None = None
-    # 在根侧栏父面板里画一行本工具的入口, 回调签名 (layout, context);
-    # 提供与否由工具决定, 不提供时父面板不给它留版面
-    panel_row: Callable | None = None
     # 工具顺序权重: 数值小的排在前面, 权重相同则按 TOOLS 中的声明顺序
     weight: int = 0
+    # 初始折叠: True 表示这是次要工具, 它的侧栏面板默认收起;
+    # 注册层会据此设置面板类的 bl_options, 因此以本字段为唯一来源
+    default_closed: bool = False

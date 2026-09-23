@@ -25,7 +25,7 @@ class MeshFractureSettings(PropertyGroup):
 
 def classes():
     """返回本工具要注册的算子与面板类, 元组顺序就是注册顺序"""
-    # 生成算子在前, 子面板在后: 面板的 bl_parent_id 指向根父面板, 与算子无关
+    # 生成算子在前, 侧栏面板在后: 面板是顶层的, 与算子的注册顺序无关
     return (MESH_FRACTURE_OT_generate_fragments, panel.MESH_FRACTURE_PT_settings)
 
 
