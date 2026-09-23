@@ -5,6 +5,10 @@ from ..common.errors import InvalidParameterError
 from .constants import CELL_SCALE_MIN, CONTEXT, RANDOM_SEED_DEFAULT
 from .errors import MeshFractureError
 
+# 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
+# name 与 description 是英文原文, 也是翻译文件里稳定字段路径的来源;
+# min / max / items / default 等关键字原样交给 bpy.props, 因此这里同时是
+# RNA 定义, 界面提示, 校验范围与预设字段表四个用途的唯一来源
 PROPERTY_SPECS = {
     "source": (
         "EnumProperty",
@@ -345,20 +349,25 @@ PROPERTY_SPECS = {
 
 def field_label(field):
     """从参数规格读取界面标签 - 未知字段原样返回"""
+    # 规格里取不到时退回字段名本身, 保证出错信息里总有可定位的线索
     return PROPERTY_SPECS.get(field, ("", {"name": field}))[1]["name"]
 
 
 def describe_error(error):
     """把字段错误映射为参数标签, 保留领域错误的消息键"""
     if isinstance(error, InvalidParameterError):
+        # 校验错误只带字段名, 这里换成界面标签再交给消息模板
         return "Invalid parameter: {name}", {"name": field_label(error.field)}
     if isinstance(error, MeshFractureError):
+        # 领域错误已经保存了消息键与插值参数, 直接透传
         return error.message, dict(error.values)
+    # 其余异常按原文展示
     return str(error), {}
 
 
 def property_definitions():
     """为算子或持久化参数组生成一套新的属性定义"""
+    # 生成算子与场景属性组调用同一个函数, 因此两边字段不会分叉
     return rna.property_definitions(PROPERTY_SPECS, CONTEXT)
 
 
@@ -379,4 +388,5 @@ def dict_to_settings(owner, data):
 
 def operator_keywords(owner):
     """生成可传入 Blender 算子的关键字参数"""
+    # 侧栏按钮用它把当前界面值写入即将执行的算子实例
     return schema.operator_keywords(owner, PROPERTY_SPECS)

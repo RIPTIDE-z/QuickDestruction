@@ -12,10 +12,14 @@ from ..errors import MeshFractureError
 class BooleanSource:
     """一次切割的求值源快照,只保存数值,不持有临时求值网格"""
 
+    # 源物体名, 只用于错误消息
     name: str
+    # 世界空间包围盒的最小与最大角点
     minimum: tuple
     maximum: tuple
+    # 允许的越界余量, 由物体尺度与浮点精度推出
     tolerance: float
+    # 输入含非流形时启用 Hole Tolerant 求解
     use_hole_tolerant: bool
 
 

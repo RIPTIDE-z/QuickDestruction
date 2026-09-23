@@ -6,6 +6,7 @@ class MeshFractureError(Exception):
 
     def __init__(self, message, **values):
         """保存构造参数并初始化本实例状态"""
+        # message 是英文消息键, 界面层先查译文再把 values 填进去
         super().__init__(message)
         self.message = message
         self.values = values

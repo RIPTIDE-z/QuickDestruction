@@ -2,4 +2,5 @@
 
 from .MeshFracture.tool import TOOL as MESH_FRACTURE
 
+# 元组顺序即注册顺序与侧栏显示顺序; 新增工具时在此追加, 并补齐语言 JSON 的模块分组
 TOOLS = (MESH_FRACTURE,)

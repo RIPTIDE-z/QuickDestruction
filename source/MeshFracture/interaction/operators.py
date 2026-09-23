@@ -39,8 +39,10 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
     def execute(self, context):
         """执行本算子并按成功或失败返回 Blender 状态"""
         try:
+            # 算子字段是本次调用的参数快照: 侧栏按钮与对话框都会把自己的值写进来
             data = settings.settings_to_dict(self)
             keywords = settings.validated_values(data)
+            # collection_name 作为输出集合显式传给 API, API 不再从配置里隐式取
             result = generate_fragments(
                 context, context.selected_editable_objects, keywords, keywords["collection_name"]
             )
@@ -51,10 +53,12 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
             try:
                 settings.dict_to_settings(context.scene.qd_settings.mesh_fracture, data)
                 if self.preset_session:
+                    # 对话框里的改动只写回名称, 参数本身不覆盖侧栏
                     context.scene.qd_settings.mesh_fracture.preset_name = presets.preset_name(
                         context, self.preset_session
                     )
             except Exception as error:
+                # 几何已经生成, 这里只提示同步失败, 不做回滚
                 traceback.print_exc()
                 self.report(
                     {"WARNING"},
@@ -92,8 +96,10 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
         owner = context.scene.qd_settings.mesh_fracture
         defaults = settings.operator_keywords(owner)
         for key, value in defaults.items():
+            # 已经由调用方设置过的字段不覆盖: F9 重做时会带上上次的参数
             if not self.properties.is_property_set(key):
                 setattr(self, key, value)
+        # 会话令牌把本次对话框与侧栏区分开, 预设算子据此定位读写目标
         presets.end_session(self.preset_session)
         self.preset_session = presets.new_session(self, context)
         return context.window_manager.invoke_props_dialog(self, width=520)

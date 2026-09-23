@@ -23,6 +23,7 @@ from .sampling import points_from_object, random_unit_vector
 
 def _weld_distances(scale):
     """由物体尺度推出焊接距离与抖动半幅, 抖动取焊接距离的几分之一"""
+    # scale 是包围盒对角线: 两个距离都是它的固定比例, 因此与物体绝对大小无关
     distance = scale * WELD_SCALE_RATIO
     return distance, distance / WELD_TO_JITTER_RATIO
 
@@ -35,8 +36,10 @@ def redraw():
 
 def remove_generated_object(obj):
     """删除物体, 并回收随之失去用户的网格数据"""
+    # 先记下网格引用: 物体删除后 obj.data 不再可读
     mesh = obj.data if obj.type == "MESH" else None
     bpy.data.objects.remove(obj, do_unlink=True)
+    # 仅在没有其他使用者时回收网格, 避免误删共享数据
     if mesh is not None and mesh.users == 0:
         bpy.data.meshes.remove(mesh)
 
@@ -71,9 +74,11 @@ def build_cells(
     naming 为 None 时使用 "<源物体名>_cell", 允许独立调用本阶段
     rng 由管线在各轮间共享; 单独调用未提供时使用固定默认种子的局部随机流
     """
+    # 延迟导入: cells 只依赖 mathutils, 放模块顶层会把几何依赖提前拉起
     from .cells import points_as_bmesh_cells
 
     if rng is None:
+        # 独立调用本函数时给一个固定种子的局部随机流, 保证结果可复现
         rng = random.Random(RANDOM_SEED_DEFAULT)
 
     def shard_name():
@@ -99,6 +104,7 @@ def build_cells(
         points = points[:source_limit]
     # 精确去重: 按固定小数位取整会丢掉小尺寸物体的真实点
     points = list({tuple(point): point for point in points}.values())
+    # 顶点取求值后的网格: 修改器结果要参与包围盒尺度与胞体构造
     evaluated = obj.evaluated_get(depsgraph)
     try:
         evaluated_mesh = evaluated.to_mesh()
@@ -126,6 +132,7 @@ def build_cells(
         mesh.from_pydata(points, [], [])
         debug_object = track(tracker, "objects", bpy.data.objects.new("DebugPoints", mesh))
         shard_collection().objects.link(debug_object)
+    # 胞体构造: verts 决定初始包围盒, points 是 Voronoi 站点
     cells = points_as_bmesh_cells(verts, points, cell_scale, margin_cell=margin)
     objects = []
     for center, cell_points in cells:
@@ -143,6 +150,7 @@ def build_cells(
             try:
                 bmesh.ops.convex_hull(bm, input=list(bm.verts))
             except RuntimeError:
+                # 退化输入会让凸包失败, 跳过该胞体而不是中断整次切割
                 continue
             if not bm.faces:
                 continue
@@ -150,6 +158,7 @@ def build_cells(
                 # 合并近似共面的小面, 让胞体面数更少更规整
                 bm.normal_update()
                 bmesh.ops.dissolve_limit(bm, verts=list(bm.verts), angle_limit=0.001)
+            # 写在基础网格上的着色与材质会在布尔求值后带到碎块上
             for face in bm.faces:
                 face.smooth = use_smooth_faces
                 face.material_index = material_index
@@ -171,6 +180,7 @@ def build_cells(
         # 胞体顶点相对于种子点,平移到 center 后恢复其世界空间位置
         cell.location = center
         if naming is not None:
+            # 独立调用时没有命名计划, 也就没有身份标记
             naming.mark(cell, naming.source_name, level, group)
         objects.append(cell)
         if use_data_match:
@@ -210,6 +220,7 @@ def intersect_cells(
     ).length
     weld_dist = _weld_distances(diagonal)[0]
     if use_interior_hide and level == 0:
+        # 只有首次切割需要干净起点: 源物体上原有的隐藏标记会干扰内部判定
         obj.data.polygons.foreach_set("hide", [False] * len(obj.data.polygons))
         obj.data.update()
     # 求解策略只在布尔边界决定,每个源/递归父块检查一次,所有胞体共用
@@ -219,11 +230,13 @@ def intersect_cells(
         modifier = cell.modifiers.new(name="Boolean", type="BOOLEAN")
         modifier.object = obj
         boolean.configure_intersection(modifier, source)
+        # 记下修改器引用, 取完求值结果后逐个移除
         modifiers[cell] = modifier
         if use_interior_hide and not use_debug_bool:
             # 先用隐藏标记区分内外表面, 收尾阶段再据此判定内部断面
             cell.data.polygons.foreach_set("hide", [True] * len(cell.data.polygons))
             cell.data.update()
+    # 修改器与隐藏标记都要先刷新视图层, 依赖图里才会包含它们
     context.view_layer.update()
     depsgraph = context.evaluated_depsgraph_get()
     results = []
@@ -240,6 +253,7 @@ def intersect_cells(
                 ),
             )
             boolean.validate_intersection(mesh, evaluated.matrix_world, source)
+            # 换网格前先记下旧网格, 换完再按使用者数量决定是否回收
             old_mesh = cell.data
             cell.data = mesh
             cell.modifiers.remove(modifiers[cell])

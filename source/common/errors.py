@@ -6,5 +6,7 @@ class InvalidParameterError(ValueError):
 
     def __init__(self, field):
         """保存构造参数并初始化本实例状态"""
+        # 继承 ValueError, 让既有的 except ValueError 分支继续生效
         super().__init__(field)
+        # field 是规格里的字段名, 界面层据此取出参数标签再展示
         self.field = field

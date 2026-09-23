@@ -52,12 +52,14 @@ class NamingPlan:
 
     def next_group(self, tier):
         """取该层下一个组号, 并把该层的组数推进一位"""
+        # 组号在层内从 1 开始递增, 与层号一起构成 L<层>_G<组>
         group = self.group_counts.get(tier, 0) + 1
         self.group_counts[tier] = group
         return group
 
     def next_collection(self, tier, group):
         """建立一个组集合; 集合名只用层组号, 不加用户前缀"""
+        # 不分组时返回 None, 调用方据此把碎块直接放进输出集合
         if not self.use_collections:
             return None
         coll = track(
@@ -84,6 +86,7 @@ class NamingPlan:
 
     def prune_empty_collections(self):
         """收回被递归替换后腾空的组集合, 避免大纲里留下空壳"""
+        # drop_collection 已经把放弃的集合移出列表, 这里只需处理内容被搬空的
         for coll in self.created_collections:
             if coll is not None and not coll.objects and not coll.children:
                 bpy.data.collections.remove(coll)
@@ -119,10 +122,12 @@ class NamingPlan:
             cell = cells[index]
             tier, group = cell[_LEVEL_MARK], cell[_GROUP_MARK]
             if self.use_collections and tier > 0:
+                # 分组时每个 (层, 组) 各自计数, 因此每组都从 001 起
                 key = (tier, group)
                 counters[key] = counters.get(key, 0) + 1
                 name = f"{self.prefix}_L{tier}G{group}_{counters[key]:0{self.padding}d}"
             else:
+                # tier 0 的碎块不属于任何组, 与"不分组"共用同一个连续计数
                 counters[None] = counters.get(None, 0) + 1
                 name = f"{self.prefix}_{counters[None]:0{self.padding}d}"
             cell.name = name
@@ -133,6 +138,7 @@ class NamingPlan:
     @staticmethod
     def mark(shard, source_name, tier, group):
         """给碎块打上来源/层号与组号标记, 便于按属性筛选而不依赖名字"""
+        # 名字可能被 Blender 因重名改写, 属性不会, 因此下游按属性筛选更可靠
         shard[_SOURCE_MARK] = source_name
         shard[_LEVEL_MARK] = tier
         shard[_GROUP_MARK] = group

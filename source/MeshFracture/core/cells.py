@@ -30,6 +30,7 @@ def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, 
     # 包围盒外扩一点作为初始半空间, 保证单种子时也有界
     lo = [min(v[i] for v in verts) - margin_bounds for i in range(3)]
     hi = [max(v[i] for v in verts) + margin_bounds for i in range(3)]
+    # 半空间用四分量向量表示: 前三维是法线, w 是常数项, 法线与坐标的点积加 w 不大于 0 的一侧为内侧
     bounds = [
         Vector((1, 0, 0, -hi[0])),
         Vector((-1, 0, 0, lo[0])),
@@ -46,6 +47,7 @@ def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, 
             plane.w += plane.xyz.dot(center)
         # 只有一个种子点时, 包围盒本身就是合法的胞体
         vertices, _indices = points_in_planes(planes)
+        # 剪枝半径的初值: 还没量出胞体大小, 不做提前收工
         distance_max = float("inf")
         # 由近到远试邻居, 近处的邻居才会真正切到这个胞体
         neighbors = sorted(points, key=lambda point: (point - center).length_squared)
@@ -53,6 +55,7 @@ def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, 
             normal = neighbor - center
             length = normal.length
             if length == 0:
+                # 与种子点重合的邻居定不出中垂面
                 continue
             if points_scale is not None:
                 # 非等轴权重改变法线与有效距离, 按权重缩放后再定平面
@@ -76,5 +79,6 @@ def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, 
             radius = sqrt(max(v.length_squared for v in vertices))
             distance_max = 2.0 * (radius + margin_cell) + max(radius, 1.0) * 1e-6
         if vertices:
+            # 顶点为空说明该种子点没有可用胞体, 直接丢弃
             cells.append((center, list(vertices)))
     return cells

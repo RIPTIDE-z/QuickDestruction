@@ -18,6 +18,8 @@ def _visible_collection(context, collection):
 
     def visit(layer):
         """递归检查目标集合对应视图层节点的可见性"""
+        # 视图层的集合树与 bpy.data.collections 是两套结构, 必须按层节点判断;
+        # 只要目标集合所在的那一层可见就算可见, 因此命中即可短路
         return (layer.collection == collection and layer.is_visible) or any(
             visit(child) for child in layer.children
         )
@@ -34,6 +36,7 @@ def _cut(
     递归层换用递归种子上限, 以免子碎块生成过多胞体
     naming 是本次切割共用的命名计划; group 与 target 决定这批碎块属于哪一组
     """
+    # 只把这一阶段真正读取的字段取出来传给计算层, 计算层不接触整份配置
     options = {
         key: settings[key]
         for key in (
@@ -50,14 +53,18 @@ def _cut(
         )
     }
     if level:
+        # 递归层换用更小的种子上限, 避免子碎块再生成大量胞体
         options["source_limit"] = settings["recursion_source_limit"]
     # 源物体的显示模式与面隐藏状态会被临时改动, 无论成败都要还原
     old_display = obj.display_type
     old_hidden = [face.hide for face in obj.data.polygons]
     try:
+        # 切割期间取消选中源物体, 避免后续的拆分与重设原点误伤它
         obj.select_set(False)
         if settings["use_debug_redraw"]:
+            # 线框显示方便观察切割进度, 结果不受影响
             obj.display_type = "WIRE"
+        # 两个阶段: 先按种子点建凸胞体, 再与源物体求交得到贴合表面的碎块
         cells = mesh_ops.build_cells(
             context,
             collection,
@@ -92,6 +99,7 @@ def _cut(
                 bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="MEDIAN")
         return cells
     finally:
+        # 恢复现场: 源物体的显示模式与逐面隐藏状态
         obj.display_type = old_display
         obj.data.polygons.foreach_set("hide", old_hidden)
         obj.data.update()
@@ -102,11 +110,13 @@ def _select_recursion(cells, settings, cursor, rng=None):
     fraction = settings["recursion_chance"]
     selected = list(cells)
     if fraction == 1:
+        # 全选时直接返回, 不消耗随机流, 使"比例 1"与"逐轮全选"结果一致
         return selected
     mode = settings["recursion_chance_select"]
     if mode == "RANDOM":
         if rng is None:
             rng = random.Random(settings.get("random_seed", RANDOM_SEED_DEFAULT))
+        # 洗牌后取前 N 个, 等价于无放回随机抽取
         rng.shuffle(selected)
     elif mode.startswith("SIZE"):
         # 用世界空间包围盒体对角线长度排序, 省去开方
@@ -125,12 +135,14 @@ def _select_recursion(cells, settings, cursor, rng=None):
             key=lambda obj: (obj.matrix_world.translation - cursor).length_squared,
             reverse=mode == "CURSOR_MAX",
         )
+    # 向下取整: 比例很小时结果可能为 0, 调用方据此提前结束递归
     return selected[: int(fraction * len(selected))]
 
 
 def main_object(context, collection, obj, settings, rng=None, *, tracker):
     """对单个源物体做首次切割并按需递归, 最后统一处理内部断面"""
     if rng is None:
+        # 未提供随机流时按规格默认种子建立局部流, 保证显式调用可复现
         rng = random.Random(settings.get("random_seed", RANDOM_SEED_DEFAULT))
     # 源名称在首次切割前固定, 递归层沿用该名称生成碎块与分组标识
     naming = NamingPlan(
@@ -148,13 +160,14 @@ def main_object(context, collection, obj, settings, rng=None, *, tracker):
     # 调试布尔模式保留未应用的修改器, 递归会让引用失效, 因此直接跳过
     rounds = 0 if settings["use_debug_bool"] else settings["recursion"]
     for level in range(1, rounds + 1):
+        # 阈值检查之一: 每轮开始时判断当前碎块总数
         if not cells or (threshold and len(cells) >= threshold):
             break
         candidates = _select_recursion(cells, settings, context.scene.cursor.location, rng=rng)
         if not candidates:
             break
         for parent in candidates:
-            # 阈值按每个源物体的当前碎块数计算, 单次细分仍可能超出
+            # 阈值检查之二: 每个父块细分前再判断一次; 单次细分或孤岛拆分仍可能超出
             if threshold and len(cells) >= threshold:
                 break
             # 每个父碎块的子块自成一"组": 组号在层内递增, 序号在组内从 1 重计
@@ -178,6 +191,7 @@ def main_object(context, collection, obj, settings, rng=None, *, tracker):
                 continue
             cells.extend(children)
             if settings["use_remove_original"]:
+                # 删除被替换的父块, 避免父子几何重叠
                 cells.remove(parent)
                 mesh_ops.remove_generated_object(parent)
     # 被递归替换掉的父碎块会腾空它所在的集合, 这里统一收回, 避免大纲里留下空壳
@@ -190,6 +204,7 @@ def main_object(context, collection, obj, settings, rng=None, *, tracker):
         and not settings["use_debug_bool"]
         and (settings["use_interior_vgroup"] or settings["use_sharp_edges"])
     ):
+        # 只有非调试布尔且请求了内部标记时才做断面收尾
         mesh_ops.finish_interior(
             cells,
             use_interior_vgroup=settings["use_interior_vgroup"],
@@ -245,6 +260,7 @@ def run(context, sources, settings, output_collection, *, rng=None):
         cells = []
         source_to_shards = {}
         for index, obj in enumerate(sources):
+            # 逐源切割; 任一源没有产出即视为整次失败, 由下面的 except 统一回收
             created = main_object(context, collection, obj, settings, rng=rng, tracker=tracker)
             if not created:
                 raise MeshFractureError('No valid shards were produced for "{name}"', name=obj.name)
@@ -257,4 +273,5 @@ def run(context, sources, settings, output_collection, *, rng=None):
         tracker.rollback()
         raise
     finally:
+        # 进度条必须收尾, 否则界面会一直停在进度状态
         context.window_manager.progress_end()

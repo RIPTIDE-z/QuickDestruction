@@ -15,6 +15,8 @@ def points_from_object(context, depsgraph, obj, source):
         if item.type == "MESH":
             points.extend(item.matrix_world @ v.co for v in item.data.vertices)
         elif item.type in {"CURVE", "SURFACE", "FONT", "META"}:
+            # 这些类型没有可直接读取的顶点, 必须先求值成临时网格;
+            # to_mesh 的结果由 to_mesh_clear 释放, 因此放在 try/finally 里
             evaluated = item.evaluated_get(depsgraph)
             try:
                 mesh = evaluated.to_mesh()
@@ -25,13 +27,16 @@ def points_from_object(context, depsgraph, obj, source):
 
     def from_particles(item):
         """从求值粒子系统读取粒子的世界空间位置"""
+        # 粒子位置已经是世界空间坐标, 不再乘矩阵
         evaluated = item.evaluated_get(depsgraph)
         for system in getattr(evaluated, "particle_systems", ()):
             points.extend(p.location.copy() for p in system.particles)
 
+    # 五个来源互相独立, 勾选多个时结果取并集
     if "VERT_OWN" in source:
         from_verts(obj)
     if "VERT_CHILD" in source:
+        # 只取直接子物体, 不递归到孙物体
         for child in obj.children:
             from_verts(child)
     if "PARTICLE_OWN" in source:
@@ -69,7 +74,10 @@ def points_from_object(context, depsgraph, obj, source):
 
 def random_unit_vector(rng):
     """用调用方的随机流在单位球面均匀采样, 避免 mathutils 的独立全局 RNG"""
+    # 先在 [-1, 1] 上取 z, 再在圆周上取角度: 这样得到的是球面上的均匀分布,
+    # 而不是把三个均匀分量拼起来(那会在立方体角点处堆积)
     z = rng.uniform(-1.0, 1.0)
     angle = rng.uniform(0.0, tau)
+    # max 保证浮点误差下开方不出现负数
     radius = sqrt(max(0.0, 1.0 - z * z))
     return Vector((radius * cos(angle), radius * sin(angle), z))
