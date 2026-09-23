@@ -1,4 +1,4 @@
-"""扩展侧栏入口; 具体参数和操作由子工具面板提供。"""
+"""侧栏父面板 - 只提供 QuickDestruction 分类和层级, 参数与操作由各工具子面板绘制"""
 
 from bpy.types import Panel
 
@@ -6,7 +6,7 @@ from .constants import SIDEBAR_CATEGORY
 
 
 class QD_PT_main(Panel):
-    """容纳各套工具的侧栏父面板。"""
+    """容纳各套工具的侧栏父面板"""
 
     bl_idname = "QD_PT_main"
     bl_label = "QuickDestruction"
@@ -15,4 +15,4 @@ class QD_PT_main(Panel):
     bl_category = SIDEBAR_CATEGORY
 
     def draw(self, _context):
-        """父面板只提供层级, 操作由各子面板绘制。"""
+        """父面板只提供层级, 操作由各子面板绘制"""

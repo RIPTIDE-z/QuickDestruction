@@ -1,4 +1,4 @@
-"""MeshFracture 预设交互: 面板与弹窗分别定位目标, 文件原子保存。"""
+"""预设交互 - 用会话令牌定位编辑目标, 菜单与算子负责保存, 载入, 删除与打开目录"""
 
 import uuid
 from pathlib import Path
@@ -10,15 +10,12 @@ from bpy.types import Menu, Operator
 
 from ...common import preset_storage as storage
 from ...i18n import tr, tr_report
-from ..errors import FractureError
+from ..errors import MeshFractureError
 from ..settings import CONTEXT, describe_error, dict_to_settings, settings_to_dict
 from .preset_format import decode, encode
 
-# 预设存放在 Blender 用户脚本目录下, 与扩展本体分离, 重装扩展不会丢
-# 常量本身用 Path 表达目录层级, 交给 Blender 时再转回 str
-PRESET_ROOT = Path("quick_destruction") / "presets"
-PRESET_SUBDIR = PRESET_ROOT / "mesh_fracture"
-PREVIOUS_SUBDIR = PRESET_ROOT / "cell_fracture"
+# 预设留在 Blender 用户脚本目录, 不随扩展重装而删除
+PRESET_SUBDIR = Path("quick_destruction") / "presets" / "mesh_fracture"
 # 以一次性令牌区分"对话框参数"与"侧栏参数"两个编辑目标, 不依赖 active_operator
 SESSIONS = {}
 
@@ -29,7 +26,7 @@ def new_session(owner, context):
     SESSIONS[token] = {
         "owner": owner,
         "scene": context.scene,
-        "name": context.scene.qd_settings.preset_name,
+        "name": context.scene.qd_settings.mesh_fracture.preset_name,
     }
     return token
 
@@ -47,14 +44,14 @@ def target_settings(context, token=""):
         if session is None or session["scene"] != context.scene:
             raise ValueError("The parameter dialog has closed")
         return session["owner"]
-    return context.scene.qd_settings.fracture
+    return context.scene.qd_settings.mesh_fracture
 
 
 def preset_name(context, token=""):
     """读取会话或侧栏当前显示的预设名"""
     if token:
         return SESSIONS.get(token, {}).get("name", "")
-    return context.scene.qd_settings.preset_name
+    return context.scene.qd_settings.mesh_fracture.preset_name
 
 
 def set_preset_name(context, token, name):
@@ -62,18 +59,15 @@ def set_preset_name(context, token, name):
     if token:
         SESSIONS[token]["name"] = name
     else:
-        context.scene.qd_settings.preset_name = name
+        context.scene.qd_settings.mesh_fracture.preset_name = name
     if context.area:
         context.area.tag_redraw()
 
 
-def preset_directory(create=False, *, legacy=False, previous=False):
-    """返回当前目录或前两代预设目录, 仅为当前目录创建文件夹。"""
+def preset_directory(create=False):
+    """取得本工具的用户预设目录, 保存时按需创建"""
     # user_resource 是 C 接口, 只接受 str, 传 Path 会抛 TypeError
-    if legacy and previous:
-        raise ValueError("Only one legacy preset directory can be selected")
-    subdir = PRESET_ROOT if legacy else PREVIOUS_SUBDIR if previous else PRESET_SUBDIR
-    path = bpy.utils.user_resource("SCRIPTS", path=str(subdir), create=create)
+    path = bpy.utils.user_resource("SCRIPTS", path=str(PRESET_SUBDIR), create=create)
     if not path:
         raise OSError("Cannot resolve the preset directory")
     directory = Path(path)
@@ -82,16 +76,9 @@ def preset_directory(create=False, *, legacy=False, previous=False):
     return directory
 
 
-def preset_filepath(name, create=False):
-    """优先定位新目录, 再依次查找改名前和无信封的旧目录。"""
-    current = storage.preset_filepath(preset_directory(create=create), name)
-    if create or current.exists():
-        return current
-    for directory in (preset_directory(previous=True), preset_directory(legacy=True)):
-        old = storage.preset_filepath(directory, name)
-        if old.exists():
-            return old
-    return current
+def preset_filepath(name):
+    """只在本工具目录定位预设文件"""
+    return storage.preset_filepath(preset_directory(), name)
 
 
 def list_presets():
@@ -102,26 +89,19 @@ def list_presets():
     否则用户会以为预设丢了这里只返回消息键, 翻译交给调用方
     """
     try:
-        directories = (
-            preset_directory(legacy=True),
-            preset_directory(previous=True),
-            preset_directory(),
-        )
+        directory = preset_directory()
     except OSError:
         # 目录都定位不到: 用现成的消息键, 不再包一层
         return [], ("Cannot resolve the preset directory", {})
     try:
-        # 后面的目录覆盖前面同名文件; 删除新文件后旧文件仍可见。
-        names = {}
-        for directory in directories:
-            names.update({name.casefold(): name for name in storage.list_presets(directory)})
+        names = storage.list_presets(directory)
     except OSError as error:
         return [], ("Preset directory could not be read: {detail}", {"detail": str(error)})
-    return sorted(names.values(), key=str.casefold), None
+    return names, None
 
 
 def save_preset(name, data, overwrite=False):
-    """验证字段并以本工具的新格式原子保存。"""
+    """验证字段并原子保存本工具格式"""
     return storage.save_preset(preset_directory(create=True), name, encode(data), overwrite)
 
 
@@ -156,10 +136,10 @@ def target_properties():
     }
 
 
-class QD_OT_preset_save(PresetTarget, Operator):
+class MESH_FRACTURE_OT_preset_save(PresetTarget, Operator):
     """保存当前目标参数为 JSON 预设"""
 
-    bl_idname = "qd.preset_save"
+    bl_idname = "mesh_fracture.preset_save"
     bl_label = "Save Preset"
     bl_description = "Save the parameters currently shown in this panel or dialog as a JSON preset"
     bl_translation_context = CONTEXT
@@ -198,16 +178,16 @@ class QD_OT_preset_save(PresetTarget, Operator):
                 {"WARNING"}, tr_report("Preset already exists; enable Overwrite to replace it")
             )
             return {"CANCELLED"}
-        except (FractureError, OSError, ValueError, TypeError, ReferenceError) as error:
+        except (MeshFractureError, OSError, ValueError, TypeError, ReferenceError) as error:
             return self.failure(error)
         self.report({"INFO"}, tr_report('Saved preset "{name}"', name=name))
         return {"FINISHED"}
 
 
-class QD_OT_preset_load(PresetTarget, Operator):
+class MESH_FRACTURE_OT_preset_load(PresetTarget, Operator):
     """验证 JSON 后载入当前目标参数"""
 
-    bl_idname = "qd.preset_load"
+    bl_idname = "mesh_fracture.preset_load"
     bl_label = "Load Preset"
     bl_description = "Load a JSON preset into the parameters currently shown here"
     bl_translation_context = CONTEXT
@@ -219,14 +199,11 @@ class QD_OT_preset_load(PresetTarget, Operator):
         try:
             path = preset_filepath(self.name)
             # 只读取有限大小的文件, 且只当数据解析, 绝不执行其中内容
-            parent = path.parent.resolve()
-            legacy = parent == preset_directory(legacy=True).resolve()
-            previous = parent == preset_directory(previous=True).resolve()
-            data = decode(storage.read_preset(path), legacy=legacy, previous=previous)
+            data = decode(storage.read_preset(path))
             count = dict_to_settings(self.target(context), data)
             set_preset_name(context, self.session, path.stem)
         except (
-            FractureError,
+            MeshFractureError,
             OSError,
             ValueError,
             TypeError,
@@ -238,10 +215,10 @@ class QD_OT_preset_load(PresetTarget, Operator):
         return {"FINISHED"}
 
 
-class QD_OT_preset_remove(PresetTarget, Operator):
+class MESH_FRACTURE_OT_preset_remove(PresetTarget, Operator):
     """确认后删除当前名称对应的预设"""
 
-    bl_idname = "qd.preset_remove"
+    bl_idname = "mesh_fracture.preset_remove"
     bl_label = "Remove Preset"
     bl_description = "Permanently delete this JSON preset after confirmation"
     bl_translation_context = CONTEXT
@@ -268,12 +245,12 @@ class QD_OT_preset_remove(PresetTarget, Operator):
         return {"FINISHED"}
 
 
-class QD_OT_preset_open_directory(Operator):
+class MESH_FRACTURE_OT_preset_open_directory(Operator):
     """打开本阶段的用户预设目录"""
 
-    bl_idname = "qd.preset_open_directory"
+    bl_idname = "mesh_fracture.preset_open_directory"
     bl_label = "Open Preset Directory"
-    bl_description = "Open the folder for new MeshFracture JSON presets"
+    bl_description = "Open the folder for MeshFracture JSON presets"
     bl_translation_context = CONTEXT
     bl_options: ClassVar[set[str]] = {"INTERNAL"}
 
@@ -290,21 +267,23 @@ class QD_OT_preset_open_directory(Operator):
         return {"FINISHED"}
 
 
-class QD_MT_presets(Menu):
+class MESH_FRACTURE_MT_presets(Menu):
     """预设下拉菜单: 保存/逐个加载/逐个删除/打开目录"""
 
-    bl_idname = "QD_MT_presets"
+    bl_idname = "MESH_FRACTURE_MT_presets"
     bl_label = "Presets"
     bl_translation_context = CONTEXT
 
     def draw(self, context):
         """绘制当前目标的控件并保留独立的启用条件"""
         layout = self.layout
-        owner = getattr(context, "qd_preset_target", None)
+        owner = getattr(context, "mesh_fracture_preset_target", None)
         token = getattr(owner, "preset_session", "")
         row = layout.row()
         row.operator_context = "INVOKE_DEFAULT"
-        save = row.operator("qd.preset_save", text="Save Preset...", text_ctxt=CONTEXT, icon="ADD")
+        save = row.operator(
+            "mesh_fracture.preset_save", text="Save Preset...", text_ctxt=CONTEXT, icon="ADD"
+        )
         save.session = token
         save.name = preset_name(context, token)
         names, error = list_presets()
@@ -313,11 +292,13 @@ class QD_MT_presets(Menu):
             # 加载立即执行, 删除需要确认
             row = layout.row(align=True)
             row.operator_context = "EXEC_DEFAULT"
-            load = row.operator("qd.preset_load", text=name, translate=False, icon="PRESET")
+            load = row.operator(
+                "mesh_fracture.preset_load", text=name, translate=False, icon="PRESET"
+            )
             load.name, load.session = name, token
             remove_row = row.row(align=True)
             remove_row.operator_context = "INVOKE_DEFAULT"
-            remove = remove_row.operator("qd.preset_remove", text="", icon="X")
+            remove = remove_row.operator("mesh_fracture.preset_remove", text="", icon="X")
             remove.name, remove.session = name, token
         if error is not None:
             # 读不出来时说明原因, 不能显示成"尚无预设", 否则用户会以为预设丢了
@@ -325,26 +306,26 @@ class QD_MT_presets(Menu):
         elif not names:
             layout.label(text="No presets yet", text_ctxt=CONTEXT)
         layout.separator()
-        layout.operator("qd.preset_open_directory", icon="FILE_FOLDER")
+        layout.operator("mesh_fracture.preset_open_directory", icon="FILE_FOLDER")
 
 
 def draw_presets(layout, context, owner, token=""):
     """预设入口: 预设名菜单加一个快捷保存按钮"""
     # 把编辑目标挂到 context 上, 菜单绘制时再取出来
-    layout.context_pointer_set("qd_preset_target", owner)
+    layout.context_pointer_set("mesh_fracture_preset_target", owner)
     row = layout.row(align=True)
     name = preset_name(context, token)
-    row.menu("QD_MT_presets", text=name or tr("Presets"), translate=False, icon="PRESET")
+    row.menu("MESH_FRACTURE_MT_presets", text=name or tr("Presets"), translate=False, icon="PRESET")
     row.operator_context = "INVOKE_DEFAULT"
-    save = row.operator("qd.preset_save", text="", icon="ADD")
+    save = row.operator("mesh_fracture.preset_save", text="", icon="ADD")
     save.session = token
     save.name = name
 
 
 CLASSES = (
-    QD_OT_preset_save,
-    QD_OT_preset_load,
-    QD_OT_preset_remove,
-    QD_OT_preset_open_directory,
-    QD_MT_presets,
+    MESH_FRACTURE_OT_preset_save,
+    MESH_FRACTURE_OT_preset_load,
+    MESH_FRACTURE_OT_preset_remove,
+    MESH_FRACTURE_OT_preset_open_directory,
+    MESH_FRACTURE_MT_presets,
 )

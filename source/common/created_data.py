@@ -1,4 +1,4 @@
-"""本次新建 Blender 数据的所有权与回收"""
+"""创建账本 - 记录本次新建的 objects, meshes 与 collections, 失败时只回收这些条目"""
 
 import bpy
 

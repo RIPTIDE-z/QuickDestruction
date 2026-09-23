@@ -1,4 +1,4 @@
-"""根翻译域与 Blender 界面及报告适配"""
+"""根翻译域 - 按工具清单建立翻译目录, 并提供 tr 与 tr_report 两个取词入口"""
 
 from pathlib import Path
 
@@ -10,7 +10,7 @@ from .tool_registry import TOOLS
 
 TRANSLATIONS_DOMAIN = __package__
 
-# 模块规格与上下文由代码维护; 每种独立语言在 locales 中维护一个 JSON 文件。
+# 模块规格与上下文由代码维护; 每种独立语言在 locales 中维护一个 JSON 文件
 MODULES = {
     tool.translation_module: ((tool.translation_context, "*"), tool.property_specs)
     for tool in TOOLS

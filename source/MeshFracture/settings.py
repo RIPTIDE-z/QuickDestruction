@@ -1,9 +1,9 @@
-"""预切割参数唯一来源与阶段转换接口"""
+"""参数唯一来源 - PROPERTY_SPECS 描述 27 个字段, 并提供校验, 序列化与错误标签转换"""
 
 from ..common import rna, schema
 from ..common.errors import InvalidParameterError
 from .constants import CELL_SCALE_MIN, CONTEXT, RANDOM_SEED_DEFAULT
-from .errors import FractureError
+from .errors import MeshFractureError
 
 PROPERTY_SPECS = {
     "source": (
@@ -349,10 +349,10 @@ def field_label(field):
 
 
 def describe_error(error):
-    """把字段错误映射为参数标签, 保留领域错误的消息键。"""
+    """把字段错误映射为参数标签, 保留领域错误的消息键"""
     if isinstance(error, InvalidParameterError):
         return "Invalid parameter: {name}", {"name": field_label(error.field)}
-    if isinstance(error, FractureError):
+    if isinstance(error, MeshFractureError):
         return error.message, dict(error.values)
     return str(error), {}
 

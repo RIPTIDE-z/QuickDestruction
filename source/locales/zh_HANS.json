@@ -136,7 +136,7 @@
         "MeshFracture": "网格破碎",
         "Generate Fragments": "生成碎块",
         "Generate fragments from selected editable meshes; source objects are kept": "将选中的可编辑网格生成碎块，保留源物体",
-        "Open the folder for new MeshFracture JSON presets": "打开存放新建 MeshFracture JSON 预设的文件夹",
+        "Open the folder for MeshFracture JSON presets": "打开存放 MeshFracture JSON 预设的文件夹",
         "Fragment generation failed: {detail}": "生成碎块失败：{detail}"
       }
     }

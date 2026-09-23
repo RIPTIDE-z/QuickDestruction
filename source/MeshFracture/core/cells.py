@@ -1,4 +1,4 @@
-"""用半空间求交构造有界 Voronoi 胞体"""
+"""胞体构造 - 从包围盒与中垂面出发做半空间求交, 为每个种子点生成有界 Voronoi 凸体"""
 
 from math import isfinite, sqrt
 
@@ -7,7 +7,7 @@ from mathutils.geometry import points_in_planes
 
 from ...common.errors import InvalidParameterError
 from ..constants import CELL_SCALE_MIN
-from ..errors import FractureError
+from ..errors import MeshFractureError
 
 
 def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, margin_cell=0.0):
@@ -19,7 +19,7 @@ def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, 
     if not verts or not points:
         return []
     if any(not isfinite(value) for point in (*verts, *points) for value in point):
-        raise FractureError("Source geometry contains non-finite coordinates")
+        raise MeshFractureError("Source geometry contains non-finite coordinates")
     scale = tuple(points_scale) if points_scale is not None else (1.0, 1.0, 1.0)
     if len(scale) != 3 or any(not isfinite(v) or v < CELL_SCALE_MIN for v in scale):
         raise InvalidParameterError("cell_scale")

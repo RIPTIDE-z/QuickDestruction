@@ -1,4 +1,4 @@
-"""BMesh 生命周期与 Blender 选择状态适配"""
+"""Blender 上下文适配 - BMesh 生命周期管理, 选择集与活动物体的保存和恢复"""
 
 from contextlib import contextmanager
 

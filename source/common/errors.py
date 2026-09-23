@@ -1,4 +1,4 @@
-"""通用字段校验异常"""
+"""通用字段校验异常 - InvalidParameterError 携带出错字段名, 交给界面层翻译"""
 
 
 class InvalidParameterError(ValueError):

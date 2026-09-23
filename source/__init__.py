@@ -1,4 +1,4 @@
-"""QuickDestruction 扩展入口 - 延迟加载注册装配"""
+"""QuickDestruction 扩展入口 - 只暴露 register 与 unregister, 首次调用时才导入装配模块"""
 
 
 def register():

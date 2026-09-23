@@ -1,4 +1,4 @@
-"""MeshFracture 阶段入口: 显式输入与 Blender 交互状态隔离。"""
+"""阶段入口 - generate_fragments 接受显式输入并隔离 Blender 交互状态, 返回只读结果对象"""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -9,7 +9,7 @@ from .settings import PROPERTY_SPECS, validated_values
 
 
 @dataclass(frozen=True)
-class FractureResult:
+class MeshFractureResult:
     """产物与来源映射 - 对象由 Blender 数据库持有"""
 
     shards: tuple
@@ -30,7 +30,7 @@ def complete_config(config):
     return MappingProxyType(values)
 
 
-def fracture(context, sources, config, output_collection, *, rng=None):
+def generate_fragments(context, sources, config, output_collection, *, rng=None):
     """切割显式 sources 并在返回或失败时恢复原选择
 
     output_collection 接受集合对象或集合名 - None 或空名使用当前集合
@@ -43,4 +43,4 @@ def fracture(context, sources, config, output_collection, *, rng=None):
     sources = tuple(sources)
     with preserve_selection(context):
         shards, by_source, seconds = run(context, sources, settings, output_collection, rng=rng)
-    return FractureResult(tuple(shards), MappingProxyType(by_source), seconds)
+    return MeshFractureResult(tuple(shards), MappingProxyType(by_source), seconds)

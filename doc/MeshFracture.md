@@ -73,7 +73,7 @@
 
 内缩量是绝对长度, 小物体需相应减小, 过大可使胞体消失
 内部 UV 不自动展开, 内部组在拆边前判定, 共享边界顶点及其拆分副本不重新分类
-实际拆边可能使网格非水密, 重设轴心不是按体积计算质心
+实际拆边可能使网格非水密, 重设原点不是按体积计算质心
 材质索引 0 在没有材质槽时允许, 大于 0 且越界时拒绝
 
 ## 输出与调试
@@ -97,9 +97,8 @@
 - 相同 Blender 版本、源名称、几何、修改器、点源、帧、相关游标位置和参数可复现几何
 - 多源按 `name_full` 排序并共享局部 RNG, 增删或重命名源物体可能改变后续随机分配
 - 预设缺字段保留界面当前值；阶段 API 配置缺 `random_seed` 时使用 0
-- 新预设写入 `quick_destruction/presets/mesh_fracture/`，包含 `format_version`、`tool_id: "mesh_fracture"` 和 `values`
-- 原目录 `quick_destruction/presets/` 的无信封预设，以及 `quick_destruction/presets/cell_fracture/` 的旧格式文件仍可载入；其中已移除的占位字段会在读取时忽略
-- 载入前校验工具身份、格式版本和其他字段；未知字段不会被静默忽略。同名文件存在于多个目录时，新目录优先
+- 预设位于 `quick_destruction/presets/mesh_fracture/`，包含 `format_version`、`tool_id: "mesh_fracture"` 和 `values`
+- 载入前校验工具身份、格式版本和字段；未知字段不会被静默忽略
 - 布尔策略检查实际求值网格, 开放或非流形输入启用 Hole Tolerant
 - 非有限或明显超出源包围盒的结果拒绝并回收本次新建数据, 不修复源几何
 - 孔洞容错和包围盒检查不保证凹形体内包含或水密

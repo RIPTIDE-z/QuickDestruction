@@ -1,4 +1,4 @@
-"""预切割交互算子 - 读取界面参数并报告阶段结果"""
+"""生成算子 - 读取界面参数调用阶段 API, 选中产物并同步侧栏, 失败时报告可翻译消息"""
 
 import traceback
 from typing import ClassVar
@@ -10,17 +10,16 @@ from ...common.blender_context import restore_selection
 from ...common.errors import InvalidParameterError
 from ...i18n import tr_report
 from .. import settings
-from ..api import fracture
-from ..errors import FractureError
+from ..api import generate_fragments
+from ..errors import MeshFractureError
 from ..settings import CONTEXT, describe_error, property_definitions
 from . import panel, presets
 
 
-class OBJECT_OT_add_quick_destruction_objects(Operator):
-    """根据当前参数生成网格碎块, 保留源物体并支持撤销。"""
+class MESH_FRACTURE_OT_generate_fragments(Operator):
+    """根据当前参数生成网格碎块, 保留源物体并支持撤销"""
 
-    # 旧算子 ID 供已有脚本和 Blender 重做记录继续调用。
-    bl_idname = "object.add_quick_destruction_objects"
+    bl_idname = "mesh_fracture.generate_fragments"
     bl_label = "Generate Fragments"
     bl_description = "Generate fragments from selected editable meshes; source objects are kept"
     bl_translation_context = CONTEXT
@@ -35,14 +34,14 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
         "preset_session": StringProperty(options={"HIDDEN", "SKIP_SAVE"}),
     }
 
-    # 菜单入口不使用 poll: 无选中网格时由阶段 API 报出具体原因。
+    # 菜单入口不使用 poll: 无选中网格时由阶段 API 报出具体原因
 
     def execute(self, context):
         """执行本算子并按成功或失败返回 Blender 状态"""
         try:
             data = settings.settings_to_dict(self)
             keywords = settings.validated_values(data)
-            result = fracture(
+            result = generate_fragments(
                 context, context.selected_editable_objects, keywords, keywords["collection_name"]
             )
             objects, seconds = result.shards, result.seconds
@@ -50,9 +49,9 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
             restore_selection(context, objects, objects[0])
             # API 返回即提交几何 - 侧栏同步失败不能伪装成未执行
             try:
-                settings.dict_to_settings(context.scene.qd_settings.fracture, data)
+                settings.dict_to_settings(context.scene.qd_settings.mesh_fracture, data)
                 if self.preset_session:
-                    context.scene.qd_settings.preset_name = presets.preset_name(
+                    context.scene.qd_settings.mesh_fracture.preset_name = presets.preset_name(
                         context, self.preset_session
                     )
             except Exception as error:
@@ -71,7 +70,7 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
                 ),
             )
             return {"FINISHED"}
-        except (FractureError, InvalidParameterError) as error:
+        except (MeshFractureError, InvalidParameterError) as error:
             # 两类可预期错误都由 describe_error() 转成消息键与参数:
             # 几何错误的 message 是消息原文, 校验错误的 field 需要换成界面参数名
             message, values = describe_error(error)
@@ -90,7 +89,7 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
     def invoke(self, context, _event):
         # 调用方显式传入的参数优先, 其余字段从侧栏当前值补齐
         """初始化本次交互并打开参数或确认对话框"""
-        owner = context.scene.qd_settings.fracture
+        owner = context.scene.qd_settings.mesh_fracture
         defaults = settings.operator_keywords(owner)
         for key, value in defaults.items():
             if not self.properties.is_property_set(key):

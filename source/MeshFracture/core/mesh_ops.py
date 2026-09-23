@@ -1,4 +1,4 @@
-"""胞体建网格与布尔结果收尾"""
+"""网格操作 - 胞体建网格, 布尔求交, 孤岛拆分与断面收尾"""
 
 import random
 import uuid
@@ -16,7 +16,7 @@ from ..constants import (
     WELD_SCALE_RATIO,
     WELD_TO_JITTER_RATIO,
 )
-from ..errors import FractureError
+from ..errors import MeshFractureError
 from . import boolean
 from .sampling import points_from_object, random_unit_vector
 
@@ -108,7 +108,7 @@ def build_cells(
     if not verts:
         return []
     if any(not isfinite(value) for point in (*verts, *points) for value in point):
-        raise FractureError("Source geometry contains non-finite coordinates")
+        raise MeshFractureError("Source geometry contains non-finite coordinates")
     # 用包围盒对角线作为整体尺度, 焊接与抖动都按它派生
     lo = [min(v[i] for v in verts) for i in range(3)]
     hi = [max(v[i] for v in verts) for i in range(3)]

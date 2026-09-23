@@ -1,4 +1,4 @@
-"""根装配读取的工具声明, 不包含具体工具的导入。"""
+"""工具声明结构 - ToolSpec 描述工具身份, 参数规格, 交互类与 Blender 挂钩, 本身不导入任何工具"""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """描述工具的持久化、翻译、交互类和 Blender 挂钩。"""
+    """描述工具的持久化, 翻译, 交互类和 Blender 挂钩"""
 
     tool_id: str
     translation_module: str

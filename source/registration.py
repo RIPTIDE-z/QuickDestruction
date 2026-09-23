@@ -1,4 +1,4 @@
-"""按工具清单装配扩展, 并在失败或停用时逆序释放资源。"""
+"""扩展装配 - 先校验工具声明的唯一性, 再顺序注册属性组, 面板, 算子与外部入口, 失败或停用时逆序回滚"""
 
 import traceback
 from collections.abc import Callable
@@ -15,7 +15,7 @@ _undo_steps: list[Callable[[], None]] = []
 
 
 def _check_unique(tool_classes):
-    """在修改 Blender 注册状态前拒绝重名工具、类和 RNA ID。"""
+    """在修改 Blender 注册状态前拒绝重名工具, 类和 RNA ID"""
     for tool in TOOLS:
         if (tool.settings_attr is None) != (tool.settings_class is None):
             raise ValueError(f"Tool {tool.tool_id} must declare both settings fields")
@@ -39,13 +39,13 @@ def _check_unique(tool_classes):
 
 
 def _apply(action, undo, applied):
-    """只为已成功执行的注册步骤记录逆操作。"""
+    """只为已成功执行的注册步骤记录逆操作"""
     action()
     applied.append(undo)
 
 
 def _release(applied):
-    """尽量完成所有逆操作, 返回第一个错误供调用方报告。"""
+    """尽量完成所有逆操作, 返回第一个错误供调用方报告"""
     first_error = None
     for undo in reversed(applied):
         try:
@@ -58,7 +58,7 @@ def _release(applied):
 
 
 def register():
-    """先注册参数类型, 再接场景指针、父子面板和菜单。"""
+    """先注册参数类型, 再接场景指针, 父子面板和菜单"""
     if _undo_steps:
         raise RuntimeError("QuickDestruction is already registered")
     tool_classes = tuple(tool.classes() for tool in TOOLS)
@@ -101,7 +101,7 @@ def register():
                     lambda cls=cls: bpy.utils.unregister_class(cls),
                     applied,
                 )
-        # 对话框可能持有旧场景; 在卸载交互类前清空会话。
+        # 对话框可能持有旧场景; 在卸载交互类前清空会话
         for tool in TOOLS:
             if tool.clear_sessions is not None:
                 applied.append(tool.clear_sessions)
@@ -124,7 +124,7 @@ def register():
 
 
 def unregister():
-    """先移除外部入口, 再逆序注销交互类和参数类型。"""
+    """先移除外部入口, 再逆序注销交互类和参数类型"""
     applied = list(_undo_steps)
     _undo_steps.clear()
     error = _release(applied)

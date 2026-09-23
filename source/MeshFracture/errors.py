@@ -1,7 +1,7 @@
-"""预切割领域异常 - 仅保存消息键和参数"""
+"""领域异常 - MeshFractureError 只保存消息键与插值参数, 翻译交给界面层"""
 
 
-class FractureError(Exception):
+class MeshFractureError(Exception):
     """message 保存消息键 - values 保存翻译后填入的参数"""
 
     def __init__(self, message, **values):

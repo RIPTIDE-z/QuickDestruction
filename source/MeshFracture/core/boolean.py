@@ -1,11 +1,11 @@
-"""布尔边界的输入诊断/求解策略与保守结果检查,不修改源几何"""
+"""布尔边界策略 - 诊断输入网格并选择求解器, 检查求交结果是否越界, 不修改源几何"""
 
 from dataclasses import dataclass
 from math import isfinite, sqrt
 
 import bmesh
 
-from ..errors import FractureError
+from ..errors import MeshFractureError
 
 
 @dataclass(frozen=True)
@@ -25,10 +25,10 @@ def inspect_source(obj, depsgraph):
     try:
         mesh = evaluated.to_mesh()
         if mesh is None or not mesh.vertices or not mesh.polygons:
-            raise FractureError('Mesh "{name}" has no faces', name=obj.name)
+            raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
         coordinates = [evaluated.matrix_world @ vertex.co for vertex in mesh.vertices]
         if any(not isfinite(value) for point in coordinates for value in point):
-            raise FractureError("Source geometry contains non-finite coordinates")
+            raise MeshFractureError("Source geometry contains non-finite coordinates")
         minimum = tuple(min(point[i] for point in coordinates) for i in range(3))
         maximum = tuple(max(point[i] for point in coordinates) for i in range(3))
         bm = bmesh.new()
@@ -69,7 +69,7 @@ def validate_intersection(mesh, matrix_world, source):
     for vertex in mesh.vertices:
         point = matrix_world @ vertex.co
         if any(not isfinite(value) for value in point):
-            raise FractureError(
+            raise MeshFractureError(
                 'Boolean intersection for "{name}" contains non-finite coordinates',
                 name=source.name,
             )
@@ -78,7 +78,7 @@ def validate_intersection(mesh, matrix_world, source):
             or value > source.maximum[i] + source.tolerance
             for i, value in enumerate(point)
         ):
-            raise FractureError(
+            raise MeshFractureError(
                 'Boolean intersection extends outside "{name}"; check for open or invalid source geometry',
                 name=source.name,
             )

@@ -1,18 +1,16 @@
-"""场景设置聚合根, 保留已有 .blend 的属性路径。"""
+"""场景参数聚合根 - QDSettings 按工具声明为每个工具挂载一个参数组"""
 
-from bpy.props import PointerProperty, StringProperty
+from bpy.props import PointerProperty
 from bpy.types import PropertyGroup
 
-from .constants import UI_CONTEXT
 from .tool_registry import TOOLS
 
 
 class QDSettings(PropertyGroup):
-    """每个工具拥有独立参数组; 预设名字段沿用原场景存储路径。"""
+    """每个工具在场景中拥有独立参数组"""
 
     __annotations__ = {
         tool.settings_attr: PointerProperty(type=tool.settings_class)
         for tool in TOOLS
         if tool.settings_class is not None
     }
-    preset_name: StringProperty(name="Preset", translation_context=UI_CONTEXT)

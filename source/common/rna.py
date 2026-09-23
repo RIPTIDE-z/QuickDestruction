@@ -1,4 +1,4 @@
-"""按规格生成独立的 Blender RNA 属性定义"""
+"""RNA 工厂 - 按参数规格生成 Blender 属性定义, 让算子与属性组共用同一份规格"""
 
 
 def property_definitions(specs, context):

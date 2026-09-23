@@ -1,4 +1,4 @@
-"""纯数据翻译目录构建 - 参数规格与 Blender 运行状态相互独立"""
+"""翻译目录构建 - 由参数规格生成稳定字段路径, 校验语言 JSON 并展开上下文, 不依赖 Blender"""
 
 import json
 from collections import Counter
@@ -31,7 +31,7 @@ def merge_messages(*groups):
 
 
 def property_sources(specs):
-    """从参数规格生成稳定字段路径到英文原文的映射。"""
+    """从参数规格生成稳定字段路径到英文原文的映射"""
     sources = {}
     for field, (_kind, options) in specs.items():
         for attribute in ("name", "description"):
@@ -50,7 +50,7 @@ def property_sources(specs):
 
 
 def property_messages(specs, localized):
-    """用稳定字段路径关联译文, 英文消息键仍由参数规格提供。"""
+    """用稳定字段路径关联译文, 英文消息键仍由参数规格提供"""
     if not isinstance(localized, dict):
         raise TypeError("Translation properties must be an object")
     sources = property_sources(specs)
@@ -62,7 +62,7 @@ def property_messages(specs, localized):
 
 
 def _unique_object(pairs):
-    """JSON 默认会静默覆盖重复键; 翻译文件必须拒绝这种输入。"""
+    """JSON 默认会静默覆盖重复键; 翻译文件必须拒绝这种输入"""
     result = {}
     for key, value in pairs:
         if key in result:
@@ -72,7 +72,7 @@ def _unique_object(pairs):
 
 
 def load_catalogs(directory, modules):
-    """从每种语言一个 JSON 文件构建现有的业务模块目录。"""
+    """从每种语言一个 JSON 文件构建现有的业务模块目录"""
     paths = sorted(Path(directory).glob("*.json"))
     if not paths:
         raise ValueError(f"No translation JSON files in {directory}")

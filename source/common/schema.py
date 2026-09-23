@@ -1,4 +1,4 @@
-"""接收参数规格的校验与序列化 - 不依赖 Blender"""
+"""规格引擎 - 按规格读取, 校验与写回字段, 供算子与属性组共用, 不依赖 Blender"""
 
 import math
 
@@ -20,7 +20,7 @@ def settings_to_dict(owner, specs):
 
 
 def validated_values(data, specs):
-    """先整体校验再返回可赋值的数据; 旧预设缺字段时仍可正常载入"""
+    """先整体校验再返回可赋值的数据; 预设缺字段时保留界面当前值"""
     if not isinstance(data, dict):
         raise ValueError("Preset must be a JSON object")
     values = {}

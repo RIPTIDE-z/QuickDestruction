@@ -1,4 +1,4 @@
-"""MeshFracture 子面板和参数弹窗共用的紧凑布局。"""
+"""参数布局 - 分组行表, 启用条件与侧栏子面板, 与操作弹窗共用同一套绘制"""
 
 from bpy.types import Panel
 
@@ -6,7 +6,7 @@ from ...constants import SIDEBAR_CATEGORY
 from ..settings import CONTEXT, PROPERTY_SPECS, operator_keywords
 from .presets import draw_presets
 
-# 每个字段只在这里排布一次; 一行内的字段独立判断启用状态。
+# 每个字段只在这里排布一次; 一行内的字段独立判断启用状态
 ROW_LAYOUT = (
     (
         "Point Source",
@@ -51,7 +51,7 @@ ROW_LAYOUT = (
     ),
 )
 
-# 未应用布尔修改器时, 收尾与递归阶段不执行。
+# 未应用布尔修改器时, 收尾与递归阶段不执行
 DEBUG_INACTIVE = frozenset(
     {"use_sharp_edges", "use_sharp_edges_apply", "use_interior_vgroup", "use_island_split"}
 )
@@ -68,7 +68,7 @@ COMPONENT_AXES = {"cell_scale": ("X", "Y", "Z")}
 
 
 def _param_enabled(owner, key):
-    """仅在参数对应的执行阶段可达时启用控件。"""
+    """仅在参数对应的执行阶段可达时启用控件"""
     if key == "use_sharp_edges_apply":
         return owner.use_sharp_edges and not owner.use_debug_bool
     if key in DEBUG_INACTIVE or key == "recursion":
@@ -80,13 +80,13 @@ def _param_enabled(owner, key):
     if key in RECURSION_DEPENDENT or key in {"use_remove_original", "use_shard_collections"}:
         return recursion_enabled
     if key == "material_index":
-        # 不匹配源材质槽时, 索引无法可靠对应最终碎块材质。
+        # 不匹配源材质槽时, 索引无法可靠对应最终碎块材质
         return owner.use_data_match
     return True
 
 
 def _draw_component_row(row, owner, key):
-    """显式标注向量属性名和 X/Y/Z, 避免 Blender 覆盖其中一个标签。"""
+    """显式标注向量属性名和 X/Y/Z, 避免 Blender 覆盖其中一个标签"""
     row.use_property_split = False
     row.alignment = "EXPAND"
     row.label(text=PROPERTY_SPECS[key][1]["name"], text_ctxt=CONTEXT)
@@ -97,7 +97,7 @@ def _draw_component_row(row, owner, key):
 
 
 def _draw_group(box, owner, rows):
-    """按行绘制一组控件, 从属参数各自置灰。"""
+    """按行绘制一组控件, 从属参数各自置灰"""
     column = box.column()
     for row_spec in rows:
         row = column.row(align=True) if len(row_spec) == 1 else column.row()
@@ -111,12 +111,12 @@ def _draw_group(box, owner, rows):
             elif key in COMPONENT_AXES:
                 _draw_component_row(item, owner, key)
             else:
-                # 枚举使用默认下拉样式, 避免横排按钮挤掉同行字段。
+                # 枚举使用默认下拉样式, 避免横排按钮挤掉同行字段
                 item.prop(owner, key)
 
 
 def draw_parameters(layout, owner):
-    """在侧栏和操作弹窗中绘制同一套参数。"""
+    """在侧栏和操作弹窗中绘制同一套参数"""
     layout.use_property_split = False
     layout.use_property_decorate = False
     for title, rows in ROW_LAYOUT:
@@ -128,13 +128,13 @@ def draw_parameters(layout, owner):
 
 
 def configure_operator(operator, owner):
-    """把侧栏值写入按钮生成的算子实例。"""
+    """把侧栏值写入按钮生成的算子实例"""
     for key, value in operator_keywords(owner).items():
         setattr(operator, key, value)
 
 
 def can_apply(context):
-    """仅在物体模式且选中可编辑网格时启用侧栏按钮。"""
+    """仅在物体模式且选中可编辑网格时启用侧栏按钮"""
     return (
         context.mode == "OBJECT"
         and context.scene is not None
@@ -142,10 +142,10 @@ def can_apply(context):
     )
 
 
-class QD_PT_settings(Panel):
-    """当前场景的 MeshFracture 参数和生成入口。"""
+class MESH_FRACTURE_PT_settings(Panel):
+    """当前场景的 MeshFracture 参数和生成入口"""
 
-    bl_idname = "QD_PT_settings"
+    bl_idname = "MESH_FRACTURE_PT_settings"
     bl_parent_id = "QD_PT_main"
     bl_label = "MeshFracture"
     bl_translation_context = CONTEXT
@@ -154,9 +154,9 @@ class QD_PT_settings(Panel):
     bl_category = SIDEBAR_CATEGORY
 
     def draw(self, context):
-        """绘制预设、参数和使用当前侧栏值的生成按钮。"""
+        """绘制预设, 参数和使用当前侧栏值的生成按钮"""
         layout = self.layout
-        owner = context.scene.qd_settings.fracture
+        owner = context.scene.qd_settings.mesh_fracture
         draw_presets(layout, context, owner)
         draw_parameters(layout, owner)
 
@@ -165,7 +165,7 @@ class QD_PT_settings(Panel):
         actions.enabled = ready
         actions.operator_context = "EXEC_DEFAULT"
         generate = actions.operator(
-            "object.add_quick_destruction_objects",
+            "mesh_fracture.generate_fragments",
             text="Generate Fragments",
             text_ctxt=CONTEXT,
             icon="MOD_EXPLODE",

@@ -4,40 +4,48 @@
 
 | 位置 | 职责 |
 | --- | --- |
-| `source/__init__.py` | Blender 扩展的 `register()` / `unregister()` 入口。 |
-| `source/tool_contract.py`, `tool_registry.py` | 工具描述结构与有序工具清单。 |
-| `source/registration.py` | 校验类和 RNA ID 唯一性；按依赖顺序注册，逆序注销，注册失败时回滚已完成步骤。 |
-| `source/properties.py`, `panel.py`, `constants.py` | 场景参数聚合根、侧栏父面板与扩展级 UI 标识。 |
-| `source/i18n.py`, `locales/*.json` | 根据工具清单建立 Blender 翻译目录；每个语言一个 JSON。 |
-| `source/common/` | 参数校验和 RNA 生成、翻译目录构建、JSON 存储、Blender 上下文和本次创建数据的回收。它不导入业务工具。 |
-| `source/MeshFracture/tool.py`, `settings.py` | 工具声明、场景属性组与 27 项参数规格。 |
-| `source/MeshFracture/interaction/` | 子面板、生成算子、预设交互与预设格式校验。 |
-| `source/MeshFracture/api.py`, `core/` | 显式阶段 API；采样、胞体、布尔、网格执行、递归编排与输出命名。 |
+| `source/__init__.py`、`registration.py` | Blender 扩展入口、类与 RNA ID 校验、顺序注册和逆序清理。 |
+| `source/tool_contract.py`、`tool_registry.py` | 工具声明结构与有序工具清单。 |
+| `source/properties.py`、`panel.py`、`constants.py` | 场景参数聚合根、侧栏父面板和扩展级界面标识。 |
+| `source/i18n.py`、`locales/*.json` | 根据工具清单构建翻译目录；每种语言一个 JSON。 |
+| `source/common/` | 参数校验、RNA 属性生成、JSON 存储、翻译目录构建及 Blender 数据与上下文辅助。 |
+| `source/<Tool>/` | 各业务工具包，内部结构见 [MeshFracture](#meshfracture)。 |
 
-根装配导入各工具的声明；业务工具可调用 `common`，工具之间不互相导入。`tool.py` 延迟加载本工具的交互类，避免翻译目录与 UI 模块形成导入环。`common/created_data.py` 只跟踪当前切割创建的 objects、meshes 和 collections，不提供对既有 Blender 数据的完整事务回滚。
+依赖方向为根装配 → 工具声明 → 交互层 → 阶段 API → 计算层。计算层不导入交互层；工具可使用 `common`，`common` 不导入工具。`CreatedData` 只回收本次创建的 Blender 对象、网格和集合。
 
-## 工具接入
+交互层可读取根 `i18n` 与 `constants`（共享的翻译适配与界面标识）；根层只在装配时通过 `tool_registry` 导入工具；工具包内的交互模块由 `tool.classes()` 延迟导入，避免根翻译目录建立前形成导入环。
 
-`tool_registry.TOOLS` 是唯一的工具顺序来源。每个工具提供一个 `ToolSpec`：
+## 工具装配
 
-| 字段 | 用途 |
+`tool_registry.TOOLS` 是工具顺序来源。每个 `ToolSpec` 声明工具 ID、翻译模块与上下文、参数规格、可选的场景属性组、交互类和菜单 / 文件加载回调。注册层先检查类名与 `bl_idname` 唯一性，再注册参数组、`Scene.qd_settings`、父面板、工具类和外部入口。停用或注册失败时按相反顺序清理。
+
+新增一个工具只需要在自己的包内声明 `ToolSpec` 并加入 `TOOLS`：需要持久化参数时同时给出属性组类与 `QDSettings` 字段名，需要侧栏界面时把子面板挂到 `QD_PT_main` 下，并在每种语言的 JSON 里补上该模块的分组（见[翻译维护](Translations.md)）。根层负责注册顺序、父面板、场景指针和翻译目录，工具之间不互相导入。
+
+## MeshFracture
+
+预切割工具：点源采样 → 有界胞体 → 凸包 → Exact 布尔求交 → 递归与断面收尾。它是当前唯一的工具，也是新增工具时的参照实现。
+
+### 包结构
+
+| 位置 | 职责 |
 | --- | --- |
-| `tool_id`、`translation_module`、`translation_context` | 工具身份与语言文件中的模块、翻译上下文。 |
-| `property_specs` | 本工具的参数英文原文，供翻译目录使用；可以为空。 |
-| `classes` | 返回本工具的算子、菜单和子面板类；根装配负责注册。 |
-| `settings_attr`、`settings_class` | 可选的场景持久化参数组；两者必须同时提供。 |
-| `menu_hooks`、`load_pre`、`clear_sessions` | 可选的菜单入口、文件加载前回调和会话清理。 |
+| `tool.py` | `ToolSpec` 声明、场景属性组、菜单入口、会话清理与文件加载回调。 |
+| `settings.py` | 27 项参数规格，以及校验、序列化与错误标签转换。 |
+| `interaction/` | 子面板与参数布局、生成算子、预设会话与预设格式。 |
+| `api.py` | 可直接调用的生成入口与结果对象。 |
+| `core/` | 纯计算：种子采样、胞体构造、布尔策略、网格操作、命名与递归编排。 |
+| `constants.py`、`errors.py` | 领域常量与领域异常。 |
 
-新增工具时，在独立业务包内声明 `ToolSpec`，将其加入 `tool_registry.TOOLS`，并在每个语言 JSON 的 `modules` 中增加对应分组。需要持久化参数时，在描述中同时声明属性组类和 `QDSettings` 字段名；需要侧栏 UI 时将面板设为 `QD_PT_main` 的子面板。注册层会先注册工具属性组和 `QDSettings`，再挂 `Scene.qd_settings`，然后注册父面板、工具交互类、菜单和 handler。注销顺序相反。
+### 场景参数与界面标识
 
-现有场景数据路径 `Scene.qd_settings.fracture`、生成算子 ID `object.add_quick_destruction_objects` 和子面板 ID `QD_PT_settings` 保持不变。用户界面显示 **MeshFracture／网格破碎** 与 **Generate Fragments／生成碎块**。`QDSettings.preset_name` 保持原属性路径，使已有 `.blend` 文件仍可读取预设名；新工具应使用自己的名称状态。
+场景参数位于 `Scene.qd_settings.mesh_fracture`，其中 `preset_name` 只记录本工具当前预设名。侧栏子面板 ID 为 `MESH_FRACTURE_PT_settings`，生成算子 ID 为 `mesh_fracture.generate_fragments`。工具菜单与子面板都显示 **MeshFracture／网格破碎**；生成动作显示 **Generate Fragments／生成碎块**。
 
-## MeshFracture 阶段 API
+### 阶段 API
 
 从已安装扩展的 `MeshFracture.api` 导入：
 
 ```python
-fracture(context, sources, config, output_collection, *, rng=None)
+generate_fragments(context, sources, config, output_collection, *, rng=None)
 ```
 
 | 参数 | 契约 |
@@ -48,13 +56,11 @@ fracture(context, sources, config, output_collection, *, rng=None)
 | `output_collection` | 输出集合对象或名称；`None` / 空名使用当前集合。 |
 | `rng` | 可选局部随机流，提供时按调用顺序消费。 |
 
-API 不从 `config.collection_name` 隐式决定输出位置。交互算子显式传入该字段。调用完成或失败后，API 恢复原选择和活动物体；交互算子在成功后主动选择产物。
+API 由显式的 `output_collection` 决定输出位置。它在完成或失败后恢复原选择和活动物体；交互算子在成功后选中生成的碎块。返回的 `MeshFractureResult` 包含碎块元组 `shards`、按源物体索引的只读映射 `source_to_shards`、耗时 `seconds` 和诊断元组 `diagnostics`。只读的是结果容器，Blender 对象本身仍可编辑。
 
-`FractureResult.shards` 是碎块对象元组，`source_to_shards` 是只读映射，`seconds` 是编排耗时，`diagnostics` 当前为空元组。容器只读不等于 Blender 对象不可编辑。`complete_config()` 返回从规格补齐的只读运行配置。
+### 预设
 
-## 预设
-
-`common/preset_storage.py` 负责安全文件名、大小限制、JSON 读写与原子保存；工具负责验证字段、格式和归属。MeshFracture 新预设位于 Blender 用户脚本目录下的 `quick_destruction/presets/mesh_fracture/`，结构为：
+存储由 `common/preset_storage.py` 提供：文件名净化、大小限制、JSON 读写和原子保存；MeshFracture 负责验证格式、工具身份与参数。预设位于 Blender 用户脚本目录的 `quick_destruction/presets/mesh_fracture/`：
 
 ```json
 {
@@ -64,4 +70,4 @@ API 不从 `config.collection_name` 隐式决定输出位置。交互算子显�
 }
 ```
 
-保存时通常写出全部 27 个参数。读取时允许缺字段并保留当前界面值，但拒绝未知字段、错误工具 ID 和不支持的格式版本。原目录 `quick_destruction/presets/` 中的无信封文件与 `quick_destruction/presets/cell_fracture/` 中的旧格式文件仍可读取；已移除的占位字段仅在读取旧文件时忽略。查找同名文件时按新目录、旧工具目录、原目录的顺序选择。新预设只写到 `mesh_fracture/`。
+保存当前界面时写出全部 27 项参数。读取时允许缺字段并保留当前界面值，但拒绝未知字段、其他工具的预设和不支持的格式版本。`preset_name` 不属于预设参数，只记录界面显示的名称与保存对话框的默认名。

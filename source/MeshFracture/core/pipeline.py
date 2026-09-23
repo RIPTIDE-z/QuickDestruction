@@ -1,4 +1,4 @@
-"""切割流程编排, 以及失败时回收本次新建的数据"""
+"""流程编排 - 逐源首次切割与递归细分, 统一命名和断面收尾, 失败时回收本次新建数据"""
 
 import random
 from time import perf_counter
@@ -8,7 +8,7 @@ from mathutils import Vector
 
 from ...common.created_data import CreatedData
 from ..constants import RANDOM_SEED_DEFAULT
-from ..errors import FractureError
+from ..errors import MeshFractureError
 from . import mesh_ops
 from .naming import NamingPlan
 
@@ -132,7 +132,7 @@ def main_object(context, collection, obj, settings, rng=None, *, tracker):
     """对单个源物体做首次切割并按需递归, 最后统一处理内部断面"""
     if rng is None:
         rng = random.Random(settings.get("random_seed", RANDOM_SEED_DEFAULT))
-    # 源名称在首次切割前固定, 递归层沿用该名称生成碎块与分组标识。
+    # 源名称在首次切割前固定, 递归层沿用该名称生成碎块与分组标识
     naming = NamingPlan(
         obj,
         collection,
@@ -206,20 +206,20 @@ def run(context, sources, settings, output_collection, *, rng=None):
     # 固定多源处理顺序, 不让选择顺序改变同一随机流的分配
     sources = sorted((obj for obj in sources if obj.type == "MESH"), key=lambda obj: obj.name_full)
     if context.mode != "OBJECT" or not sources:
-        raise FractureError("Select editable mesh objects in Object Mode")
+        raise MeshFractureError("Select editable mesh objects in Object Mode")
     # 先做完全部前置检查再动手, 避免切到一半才发现参数非法
     for obj in sources:
         if not obj.data.vertices or not obj.data.polygons:
-            raise FractureError('Mesh "{name}" has no faces', name=obj.name)
+            raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
         index = settings["material_index"]
         if settings["use_data_match"] and index > 0 and index >= len(obj.material_slots):
-            raise FractureError(
+            raise MeshFractureError(
                 'Material slot {index} does not exist on "{name}"', index=index, name=obj.name
             )
     # 只记录并回收本次显式创建的数据, 不碰其它插件新增的内容
     tracker = CreatedData()
     # 一次运行共用局部随机流, 不读取或修改 Python/mathutils 的全局随机状态
-    # 未传随机流时使用规格默认种子, 保持显式 API 的可复现性。
+    # 未传随机流时使用规格默认种子, 保持显式 API 的可复现性
     if rng is None:
         rng = random.Random(settings.get("random_seed", RANDOM_SEED_DEFAULT))
     started = perf_counter()
@@ -239,7 +239,7 @@ def run(context, sources, settings, output_collection, *, rng=None):
                 context.collection.children.link(collection)
                 context.view_layer.update()
         if collection.library or not _visible_collection(context, collection):
-            raise FractureError(
+            raise MeshFractureError(
                 "Output collection must be editable and visible in the current view layer"
             )
         cells = []
@@ -247,7 +247,7 @@ def run(context, sources, settings, output_collection, *, rng=None):
         for index, obj in enumerate(sources):
             created = main_object(context, collection, obj, settings, rng=rng, tracker=tracker)
             if not created:
-                raise FractureError('No valid shards were produced for "{name}"', name=obj.name)
+                raise MeshFractureError('No valid shards were produced for "{name}"', name=obj.name)
             cells.extend(created)
             source_to_shards[obj] = tuple(created)
             context.window_manager.progress_update(index + 1)
