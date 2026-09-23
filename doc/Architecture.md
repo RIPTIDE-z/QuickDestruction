@@ -7,13 +7,13 @@
 | `source/__init__.py` | 延迟导入注册装配 |
 | `registration.py` | 显式类顺序、Scene 指针、菜单、handler |
 | `properties.py` | 场景聚合根 `QDSettings` |
-| `i18n.py` | 根翻译域与界面 / 报告适配 |
+| `i18n.py`, `common/localization.py`, `locales/*.json` | 根翻译域、目录加载校验、界面 / 报告适配与各语言译文 |
 | `common/schema.py`, `rna.py`, `errors.py` | 接收 specs 的校验、转换、RNA 工厂、字段异常 |
 | `common/preset_storage.py` | 调用方指定目录的 JSON 存储 |
 | `common/created_data.py`, `blender_context.py` | 本次新建数据回收、BMesh 生命周期、选择恢复 |
 | `CellFracture/settings.py`, `properties.py` | 29 字段唯一规格与阶段 RNA |
 | `CellFracture/operators.py`, `panel.py`, `presets.py` | 交互、布局与预设会话 |
-| `CellFracture/presentation.py`, `translations.py` | 错误字段呈现与纯消息数据 |
+| `CellFracture/presentation.py` | 错误字段呈现 |
 | `CellFracture/api.py`, `pipeline.py` | 显式阶段入口与递归编排 |
 | `CellFracture/sampling.py`, `cells.py` | 点源 / 球面采样与半空间胞体 |
 | `CellFracture/mesh_ops.py`, `boolean.py`, `naming.py` | 网格操作、布尔策略、命名与集合 |
@@ -52,28 +52,3 @@ cells 仅依赖 mathutils、标准库、常量与纯异常
 结果容器只读, Blender 对象本身仍可编辑, 映射仅供当前运行使用
 `complete_config` 从 specs 生成只读配置, 可再次传入 API
 CreatedData 仅回收本次创建的数据, 不是既有数据的完整事务或撤销系统
-
-## 持久化与接口契约
-
-- 扩展 id `quick_destruction`, 最低 Blender 4.2
-- 主算子 `object.add_quick_destruction_objects`, 仅 `UNDO`
-- 四个 `qd.preset_*`, 面板 `QD_PT_settings`, RNA 类名保持
-- `Scene.qd_settings.fracture` 与 `preset_name` 保持
-- 旧 JSON 格式与 `quick_destruction/presets` 目录保持
-- 旧 `qd_*` 模块与 `pipeline.main` 已移除, 脚本统一调用阶段 API
-- 内部组名仍为 `内部`, 通过 `obj.vertex_groups.get("内部")` 读取
-- 故障注入直接指向当前实现模块
-
-注册中途失败自动回滚仍是已知未实现项, 本轮未加入行为修复
-未来动画与绑定按实际需求建立同级业务包, 当前不创建空框架
-
-## 清理复核
-
-- 28 个 Python 模块, 58 条内部依赖, 包含函数内延迟导入的静态依赖图无环
-- 根目录不再保留 qd_* 转发文件, pipeline 不反向依赖 api
-- 注册仅由根 registration 管理, 面板与预设模块无重复注册入口
-- 删除旧内部组查询兼容函数和未使用的布尔 collection 参数
-- 未发现未使用导入或无引用的顶层定义, Blender 回调由宿主调用
-- mass / mass_mode 等持久化字段保持, 不因清理旧 Python 入口改变场景和 JSON 结构
-
-业务对比与故障注入未发现本轮引入的严重回归, 检查范围见 [Validation](Validation.md)

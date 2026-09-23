@@ -1,80 +1,59 @@
 # 翻译维护
 
-## 职责
+## 数据流
 
-| 文件 | 维护内容 |
+| 位置 | 职责 |
 | --- | --- |
-| `CellFracture/settings.py` | 参数英文标签、提示和枚举原文的唯一来源 |
-| `CellFracture/translations.py` | 按参数字段 / 枚举 ID 组织的译文、界面消息、语言目录 |
-| `common/localization.py` | 纯 Python 校验、参数消息生成、模块合并与语言别名 |
-| `i18n.py` | 显式目录装配、根翻译域、界面 / 报告翻译适配 |
-| `registration.py` | 向 Blender 注册及注销最终字典 |
+| `source/CellFracture/settings.py` | 参数名称、说明及枚举项的英文原文唯一来源 |
+| `source/locales/<locale>.json` | 每个独立维护的语言一份译文，按业务模块分组 |
+| `source/common/localization.py` | 从参数规格生成稳定字段路径与英文消息、JSON 加载校验、目录合并及别名展开 |
+| `source/i18n.py` | 模块规格与翻译上下文、语言别名、界面及报告翻译适配 |
+| `source/registration.py` | 向 Blender 注册和注销最终翻译字典 |
 
-最终格式保持 Blender 原生结构: `locale → (context, 英文原文) → 译文`
-英文作为运行时消息键, 参数字段名只用于维护译文
+启动时一次性读取全部语言文件，转换为 Blender 的 `locale → (context, 英文原文) → 译文` 字典。界面绘制和 `tr()` / `tr_report()` 调用不会再读取 JSON。RNA 标签和提示仍由 Blender 自动翻译，报告与界面消息分别调用 `pgettext_rpt` 和 `pgettext_iface`。
 
-## 修改参数译文
+## 语言文件格式
 
-在 `ZH_HANS_PROPERTIES` 中按字段查找, 不复制英文提示
+文件名必须与 `locale` 相同，并使用 UTF-8 编码。例如 `source/locales/zh_HANS.json`：
 
-```python
-"recursion_chance": {
-    "name": "递归参与比例",
-    "description": "每轮选中当前碎块的比例，数量向下取整；0 不选，1 全选。具体碎块由递归选择方式决定。",
-},
+```json
+{
+  "schema_version": 2,
+  "locale": "zh_HANS",
+  "modules": {
+    "CellFracture": {
+      "properties": {
+        "source_limit.name": "种子点上限",
+        "source_limit.description": "去重前最多保留的种子点数，0 表示全部保留。不会补充种子点，也不保证最终碎块数量。",
+        "source.items.VERT_OWN.name": "自身顶点",
+        "source.items.VERT_OWN.description": "使用源网格修改器之前的原始顶点，转换为世界空间坐标。"
+      },
+      "messages": {
+        "Quick Destruction Effect": "快速破坏效果"
+      }
+    }
+  }
+}
 ```
 
-枚举通过 `items[枚举ID].name` 和 `.description` 定位
-英文修改后自动生成新的 Blender 消息键, 同时人工复核译文语义
-自动校验只能发现结构错误, 不能判断译文是否准确
+示例只展示格式；正式文件的 `properties` 必须覆盖该业务模块全部预期路径。参数名称使用 `字段.name`，说明使用 `字段.description`，枚举使用 `字段.items.枚举ID.name` 和 `.description`。路径由 `PROPERTY_SPECS` 生成，英文原文也只从该规格读取，不要复制到语言 JSON。调整枚举显示顺序不会改变译文归属。
 
-## 新增语言
+维护时可调用 `common.localization.property_sources(PROPERTY_SPECS)` 生成“稳定路径 → 当前英文原文”的参考表。英文说明改变但路径未变时，应复核该路径的译文；加载器能检查结构和占位符，不能判断语义是否仍准确。
 
-1. 在业务翻译模块新增该语言的参数表与界面消息表
-2. 使用 `property_messages(PROPERTY_SPECS, 参数表)` 生成参数消息
-3. 使用 `merge_messages(参数消息, 界面消息)` 合并
-4. 将结果加入 `CATALOGS[语言标识]`
+`messages` 的键是代码中使用的英文原文，可以只翻译部分普通界面消息；缺项时保留英文。参数字段、属性和枚举项必须全部翻译。JSON 不能写注释、尾随逗号或重复对象键；加载器会拒绝重复键，避免静默覆盖。
 
-参数表必须完整覆盖该阶段的字段、属性和枚举
-界面消息缺译时沿用 Blender 的英文回退, 不要求每种语言覆盖所有界面消息
-当前 `zh_CN` 是 `zh_HANS` 的别名, 在根 `LOCALE_ALIASES` 中维护
-若未来要分别维护两者, 删除别名并提供两个独立目录
+## 修改译文
 
-## 新增业务模块
+1. 在对应语言文件中按稳定字段路径或英文消息键查找译文。
+2. 参数英文变化时，检查新原文的含义。参数译文仍按字段关联，但普通界面消息必须同步更改英文键。
+3. 保留格式字段的名称、次数、格式规格和转换标记。例如 `{name}` 与 `{seconds:.2f}` 不能改名或改变精度，可以调整出现顺序。
 
-业务模块提供 `CATALOGS`, 在根 `i18n.CATALOGS` 显式加入:
+当前 `zh_CN` 是 `zh_HANS` 的别名，配置在根 `i18n.LOCALE_ALIASES`，不需要维护第二份相同 JSON。若将来分别翻译两者，删除别名并新增 `zh_CN.json`。
 
-```python
-("阶段名", ("阶段上下文",), STAGE_CATALOGS),
-```
+## 新增语言和业务模块
 
-RNA 使用相同 `translation_context`, 布局使用相同 `text_ctxt`
-手动翻译可调用 `tr(message, context="阶段上下文")` 或 `tr_report(...)`
-`context` 为适配器保留参数, 不作为消息格式化字段名
+新增语言时复制现有 JSON 为 `<locale>.json`，修改 `locale` 和译文。加载器会自动发现文件，不需要在 Python 中逐个登记语言。新增业务模块时，在 `i18n.MODULES` 中登记其参数规格与翻译上下文，并在每个语言文件的 `modules` 中新增相应分组。
 
-相同英文在不同阶段含义不同时使用独立上下文
-只有确实需要默认上下文查询时才加入 `"*"`, 避免不同阶段互相争用译文
-预切割保留当前 `QuickDestruction` 与 `"*"` 双上下文以维持界面行为
+RNA 使用与模块相同的 `translation_context`，布局手动文本使用相同的 `text_ctxt`。动态界面和报告消息分别通过 `tr(message, context=...)` 和 `tr_report(message, context=...)` 获取译文；`context` 是适配器参数，不能作为消息格式化字段名。
 
-## 校验规则
-
-| 情况 | 处理 |
-| --- | --- |
-| 参数漏译、多余字段、枚举 ID 不匹配 | 目录构建时报错 |
-| 同语言 / 上下文 / 原文存在不同译文 | 报错, 不静默覆盖 |
-| 相同译文重复出现 | 合并 |
-| `{name}` 或 `{seconds:.2f}` 的名称、次数、格式、转换标记变化 | 报错, 允许调整占位符顺序 |
-| 空译文或非字符串译文 | 报错 |
-| 语言别名指向不存在的语言或覆盖已有目录 | 报错 |
-
-界面与报告分别调用 `pgettext_iface` / `pgettext_rpt`, 保持 Blender 翻译开关语义
-RNA 标签与 tooltip 继续由 Blender 自动翻译, 不预先写入中文
-纯翻译目录可在普通 Python 中导入和检查, 不需要启动 Blender
-
-## 格式与验收
-
-使用项目配置执行 `uv run ruff format`, 中文译文尽量保持完整句子
-本轮 13 项专项检查通过, 138 条消息与原目录一致, 双版本 RNA / 翻译 / 几何基线一致
-本地检查为 `tests/check_localization.py`, 日志与包位于 `tests/modularization/M8_i18n`
-
-参考 [Blender 翻译 API](https://docs.blender.org/api/5.1/bpy.app.translations.html) 和 [翻译开发指南](https://developer.blender.org/docs/handbook/translating/developer_guide/)
+相同英文在不同业务模块中含义不同时使用独立上下文。只有确实需要默认上下文查询时才加入 `"*"`，避免模块之间争用译文。预切割模块保留 `QuickDestruction` 与 `"*"` 两个上下文以维持现有界面行为。

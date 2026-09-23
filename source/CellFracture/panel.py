@@ -211,7 +211,7 @@ def _draw_component_row(row, owner, key):
     """
     row.use_property_split = False
     row.alignment = "EXPAND"
-    # 属性名占最左一格; 传翻译上下文, 中文界面下会显示为"胞体缩放"
+    # 属性名占最左一格; 传翻译上下文, 中文界面下会显示为"分割轴权重"
     row.label(text=PROPERTY_SPECS[key][1]["name"], text_ctxt=CONTEXT)
     for index, axis in enumerate(COMPONENT_AXES[key]):
         if index:

@@ -1,18 +1,19 @@
 [project]
 name = "quickdestruction"
-version = "0.1.0"
-description = ""
+version = "0.0.1"
+description = "Quick destruction workflow add-on for blender"
 requires-python = ">=3.13"
 dependencies = []
 
 [dependency-groups]
 dev = [
-    "blender-python-stubs>=5.2.1.1",
-    "ruff>=0.16.8",
+    "blender-python-stubs",
+    "pytest",
+    "ruff",
 ]
 
-
 [tool.ruff]
+target-version = "py313"
 line-length = 100
 indent-width = 4
 
@@ -23,4 +24,18 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [tool.ruff.lint]
-extend-select = ["I"]
+select = [
+    "E4",   # 基础导入错误
+    "E7",   # 语句格式
+    "E9",   # 严重语法错误
+    "F",    # Pyflakes
+    "I",    # 导入排序
+    "B",    # 潜在 Bug
+    "UP",   # Python 语法现代化
+    "C4",   # 推导式优化
+    "PIE",  # 不必要或易错的代码
+    "PTH",  # 推荐 pathlib
+    "ARG",  # 未使用的参数
+    "RUF",  # Ruff 专有规则
+    "FURB", # 现代化代码重构
+]

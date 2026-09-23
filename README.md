@@ -1,12 +1,16 @@
 > 此工具代码使用 AI 辅助编写，可能有很多错误，不能100%保证稳定性
 
+- 若要进行代码开发工作，请阅读 [开发文档](doc/Developer.md)
+
 # 快速破坏效果工具
 
-- 本工具为破坏动画流程生成预切割碎块，含有以下功能：
-    - `CellFracture` 参考并派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)
-      - 在种子点上构建 3D Voronoi 图，把每个胞体做成凸多面体，再与原物体做**布尔求交**，得到贴合原表面的碎块，用于刚体破坏预切割
+本工具为破坏动画流程生成预切割碎块，含有以下功能：
 
-当前仅实现预切割，不创建刚体、分配质量或生成动画。
+- [x] `CellFracture` 参考并派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)
+    - 在种子点上构建 3D Voronoi 图，把每个胞体做成凸多面体，再与原物体做**布尔求交**，得到贴合原表面的碎块，用于刚体破坏预切割
+- [] 破坏动画生成
+- [] 自动绑定以及动画烘焙
+
 
 ## 构建
 

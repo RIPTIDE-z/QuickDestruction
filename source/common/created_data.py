@@ -27,12 +27,8 @@ class CreatedData:
                         continue
                     if kind == "objects":
                         data.remove(item, do_unlink=True)
-                    elif (
-                        kind == "meshes"
-                        and item.users == 0
-                        or kind == "collections"
-                        and not item.objects
-                        and not item.children
+                    elif (kind == "meshes" and item.users == 0) or (
+                        kind == "collections" and not item.objects and not item.children
                     ):
                         data.remove(item)
                 except ReferenceError:

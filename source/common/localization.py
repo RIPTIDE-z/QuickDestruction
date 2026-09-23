@@ -1,6 +1,8 @@
 """纯数据翻译目录构建 - 参数规格与 Blender 运行状态相互独立"""
 
+import json
 from collections import Counter
+from pathlib import Path
 from string import Formatter
 
 
@@ -28,33 +30,87 @@ def merge_messages(*groups):
     return messages
 
 
-def property_messages(specs, localized):
-    """按字段和枚举标识生成消息 - 英文只从参数规格读取"""
-    if set(specs) != set(localized):
-        missing = sorted(set(specs) - set(localized))
-        extra = sorted(set(localized) - set(specs))
-        raise ValueError(f"Translation fields differ: missing={missing}, extra={extra}")
-    groups = []
+def property_sources(specs):
+    """从参数规格生成稳定字段路径到英文原文的映射。"""
+    sources = {}
     for field, (_kind, options) in specs.items():
-        entry = localized[field]
-        expected = {key for key in ("name", "description", "items") if key in options}
-        if set(entry) != expected:
-            raise ValueError(f"Translation attributes differ: {field}")
         for attribute in ("name", "description"):
             if attribute in options:
-                groups.append({options[attribute]: entry[attribute]})
-        if "items" not in options:
-            continue
-        # 枚举按稳定标识对照 - 调整显示顺序不会改变译文归属
-        items = {item[0]: item for item in options["items"]}
-        if set(items) != set(entry["items"]):
-            raise ValueError(f"Translation enum items differ: {field}")
-        for identifier, (_identifier, name, description, *_) in items.items():
-            translated = entry["items"][identifier]
-            if set(translated) != {"name", "description"}:
-                raise ValueError(f"Translation enum attributes differ: {field}.{identifier}")
-            groups.extend(({name: translated["name"]}, {description: translated["description"]}))
-    return merge_messages(*groups)
+                key = f"{field}.{attribute}"
+                if key in sources:
+                    raise ValueError(f"Duplicate translation property path: {key}")
+                sources[key] = options[attribute]
+        for identifier, name, description, *_rest in options.get("items", ()):
+            for attribute, source in (("name", name), ("description", description)):
+                key = f"{field}.items.{identifier}.{attribute}"
+                if key in sources:
+                    raise ValueError(f"Duplicate translation property path: {key}")
+                sources[key] = source
+    return sources
+
+
+def property_messages(specs, localized):
+    """用稳定字段路径关联译文，英文消息键仍由参数规格提供。"""
+    if not isinstance(localized, dict):
+        raise TypeError("Translation properties must be an object")
+    sources = property_sources(specs)
+    if set(sources) != set(localized):
+        missing = sorted(set(sources) - set(localized))
+        extra = sorted(set(localized) - set(sources))
+        raise ValueError(f"Translation property keys differ: missing={missing}, extra={extra}")
+    return merge_messages(*({source: localized[key]} for key, source in sources.items()))
+
+
+def _unique_object(pairs):
+    """JSON 默认会静默覆盖重复键；翻译文件必须拒绝这种输入。"""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key: {key!r}")
+        result[key] = value
+    return result
+
+
+def load_catalogs(directory, modules):
+    """从每种语言一个 JSON 文件构建现有的业务模块目录。"""
+    paths = sorted(Path(directory).glob("*.json"))
+    if not paths:
+        raise ValueError(f"No translation JSON files in {directory}")
+
+    catalogs = {module: {} for module in modules}
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+        except (OSError, UnicodeError, ValueError) as error:
+            raise ValueError(f"{path}: {error}") from error
+
+        if not isinstance(data, dict) or set(data) != {"schema_version", "locale", "modules"}:
+            raise ValueError(f"{path}: expected schema_version, locale and modules")
+        if type(data["schema_version"]) is not int or data["schema_version"] != 2:
+            raise ValueError(f"{path}: unsupported translation schema version")
+        locale = data["locale"]
+        if not isinstance(locale, str) or locale != path.stem:
+            raise ValueError(f"{path}: locale must match the filename")
+        sections = data["modules"]
+        if not isinstance(sections, dict) or set(sections) != set(modules):
+            raise ValueError(f"{path}: translation modules differ from registered modules")
+
+        for module, (_contexts, specs) in modules.items():
+            section = sections[module]
+            if not isinstance(section, dict) or set(section) != {"properties", "messages"}:
+                raise ValueError(f"{path}/{module}: expected properties and messages")
+            try:
+                if not isinstance(section["messages"], dict):
+                    raise TypeError("messages must be an object")
+                catalogs[module][locale] = merge_messages(
+                    property_messages(specs, section["properties"]), section["messages"]
+                )
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"{path}/{module}: {error}") from error
+
+    return tuple(
+        (module, contexts, catalogs[module]) for module, (contexts, _specs) in modules.items()
+    )
 
 
 def build_translations(catalogs, *, aliases=None):
