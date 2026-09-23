@@ -16,7 +16,7 @@ class MeshFractureSettings(PropertyGroup):
     """场景中的生成参数与本工具当前预设名"""
 
     # 27 项生成参数与生成算子共用同一份定义, 避免两处接口分叉;
-    # preset_name 与 preset_session 由通用预设层提供, 两者都不属于预设文件
+    # preset_name 由通用预设层提供, 只记录界面显示的预设名, 不属于预设文件
     __annotations__ = {
         **property_definitions(),
         **preset_properties(),

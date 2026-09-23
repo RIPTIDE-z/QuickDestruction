@@ -4,9 +4,9 @@
 
 ## 修改工具
 
-MeshFracture 的参数在 `source/MeshFracture/settings.py` 中集中声明。变更字段时同步检查 `interaction/panel.py` 的布局覆盖与启用条件、`source/locales/*.json` 的参数译文，以及预设格式校验。工具的公开计算入口在 `api.py`；算法实现位于 `core/`，算子、子面板和预设交互位于 `interaction/`。
+MeshFracture 的参数在 `source/MeshFracture/settings.py` 中集中声明。变更字段时同步检查 `interaction/panel.py` 的布局覆盖与启用条件、`source/locales/*.json` 的参数译文，以及预设格式校验。工具的公开计算入口在 `api.py`，算法实现位于 `core/`，算子与子面板位于 `interaction/`；预设界面由根层 `source/preset_ui.py` 统一提供，工具只需在自己的 `settings.py` 里声明 `PRESET`。
 
-新增工具应创建独立包及 `ToolSpec` 声明，并加入 `source/tool_registry.py`。根层负责注册顺序、侧栏父面板、场景指针和翻译目录；工具之间不互相导入。详细契约见 [架构文档](Architecture.md)。
+新增工具应创建独立包及 `ToolSpec` 声明，并加入 `source/tool_registry.py`；需要预设时给出 `ToolSpec.preset`。根层负责注册顺序、侧栏父面板、场景指针、通用预设界面和翻译目录；工具之间不互相导入。详细契约见 [架构文档](Architecture.md)。
 
 ## 代码检查
 
@@ -24,6 +24,8 @@ uv run ruff format .
 `tests/unit` 用普通 Python 与 pytest；`tests/blender` 使用真实 Blender；`tmp/` 是本地临时目录，不进仓库。首次把脚本放入 `tests/` 前，按仓库 `agents.md` 的要求由用户运行确认。不要把安装了 `blender-python-stubs` 的环境中“能导入 `bpy`”当作脱离 Blender 的证明，应验证实际行为或显式拦截 Blender 模块。
 
 改动算法时应在真实 Blender 中检查产物、命名、材质以及注册与注销；在 `-b` 后台模式下运行的脚本应加上 `--python-exit-code 1`，让断言失败体现为进程退出码。
+
+界面代码还有一类后台模式覆盖不到的风险：绘制回调里写 ID 数据会被拒绝，异常又只记在控制台，界面表现为面板只剩标题、内容为空。`tests/blender/verify_panel_draw.py` 专门验证这一点，必须去掉 `-b` 运行；它会先探测侧栏当前激活的分类，再把父面板与各工具的面板放进去逐个确认 `draw` 完整执行。
 
 ## 打包与安装
 

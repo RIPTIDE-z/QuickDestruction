@@ -18,26 +18,28 @@ from .common.errors import DomainError, describe_error
 from .common.translate import tr, tr_report
 from .constants import UI_CONTEXT
 
-# 编辑目标挂在 context 上的指针名, 预设菜单绘制时据此找回本次操作的目标
-TARGET_POINTER = "qd_preset_target"
+# 令牌挂在布局上下文里的成员名, 预设菜单绘制时据此找回本次操作的目标
+# 用上下文而不是参数组字段: 绘制回调里不允许写 ID 数据, 只能写上下文与 Python 状态
+# 前缀 qd_ 避免与 Blender 自带的上下文成员重名
+SESSION_MEMBER = "qd_preset_session"
 # 会话表: 令牌 -> 归属工具, 参数持有者, 归属场景, 是否对话框会话, 对话框内的预设名
 # 侧栏会话的令牌就是工具标识, 因此它不随界面重绘增长
 SESSIONS = {}
 
 
 def session_property():
-    """隐藏的会话令牌字段, 让参数对话框把预设操作指向本次对话框而不是侧栏"""
+    """隐藏的会话令牌字段, 让参数对话框把预设操作指向本次对话框而不是侧栏
+
+    令牌写在算子实例上而不是场景参数组上: 算子实例不是 ID 数据, 绘制期也能安全赋值
+    """
     # SKIP_SAVE: 不进入 .blend, 避免把指针指向已经失效的会话
     return StringProperty(options={"HIDDEN", "SKIP_SAVE"})
 
 
 def preset_properties():
-    """场景参数组要提供的预设字段: 当前预设名与侧栏会话令牌"""
+    """场景参数组要提供的预设字段: 当前预设名"""
     # preset_name 显示在面板上, 因此正常持久化; 它不属于预设文件里的参数
-    return {
-        "preset_name": StringProperty(name="Preset", translation_context=UI_CONTEXT),
-        "preset_session": session_property(),
-    }
+    return {"preset_name": StringProperty(name="Preset", translation_context=UI_CONTEXT)}
 
 
 def new_session(preset, owner, context, name):
@@ -342,10 +344,11 @@ class QD_MT_presets(Menu):
     def draw(self, context):
         """列出保存入口, 每个预设的载入与删除项, 以及打开目录项
 
-        编辑目标由绘制方挂在 context 上, 这里只取它的会话令牌
+        令牌由绘制方通过布局上下文传入, 这里只取它对应的会话
         """
         layout = self.layout
-        token = getattr(getattr(context, TARGET_POINTER, None), "preset_session", "")
+        # 与 Blender 自带的上下文成员一样用 getattr 兜底, 避免取出未设置的成员时抛错
+        token = getattr(context, SESSION_MEMBER, "")
         session = SESSIONS.get(token)
         if session is None:
             # 会话已经失效: 常见于换文件之后, 此时不提供任何预设操作
@@ -387,9 +390,8 @@ def draw_presets(layout, context, preset, owner, token=""):
     if not token:
         # 侧栏: 令牌就是工具标识, 每次重绘刷新同一条会话记录
         token = panel_session(preset, owner, context)
-        owner.preset_session = token
-    # 把编辑目标挂到 context 上, 菜单绘制时再取出来
-    layout.context_pointer_set(TARGET_POINTER, owner)
+    # 令牌经布局上下文交给同一布局上的菜单, 绘制期不写任何 ID 数据
+    layout.context_string_set(SESSION_MEMBER, token)
     row = layout.row(align=True)
     name = preset_name(token)
     row.menu("QD_MT_presets", text=name or tr("Presets"), translate=False, icon="PRESET")
