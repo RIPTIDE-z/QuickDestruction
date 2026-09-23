@@ -1,14 +1,18 @@
-"""场景设置聚合根 - 保留持久化数据路径"""
+"""场景设置聚合根, 保留已有 .blend 的属性路径。"""
 
 from bpy.props import PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 
-from .CellFracture.constants import CONTEXT
-from .CellFracture.properties import CellFractureSettings
+from .constants import UI_CONTEXT
+from .tool_registry import TOOLS
 
 
 class QDSettings(PropertyGroup):
-    """挂在场景上的总设置, 目前只包含参数组和最近使用的预设名"""
+    """每个工具拥有独立参数组; 旧预设名字段为 CellFracture 保留。"""
 
-    fracture: PointerProperty(type=CellFractureSettings)
-    preset_name: StringProperty(name="Preset", translation_context=CONTEXT)
+    __annotations__ = {
+        tool.settings_attr: PointerProperty(type=tool.settings_class)
+        for tool in TOOLS
+        if tool.settings_class is not None
+    }
+    preset_name: StringProperty(name="Preset", translation_context=UI_CONTEXT)

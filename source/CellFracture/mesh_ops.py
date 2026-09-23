@@ -18,7 +18,7 @@ from .constants import (
     WELD_TO_JITTER_RATIO,
 )
 from .errors import FractureError
-from .sampling import _points_from_object, _random_unit_vector
+from .sampling import points_from_object, random_unit_vector
 
 
 def _weld_distances(scale):
@@ -87,10 +87,10 @@ def cell_fracture_objects(
         return target if target is not None else collection
 
     depsgraph = context.evaluated_depsgraph_get()
-    points = _points_from_object(context, depsgraph, obj, source)
+    points = points_from_object(context, depsgraph, obj, source)
     # 选定来源一个点都没有时回退到自身顶点, 避免白跑一趟
     if not points:
-        points = _points_from_object(context, depsgraph, obj, {"VERT_OWN"})
+        points = points_from_object(context, depsgraph, obj, {"VERT_OWN"})
     if not points:
         return []
     if source_limit and source_limit < len(points):
@@ -117,7 +117,7 @@ def cell_fracture_objects(
     if source_noise:
         # 扰动规则点阵, 避免出现过于整齐的切割面
         points = [
-            p + _random_unit_vector(rng) * (source_noise * scale * 0.5 * rng.random())
+            p + random_unit_vector(rng) * (source_noise * scale * 0.5 * rng.random())
             for p in points
         ]
     if use_debug_points:

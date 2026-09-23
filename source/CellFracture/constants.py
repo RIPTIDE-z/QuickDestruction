@@ -1,6 +1,10 @@
-"""预切割领域常量"""
+"""预切割领域标识和数值常量。"""
 
-CONTEXT = "QuickDestruction"
+from ..constants import UI_CONTEXT
+
+TOOL_ID = "cell_fracture"
+# 保留现有翻译上下文和预设的英文消息键。
+CONTEXT = UI_CONTEXT
 
 CELL_SCALE_MIN = 0.001
 

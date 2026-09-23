@@ -1,54 +1,69 @@
-# 模块与接口
+# 架构与接口
 
-## 目录职责
+## 模块边界
 
 | 位置 | 职责 |
 | --- | --- |
-| `source/__init__.py` | 延迟导入注册装配 |
-| `registration.py` | 显式类顺序、Scene 指针、菜单、handler |
-| `properties.py` | 场景聚合根 `QDSettings` |
-| `i18n.py`, `common/localization.py`, `locales/*.json` | 根翻译域、目录加载校验、界面 / 报告适配与各语言译文 |
-| `common/schema.py`, `rna.py`, `errors.py` | 接收 specs 的校验、转换、RNA 工厂、字段异常 |
-| `common/preset_storage.py` | 调用方指定目录的 JSON 存储 |
-| `common/created_data.py`, `blender_context.py` | 本次新建数据回收、BMesh 生命周期、选择恢复 |
-| `CellFracture/settings.py`, `properties.py` | 29 字段唯一规格与阶段 RNA |
-| `CellFracture/operators.py`, `panel.py`, `presets.py` | 交互、布局与预设会话 |
-| `CellFracture/presentation.py` | 错误字段呈现 |
-| `CellFracture/api.py`, `pipeline.py` | 显式阶段入口与递归编排 |
-| `CellFracture/sampling.py`, `cells.py` | 点源 / 球面采样与半空间胞体 |
-| `CellFracture/mesh_ops.py`, `boolean.py`, `naming.py` | 网格操作、布尔策略、命名与集合 |
-| `CellFracture/constants.py`, `errors.py` | 领域常量与纯异常 |
-| 根目录 `install.bat` | 开发安装器, 不进入扩展 ZIP |
+| `source/__init__.py` | Blender 扩展的 `register()` / `unregister()` 入口。 |
+| `source/tool_contract.py`, `tool_registry.py` | 工具描述结构与有序工具清单。 |
+| `source/registration.py` | 校验类和 RNA ID 唯一性；按依赖顺序注册，逆序注销，注册失败时回滚已完成步骤。 |
+| `source/properties.py`, `panel.py`, `constants.py` | 场景参数聚合根、侧栏父面板与扩展级 UI 标识。 |
+| `source/i18n.py`, `locales/*.json` | 根据工具清单建立 Blender 翻译目录；每个语言一个 JSON。 |
+| `source/common/` | 参数校验和 RNA 生成、翻译目录构建、JSON 存储、Blender 上下文和本次创建数据的回收。它不导入业务工具。 |
+| `source/CellFracture/tool.py` | Cell Fracture 的参数组、交互类、菜单和文件加载回调声明。 |
+| `source/CellFracture/settings.py`, `properties.py` | 29 项参数规格与 Blender 属性组。 |
+| `source/CellFracture/panel.py`, `operators.py`, `presets.py`, `preset_format.py` | 工具子面板、切割算子、预设操作与预设格式校验。 |
+| `source/CellFracture/api.py`, `pipeline.py` | 显式阶段 API 和递归切割编排。 |
+| `source/CellFracture/sampling.py`, `cells.py`, `boolean.py`, `mesh_ops.py`, `naming.py` | 采样、胞体、布尔策略、网格执行及输出命名。 |
 
-依赖方向: 根装配 → 业务界面 → API → pipeline → 几何模块
-业务可使用 common, common 不导入业务
-cells 仅依赖 mathutils、标准库、常量与纯异常
-单独导入 cells 不加载 RNA、面板或翻译
+根装配导入各工具的声明；业务工具可调用 `common`，工具之间不互相导入。`tool.py` 延迟加载本工具的交互类，避免翻译目录与 UI 模块形成导入环。`common/created_data.py` 只跟踪当前切割创建的 objects、meshes 和 collections，不提供对既有 Blender 数据的完整事务回滚。
 
-## 阶段 API
+## 工具接入
 
-从已安装扩展的 `CellFracture.api` 导入 `fracture`
-签名: `fracture(context, sources, config, output_collection, *, rng=None)`
+`tool_registry.TOOLS` 是唯一的工具顺序来源。每个工具提供一个 `ToolSpec`：
+
+| 字段 | 用途 |
+| --- | --- |
+| `tool_id`、`translation_module`、`translation_context` | 工具身份与语言文件中的模块、翻译上下文。 |
+| `property_specs` | 本工具的参数英文原文，供翻译目录使用；可以为空。 |
+| `classes` | 返回本工具的算子、菜单和子面板类；根装配负责注册。 |
+| `settings_attr`、`settings_class` | 可选的场景持久化参数组；两者必须同时提供。 |
+| `menu_hooks`、`load_pre`、`clear_sessions` | 可选的菜单入口、文件加载前回调和会话清理。 |
+
+新增工具时，在独立业务包内声明 `ToolSpec`，将其加入 `tool_registry.TOOLS`，并在每个语言 JSON 的 `modules` 中增加对应分组。需要持久化参数时，在描述中同时声明属性组类和 `QDSettings` 字段名；需要侧栏 UI 时将面板设为 `QD_PT_main` 的子面板。注册层会先注册工具属性组和 `QDSettings`，再挂 `Scene.qd_settings`，然后注册父面板、工具交互类、菜单和 handler。注销顺序相反。
+
+现有场景数据路径 `Scene.qd_settings.fracture`、Cell Fracture 算子 ID `object.add_quick_destruction_objects` 和子面板 ID `QD_PT_settings` 保持不变。`QDSettings.preset_name` 仍为 Cell Fracture 保留，以读取已有 `.blend` 文件中的预设名；新工具应使用自己的名称状态。
+
+## Cell Fracture 阶段 API
+
+从已安装扩展的 `CellFracture.api` 导入：
+
+```python
+fracture(context, sources, config, output_collection, *, rng=None)
+```
 
 | 参数 | 契约 |
 | --- | --- |
-| `context` | Blender 物体模式上下文, 包含场景与视图层 |
-| `sources` | 显式源物体序列, 由调用者提供当前视图层可编辑物体, 非网格忽略 |
-| `config` | 用户字段映射, 缺字段从唯一 specs 补齐, 不写入 tracker 或 RNG |
-| `output_collection` | 集合对象或名称, 名称不存在时新建, `None` 或空字符串使用当前集合 |
-| `rng` | 可选局部 `random.Random`, 提供时按原顺序消费该流 |
+| `context` | Blender 物体模式上下文，包含场景和视图层。 |
+| `sources` | 显式源物体序列；非网格忽略。 |
+| `config` | 用户参数映射；缺字段从 `PROPERTY_SPECS` 补齐。 |
+| `output_collection` | 输出集合对象或名称；`None` / 空名使用当前集合。 |
+| `rng` | 可选局部随机流，提供时按调用顺序消费。 |
 
-显式 output_collection 决定输出位置, API 不从 config.collection_name 隐式取目标
-交互算子将该字段显式传给 API
-完成或失败后恢复原选择和 active, 交互算子再主动选中产物
+API 不从 `config.collection_name` 隐式决定输出位置。交互算子显式传入该字段。调用完成或失败后，API 恢复原选择和活动物体；交互算子在成功后主动选择产物。
 
-| `FractureResult` 字段 | 含义 |
-| --- | --- |
-| `shards` | 碎块对象 tuple, 不含 DebugPoints |
-| `source_to_shards` | 只读映射, 键为本次源对象, 值为对应碎块 tuple |
-| `seconds` | 切割编排耗时 |
-| `diagnostics` | 当前为空 tuple, 失败通过异常报告 |
+`FractureResult.shards` 是碎块对象元组，`source_to_shards` 是只读映射，`seconds` 是编排耗时，`diagnostics` 当前为空元组。容器只读不等于 Blender 对象不可编辑。`complete_config()` 返回从规格补齐的只读运行配置。
 
-结果容器只读, Blender 对象本身仍可编辑, 映射仅供当前运行使用
-`complete_config` 从 specs 生成只读配置, 可再次传入 API
-CreatedData 仅回收本次创建的数据, 不是既有数据的完整事务或撤销系统
+## 预设
+
+`common/preset_storage.py` 负责安全文件名、大小限制、JSON 读写与原子保存；工具负责验证字段、格式和归属。Cell Fracture 新预设位于 Blender 用户脚本目录下的 `quick_destruction/presets/cell_fracture/`，结构为：
+
+```json
+{
+  "format_version": 1,
+  "tool_id": "cell_fracture",
+  "values": {"source_limit": 100}
+}
+```
+
+保存时通常写出全部 29 个参数。读取时允许缺字段并保留当前界面值，但拒绝未知字段、错误工具 ID 和不支持的格式版本。旧的无信封 JSON 仅从原目录 `quick_destruction/presets/` 读取；同名文件存在于两个目录时，新目录优先。新预设只写到工具目录。

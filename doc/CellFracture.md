@@ -1,9 +1,8 @@
 # CellFracture
 
-预切割流程: 点源采样 → 有界胞体 → 凸包 → Exact 布尔求交 → 递归与断面收尾
+预切割流程：点源采样 → 有界胞体 → 凸包 → Exact 布尔求交 → 递归与断面收尾。
 
-源物体始终保留, 不创建刚体或动画
-派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)
+源物体始终保留，不创建刚体或动画。工具位于 3D 视图 **QuickDestruction** 标签页的 **Quick Destruction Effect** 子面板，也可从物体菜单的快速效果组打开参数弹窗。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
 
 ## 点源与数量
 
@@ -13,7 +12,7 @@
 | 种子点上限 | `source_limit` | 100 / 0–5000 | 去重前随机截取, 0 保留全部, 不补点 |
 | 噪波 | `source_noise` | 0.5 / 0–1 | 种子随机位移最大为世界包围盒对角线 × 值 / 2 |
 | 随机种子 | `random_seed` | 0 / 0–2147483647 | 控制截取、噪波、递归选择和数值抖动, 0 也是固定种子 |
-| 胞体缩放 | `cell_scale` | (1, 1, 1) / 每轴 0.001–1 | 分割平面的轴向权重, 不缩放物体, 三轴相等时分区不变 |
+| 分割轴权重 | `cell_scale` | (1, 1, 1) / 每轴 0.001–1 | 分割平面的轴向权重, 不缩放物体, 三轴相等时分区不变 |
 
 | 来源值 | 读取位置 |
 | --- | --- |
@@ -34,7 +33,7 @@
 | 递归种子上限 | `recursion_source_limit` | 8 / 0–5000 | 每个父碎块去重前的采样上限, 0 保留全部 |
 | 碎块停止阈值 | `recursion_clamp` | 250 / 0–10000 | 按每个源的当前碎块数停止继续细分, 0 不限制 |
 | 递归参与比例 | `recursion_chance` | 1 / 0–1 | 候选数 = floor(当前碎块数 × 比例) |
-| 递归对象 | `recursion_chance_select` | `RANDOM` | 随机, 或按大小、游标距离升降序选择 |
+| 递归选择方式 | `recursion_chance_select` | `RANDOM` | 随机, 或按大小、游标距离升降序选择 |
 | 移除上级碎块 | `use_remove_original` | 开 | 成功细分后删除生成的父块, 不删除最初源物体 |
 
 阈值不限制首次切割, 一次细分或孤岛拆分可能超出阈值
@@ -55,13 +54,13 @@
 | --- | --- | --- | --- |
 | 平滑内侧面 | `use_smooth_faces` | 关 | 新断面平滑着色, 外表面继承源着色 |
 | 锐边 | `use_sharp_edges` | 开 | 标记断面与外表面的交界边 |
-| 应用拆分边 | `use_sharp_edges_apply` | 开 | 锐边开启时实际拆开所有锐边, 包括继承的锐边 |
+| 拆分锐边 | `use_sharp_edges_apply` | 开 | 锐边开启时实际拆开所有锐边, 包括继承的锐边 |
 | 匹配数据 | `use_data_match` | 开 | 复制材质槽并建立 UV / 颜色层, 外表面由布尔插值传递 |
 | 材质索引 | `material_index` | 0 / ≥0 | 断面材质槽, 从 0 开始, 匹配数据开启时有效 |
 | 内部顶点组 | `use_interior_vgroup` | 关 | 创建 `内部` 组, 仅断面独占顶点赋权重 1 |
 | 内缩量 | `margin` | 0.001 / 0–1 | 分割平面向内偏移的世界空间长度 |
 | 拆分孤岛 | `use_island_split` | 开 | 不连通结果拆为独立物体, 不保证凸性 |
-| 重设轴心 | `use_recenter` | 开 | `ORIGIN_GEOMETRY / MEDIAN`, 移动原点而不移动世界几何 |
+| 重设原点 | `use_recenter` | 开 | `ORIGIN_GEOMETRY / MEDIAN`, 移动原点而不移动世界几何 |
 
 距离均以 Blender 单位计算, RNA 显示可随场景单位换算
 
@@ -93,7 +92,7 @@
 递归组 `L1_G1` 中命名为 `cell_L1G1_001`, 关闭分组后整批连续编号
 重名由 Blender 添加后缀, 名称不是稳定身份标识
 
-## 历史占位参数
+## 兼容参数
 
 | 参数 | 字段 | 默认 / 范围 | 状态 |
 | --- | --- | --- | --- |
@@ -104,9 +103,11 @@
 
 - 相同 Blender 版本、源名称、几何、修改器、点源、帧、相关游标位置和参数可复现几何
 - 多源按 `name_full` 排序并共享局部 RNG, 增删或重命名源物体可能改变后续随机分配
-- JSON 缺字段保留界面当前值, 阶段 API 配置缺 `random_seed` 时使用 0
+- 预设缺字段保留界面当前值；阶段 API 配置缺 `random_seed` 时使用 0
+- 新预设写入 `quick_destruction/presets/cell_fracture/`，包含 `format_version`、`tool_id` 和 `values`；旧的无信封 JSON 仍可从原目录 `quick_destruction/presets/` 载入
+- 载入前校验工具身份、格式版本和字段；未知字段不会再被静默忽略。同名新旧预设同时存在时，新目录优先
 - 布尔策略检查实际求值网格, 开放或非流形输入启用 Hole Tolerant
 - 非有限或明显超出源包围盒的结果拒绝并回收本次新建数据, 不修复源几何
 - 孔洞容错和包围盒检查不保证凹形体内包含或水密
 
-接口与模块边界见 [Architecture](Architecture.md), 验收记录见 [Validation](Validation.md)
+接口与模块边界见 [架构文档](Architecture.md)。

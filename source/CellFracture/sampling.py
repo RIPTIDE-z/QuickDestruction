@@ -5,7 +5,7 @@ from math import cos, sin, sqrt, tau
 from mathutils import Vector
 
 
-def _points_from_object(context, depsgraph, obj, source):
+def points_from_object(context, depsgraph, obj, source):
     """按来源选项收集种子点, 结果统一为世界空间坐标"""
     points = []
 
@@ -67,7 +67,7 @@ def _points_from_object(context, depsgraph, obj, source):
     return points
 
 
-def _random_unit_vector(rng):
+def random_unit_vector(rng):
     """用调用方的随机流在单位球面均匀采样, 避免 mathutils 的独立全局 RNG"""
     z = rng.uniform(-1.0, 1.0)
     angle = rng.uniform(0.0, tau)

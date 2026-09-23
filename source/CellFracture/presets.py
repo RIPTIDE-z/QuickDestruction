@@ -10,12 +10,15 @@ from bpy.types import Menu, Operator
 
 from ..common import preset_storage as storage
 from ..i18n import tr, tr_report
+from .errors import FractureError
 from .presentation import describe_error
-from .settings import CONTEXT, dict_to_settings, settings_to_dict, validated_values
+from .preset_format import decode, encode
+from .settings import CONTEXT, dict_to_settings, settings_to_dict
 
 # 预设存放在 Blender 用户脚本目录下, 与扩展本体分离, 重装扩展不会丢
 # 常量本身用 Path 表达目录层级, 交给 Blender 时再转回 str
-PRESET_SUBDIR = Path("quick_destruction") / "presets"
+PRESET_ROOT = Path("quick_destruction") / "presets"
+PRESET_SUBDIR = PRESET_ROOT / "cell_fracture"
 # 以一次性令牌区分"对话框参数"与"侧栏参数"两个编辑目标, 不依赖 active_operator
 SESSIONS = {}
 
@@ -64,10 +67,11 @@ def set_preset_name(context, token, name):
         context.area.tag_redraw()
 
 
-def preset_directory(create=False):
-    """预设目录, 取不到时抛错而不是静默失败"""
+def preset_directory(create=False, *, legacy=False):
+    """返回本工具目录, 或用于读取旧预设的原目录。"""
     # user_resource 是 C 接口, 只接受 str, 传 Path 会抛 TypeError
-    path = bpy.utils.user_resource("SCRIPTS", path=str(PRESET_SUBDIR), create=create)
+    subdir = PRESET_ROOT if legacy else PRESET_SUBDIR
+    path = bpy.utils.user_resource("SCRIPTS", path=str(subdir), create=create)
     if not path:
         raise OSError("Cannot resolve the preset directory")
     directory = Path(path)
@@ -77,8 +81,12 @@ def preset_directory(create=False):
 
 
 def preset_filepath(name, create=False):
-    """按原用户目录解析本阶段预设路径"""
-    return storage.preset_filepath(preset_directory(create=create), name)
+    """优先定位新目录; 旧文件作为读取或删除的回退目标。"""
+    current = storage.preset_filepath(preset_directory(create=create), name)
+    if create or current.exists():
+        return current
+    old = storage.preset_filepath(preset_directory(legacy=True), name)
+    return old if old.exists() else current
 
 
 def list_presets():
@@ -90,20 +98,22 @@ def list_presets():
     """
     try:
         directory = preset_directory()
+        legacy_directory = preset_directory(legacy=True)
     except OSError:
         # 目录都定位不到: 用现成的消息键, 不再包一层
         return [], ("Cannot resolve the preset directory", {})
     try:
-        names = storage.list_presets(directory)
+        # 同名时新目录优先; 删除新文件后仍可看到旧文件。
+        names = {name.casefold(): name for name in storage.list_presets(legacy_directory)}
+        names.update({name.casefold(): name for name in storage.list_presets(directory)})
     except OSError as error:
         return [], ("Preset directory could not be read: {detail}", {"detail": str(error)})
-    return names, None
+    return sorted(names.values(), key=str.casefold), None
 
 
 def save_preset(name, data, overwrite=False):
-    """先验证业务字段再委托存储原子发布"""
-    validated_values(data)
-    return storage.save_preset(preset_directory(create=True), name, data, overwrite)
+    """验证字段并以本工具的新格式原子保存。"""
+    return storage.save_preset(preset_directory(create=True), name, encode(data), overwrite)
 
 
 class PresetTarget:
@@ -179,7 +189,7 @@ class QD_OT_preset_save(PresetTarget, Operator):
                 {"WARNING"}, tr_report("Preset already exists; enable Overwrite to replace it")
             )
             return {"CANCELLED"}
-        except (OSError, ValueError, TypeError, ReferenceError) as error:
+        except (FractureError, OSError, ValueError, TypeError, ReferenceError) as error:
             return self.failure(error)
         self.report({"INFO"}, tr_report('Saved preset "{name}"', name=name))
         return {"FINISHED"}
@@ -200,10 +210,18 @@ class QD_OT_preset_load(PresetTarget, Operator):
         try:
             path = preset_filepath(self.name)
             # 只读取有限大小的文件, 且只当数据解析, 绝不执行其中内容
-            data = storage.read_preset(path)
+            legacy = path.parent.resolve() == preset_directory(legacy=True).resolve()
+            data = decode(storage.read_preset(path), legacy=legacy)
             count = dict_to_settings(self.target(context), data)
             set_preset_name(context, self.session, path.stem)
-        except (OSError, ValueError, TypeError, ReferenceError, OverflowError) as error:
+        except (
+            FractureError,
+            OSError,
+            ValueError,
+            TypeError,
+            ReferenceError,
+            OverflowError,
+        ) as error:
             return self.failure(error)
         self.report({"INFO"}, tr_report("Loaded {count} parameters", count=count))
         return {"FINISHED"}
@@ -244,7 +262,7 @@ class QD_OT_preset_open_directory(Operator):
 
     bl_idname = "qd.preset_open_directory"
     bl_label = "Open Preset Directory"
-    bl_description = "Open the folder containing the shared JSON presets"
+    bl_description = "Open the folder for new Cell Fracture JSON presets"
     bl_translation_context = CONTEXT
     bl_options: ClassVar[set[str]] = {"INTERNAL"}
 

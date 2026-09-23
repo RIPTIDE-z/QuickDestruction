@@ -262,6 +262,7 @@ class QD_PT_settings(Panel):
     """预切割侧栏面板 - 参数保存在当前场景"""
 
     bl_idname = "QD_PT_settings"
+    bl_parent_id = "QD_PT_main"
     bl_label = "Quick Destruction Effect"
     bl_translation_context = CONTEXT
     bl_space_type = "VIEW_3D"
