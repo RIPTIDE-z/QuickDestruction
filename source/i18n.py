@@ -10,7 +10,7 @@ from .common.localization import build_translations, load_catalogs
 
 TRANSLATIONS_DOMAIN = __package__
 
-# 模块规格与上下文由代码维护；每种独立语言在 locales 中维护一个 JSON 文件。
+# 模块规格与上下文由代码维护; 每种独立语言在 locales 中维护一个 JSON 文件。
 MODULES = {"CellFracture": ((CONTEXT, "*"), PROPERTY_SPECS)}
 CATALOGS = load_catalogs(Path(__file__).resolve().parent / "locales", MODULES)
 LOCALE_ALIASES = {"zh_CN": "zh_HANS"}

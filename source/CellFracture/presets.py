@@ -1,8 +1,8 @@
 """共享的 JSON 预设: 面板与对话框各自定位编辑目标, 写入采用原子替换"""
 
-import os
 import uuid
 from pathlib import Path
+from typing import ClassVar
 
 import bpy
 from bpy.props import BoolProperty, StringProperty
@@ -14,7 +14,8 @@ from .presentation import describe_error
 from .settings import CONTEXT, dict_to_settings, settings_to_dict, validated_values
 
 # 预设存放在 Blender 用户脚本目录下, 与扩展本体分离, 重装扩展不会丢
-PRESET_SUBDIR = os.path.join("quick_destruction", "presets")
+# 常量本身用 Path 表达目录层级, 交给 Blender 时再转回 str
+PRESET_SUBDIR = Path("quick_destruction") / "presets"
 # 以一次性令牌区分"对话框参数"与"侧栏参数"两个编辑目标, 不依赖 active_operator
 SESSIONS = {}
 
@@ -65,7 +66,8 @@ def set_preset_name(context, token, name):
 
 def preset_directory(create=False):
     """预设目录, 取不到时抛错而不是静默失败"""
-    path = bpy.utils.user_resource("SCRIPTS", path=PRESET_SUBDIR, create=create)
+    # user_resource 是 C 接口, 只接受 str, 传 Path 会抛 TypeError
+    path = bpy.utils.user_resource("SCRIPTS", path=str(PRESET_SUBDIR), create=create)
     if not path:
         raise OSError("Cannot resolve the preset directory")
     directory = Path(path)
@@ -142,7 +144,9 @@ class QD_OT_preset_save(PresetTarget, Operator):
     bl_label = "Save Preset"
     bl_description = "Save the parameters currently shown in this panel or dialog as a JSON preset"
     bl_translation_context = CONTEXT
-    bl_options = {"INTERNAL"}
+    # INTERNAL: 只由预设菜单调用, 不进入算子搜索;
+    # ClassVar 说明这是 Blender 读取的类级配置, 不随实例变化
+    bl_options: ClassVar[set[str]] = {"INTERNAL"}
     __annotations__ = {
         **target_properties(),
         "overwrite": BoolProperty(
@@ -160,7 +164,7 @@ class QD_OT_preset_save(PresetTarget, Operator):
         self.overwrite = False
         return context.window_manager.invoke_props_dialog(self, width=360)
 
-    def draw(self, context):
+    def draw(self, _context):
         """绘制当前目标的控件并保留独立的启用条件"""
         self.layout.prop(self, "name")
         self.layout.prop(self, "overwrite")
@@ -188,7 +192,7 @@ class QD_OT_preset_load(PresetTarget, Operator):
     bl_label = "Load Preset"
     bl_description = "Load a JSON preset into the parameters currently shown here"
     bl_translation_context = CONTEXT
-    bl_options = {"INTERNAL"}
+    bl_options: ClassVar[set[str]] = {"INTERNAL"}
     __annotations__ = target_properties()
 
     def execute(self, context):
@@ -212,7 +216,7 @@ class QD_OT_preset_remove(PresetTarget, Operator):
     bl_label = "Remove Preset"
     bl_description = "Permanently delete this JSON preset after confirmation"
     bl_translation_context = CONTEXT
-    bl_options = {"INTERNAL"}
+    bl_options: ClassVar[set[str]] = {"INTERNAL"}
     __annotations__ = target_properties()
 
     def invoke(self, context, _event):
@@ -242,9 +246,9 @@ class QD_OT_preset_open_directory(Operator):
     bl_label = "Open Preset Directory"
     bl_description = "Open the folder containing the shared JSON presets"
     bl_translation_context = CONTEXT
-    bl_options = {"INTERNAL"}
+    bl_options: ClassVar[set[str]] = {"INTERNAL"}
 
-    def execute(self, context):
+    def execute(self, _context):
         """执行本算子并按成功或失败返回 Blender 状态"""
         try:
             bpy.ops.wm.path_open(filepath=str(preset_directory(create=True)))

@@ -50,7 +50,7 @@ def property_sources(specs):
 
 
 def property_messages(specs, localized):
-    """用稳定字段路径关联译文，英文消息键仍由参数规格提供。"""
+    """用稳定字段路径关联译文, 英文消息键仍由参数规格提供。"""
     if not isinstance(localized, dict):
         raise TypeError("Translation properties must be an object")
     sources = property_sources(specs)
@@ -62,7 +62,7 @@ def property_messages(specs, localized):
 
 
 def _unique_object(pairs):
-    """JSON 默认会静默覆盖重复键；翻译文件必须拒绝这种输入。"""
+    """JSON 默认会静默覆盖重复键; 翻译文件必须拒绝这种输入。"""
     result = {}
     for key, value in pairs:
         if key in result:

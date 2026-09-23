@@ -48,7 +48,8 @@ def save_preset(directory, name, data, overwrite=False):
             handle.flush()
             os.fsync(handle.fileno())
         if overwrite:
-            os.replace(temp_path, path)
+            # Path.replace 与 os.replace 等价, 都是原子覆盖
+            temp_path.replace(path)
         else:
             # 用硬链接发布: 目标已存在时会失败, 因此不会覆盖别人的同名预设
             os.link(temp_path, path)

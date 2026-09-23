@@ -1,6 +1,7 @@
 """预切割交互算子 - 读取界面参数并报告阶段结果"""
 
 import traceback
+from typing import ClassVar
 
 from bpy.props import StringProperty
 from bpy.types import Operator
@@ -22,8 +23,9 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
     bl_label = "Quick Destruction Selected Mesh Objects"
     bl_description = "Cut selected editable meshes into shards; source objects are kept"
     bl_translation_context = CONTEXT
-    # 参数预设由自定义 JSON 菜单处理,几何操作支持撤销
-    bl_options = {"UNDO"}
+    # 参数预设由自定义 JSON 菜单处理,几何操作支持撤销;
+    # ClassVar 说明这是 Blender 读取的类级配置, 不随实例变化
+    bl_options: ClassVar[set[str]] = {"UNDO"}
 
     # 属性与 PropertyGroup 共用同一份定义, 避免两处接口分叉;
     # preset_session 是隐藏字段, 只用于把对话框预设指向本次对话框而非侧栏
@@ -86,7 +88,7 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
             self.preset_session = ""
         return {"CANCELLED"}
 
-    def invoke(self, context, event):
+    def invoke(self, context, _event):
         # 调用方显式传入的参数优先, 其余字段从侧栏当前值补齐
         """初始化本次交互并打开参数或确认对话框"""
         owner = context.scene.qd_settings.fracture
@@ -98,7 +100,7 @@ class OBJECT_OT_add_quick_destruction_objects(Operator):
         self.preset_session = presets.new_session(self, context)
         return context.window_manager.invoke_props_dialog(self, width=520)
 
-    def cancel(self, context):
+    def cancel(self, _context):
         # 取消时结束会话, 保证对话框里的临时改动不会写回侧栏
         """结束当前对话框会话 - 不写回侧栏参数"""
         presets.end_session(self.preset_session)

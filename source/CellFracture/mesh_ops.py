@@ -174,8 +174,12 @@ def cell_fracture_objects(
             naming.mark(cell, naming.source_name, level, group)
         objects.append(cell)
         if use_data_match:
-            # 保持材质槽的链接方式与来源一致
-            for source_slot, target_slot in zip(obj.material_slots, cell.material_slots):
+            # 保持材质槽的链接方式与来源一致; 目标槽位刚由 data.materials 拷贝而来,
+            # 两侧长度实际一致, 但这里只是尽力同步, 不该因槽位数量差异中断整次切割,
+            # 因此显式声明 strict=False
+            for source_slot, target_slot in zip(
+                obj.material_slots, cell.material_slots, strict=False
+            ):
                 target_slot.link = source_slot.link
                 target_slot.material = source_slot.material
         if use_debug_redraw:

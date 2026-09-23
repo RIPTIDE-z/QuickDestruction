@@ -43,7 +43,8 @@ def inspect_source(obj, depsgraph):
             bm.free()
     finally:
         evaluated.to_mesh_clear()
-    diagonal = sqrt(sum((hi - lo) ** 2 for lo, hi in zip(minimum, maximum)))
+    # minimum/maximum 是同一个 range(3) 生成的两个三元组, 长度必然一致
+    diagonal = sqrt(sum((hi - lo) ** 2 for lo, hi in zip(minimum, maximum, strict=True)))
     magnitude = max(abs(value) for point in (minimum, maximum) for value in point)
     # 相对尺度容差,加上世界坐标 float32 精度余量;不拿艺术间隙或焊接距离当容差
     tolerance = max(diagonal * 1e-5, magnitude * 2**-21, 1e-9)

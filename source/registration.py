@@ -18,7 +18,7 @@ def clear_sessions(_unused):
     presets.SESSIONS.clear()
 
 
-def menu_func(self, context):
+def menu_func(self, _context):
     """3D 视图 物体 -> 快速效果 里的入口, 与上游保持同样的分隔线写法"""
     layout = self.layout
     layout.separator()

@@ -48,7 +48,7 @@ class NamingPlan:
     @staticmethod
     def group_id(tier, group):
         """集合与碎块名共用的层组标识层组之间加分隔符, 避免纯数字拼接的歧义"""
-        return "L%d_G%d" % (tier, group)
+        return f"L{tier}_G{group}"
 
     def next_group(self, tier):
         """取该层下一个组号, 并把该层的组数推进一位"""
@@ -96,7 +96,8 @@ class NamingPlan:
         若边切边编号, 这些被丢弃的中间结果会占掉序号, 让最终名字出现断号
         """
         self.temp_counter += 1
-        return "%s%0*d" % (TEMP_NAME_PREFIX, self.temp_padding, self.temp_counter)
+        # 补零宽度由 temp_padding 决定, 因此格式说明里再嵌一层宽度字段
+        return f"{TEMP_NAME_PREFIX}{self.temp_counter:0{self.temp_padding}d}"
 
     def apply_names(self, cells):
         """全部切割结束后统一命名, 序号只按保留下来的碎块连续编
@@ -120,10 +121,10 @@ class NamingPlan:
             if self.use_collections and tier > 0:
                 key = (tier, group)
                 counters[key] = counters.get(key, 0) + 1
-                name = "%s_L%dG%d_%0*d" % (self.prefix, tier, group, self.padding, counters[key])
+                name = f"{self.prefix}_L{tier}G{group}_{counters[key]:0{self.padding}d}"
             else:
                 counters[None] = counters.get(None, 0) + 1
-                name = "%s_%0*d" % (self.prefix, self.padding, counters[None])
+                name = f"{self.prefix}_{counters[None]:0{self.padding}d}"
             cell.name = name
             # 网格数据跟随物体名, 便于在大纲与属性面板里对应
             if cell.data is not None:
