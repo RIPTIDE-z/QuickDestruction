@@ -174,7 +174,7 @@ class MESH_FRACTURE_PT_settings(Panel):
         layout = self.layout
         owner = scene_settings(context)
         # 预设入口在参数之上, 与弹窗里的顺序保持一致
-        draw_presets(layout, context, PRESET, owner)
+        draw_presets(layout, PRESET, owner)
         draw_parameters(layout, owner)
 
         # 生成按钮固定在全部参数之后, 也就是面板最底部

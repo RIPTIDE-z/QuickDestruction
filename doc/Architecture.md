@@ -27,11 +27,11 @@
 | `classes()` | 返回本工具要注册的算子与面板类，元组顺序即注册顺序。 |
 | `settings_attr`、`settings_class` | 可选的场景属性组字段名与类型，两者必须同时提供或同时省略。 |
 | `preset` | 可选的 `PresetSpec`，声明后获得通用预设界面。 |
-| `menu_hooks`、`load_pre`、`load_post`、`clear_sessions` | 菜单入口与文件加载前后的回调。 |
+| `load_pre`、`load_post`、`clear_sessions` | 文件加载前后的回调与卸载时的会话清理。 |
 | `weight` | 界面顺序权重，数值小的排在前面。 |
 | `default_closed` | 次要工具的标记：为 `True` 时它的侧栏面板默认收起。注册层据此设置面板类的 `bl_options`，因此以本字段为唯一来源。 |
 
-注册层先检查类名与 `bl_idname` 唯一性、工具身份与预设归属的唯一性，再把 `default_closed` 落到面板类上，然后注册参数组、`Scene.qd_settings`、通用预设类、工具类和外部入口。停用或注册失败时按相反顺序清理。
+注册层先检查类名与 `bl_idname` 唯一性、工具身份与预设归属的唯一性，再把 `default_closed` 落到面板类上，然后注册参数组、`Scene.qd_settings`、通用预设类、工具类和文件加载挂钩。停用或注册失败时按相反顺序清理。
 
 新增一个工具只需要在自己的包内声明 `ToolSpec` 并加入 `TOOLS`：需要持久化参数时同时给出属性组类与 `QDSettings` 字段名，需要预设时给出 `PresetSpec`，需要侧栏界面时在工具包里声明一个顶层 `Panel`，次要工具再把 `default_closed` 设为 `True`，并在每种语言的 JSON 里补上该模块的分组（见[翻译维护](Translations.md)）。根层负责注册顺序、场景指针、通用预设界面和翻译目录，工具之间不互相导入。
 
@@ -73,7 +73,7 @@
 
 `preset_name` 由通用预设层挂到工具的场景参数组上，只记录界面显示的名称与保存对话框的默认名，不属于预设参数。
 
-会话令牌把「侧栏」与「参数弹窗」两个编辑目标分开。侧栏令牌就是工具标识，每次面板重绘刷新同一条记录；弹窗令牌是一次性 UUID，写在算子的隐藏字段上，对话框关闭或执行后即失效。换文件时全部会话一并作废，侧栏会话由下一次重绘重建。
+会话令牌只有一种：令牌就是工具标识，面板每次重绘刷新同一条记录，因此它只随工具数量增长。令牌经布局上下文交给同一布局上的菜单，菜单与预设算子据此找回「哪个工具的哪份参数」。换文件时全部会话一并作废，下一次重绘重建。
 
 令牌经布局上下文交给菜单（`layout.context_string_set` / `getattr(context, ...)`），不落在场景参数组上：面板绘制回调只允许读 ID 数据，往参数组写临时字段会抛 `Writing to ID classes in this context is not allowed`，并被 Blender 静默跳过该面板剩余内容。
 
@@ -85,7 +85,7 @@
 
 | 位置 | 职责 |
 | --- | --- |
-| `tool.py` | `ToolSpec` 声明、场景属性组、菜单入口、会话清理与文件加载回调。 |
+| `tool.py` | `ToolSpec` 声明、场景属性组、会话清理与文件加载回调。 |
 | `settings.py` | 27 项参数规格、场景参数组访问器、预设归属，以及校验与序列化入口。 |
 | `interaction/` | 侧栏顶层面板与参数布局、生成算子；预设界面来自根层。 |
 | `api.py` | 可直接调用的生成入口与结果对象。 |
@@ -96,7 +96,9 @@
 
 ### 场景参数与界面标识
 
-场景参数位于 `Scene.qd_settings.mesh_fracture`，其中 `preset_name` 只记录本工具当前预设名。侧栏面板 ID 为 `MESH_FRACTURE_PT_settings`，生成算子 ID 为 `mesh_fracture.generate_fragments`。工具菜单与侧栏面板都显示 **MeshFracture／网格破碎**；生成动作显示 **Generate Fragments／生成碎块**。
+场景参数位于 `Scene.qd_settings.mesh_fracture`，其中 `preset_name` 只记录本工具当前预设名。侧栏面板 ID 为 `MESH_FRACTURE_PT_settings`，生成算子 ID 为 `mesh_fracture.generate_fragments`，它只由面板按钮执行，不出现在任何菜单或算子搜索里。侧栏面板显示 **MeshFracture／网格破碎**；生成动作显示 **Generate Fragments／生成碎块**。
+
+生成算子的 `bl_options` 是 `{'UNDO', 'INTERNAL'}`：几何改动进入撤销栈，用 **Ctrl+Z** 回退；`INTERNAL` 让它不进算子搜索，同时它也不声明 `REGISTER`，因此没有「调整上一步操作」面板。工具只保留侧栏这一个入口。
 
 ### 阶段 API
 

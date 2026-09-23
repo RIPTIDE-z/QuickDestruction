@@ -12,7 +12,7 @@
     2. 装配检查: 注册插件, 把各工具的侧栏面板放进该分类, 交给 Blender 自己绘制,
        确认 draw 完整执行, 并确认它们都是顶层面板而不是挂在某个父面板下
     3. 内容检查: 另注册一个驱动面板, 在它的 draw 里用真实 layout 与真实绘制上下文
-       逐个驱动插件声明的全部绘制入口 (工具面板, 工具菜单, 菜单钩子,
+       逐个驱动插件声明的全部绘制入口 (工具面板, 工具菜单,
        预设入口, 框架预设菜单), 并用转发型 layout 代理记录控件调用
        入口与期望值全部由工具声明推导, 新增工具会自动纳入
     4. 自检: 在同一条路径里写 ID 数据必须被拒绝 - 否则说明驱动用的上下文并不受限,
@@ -333,47 +333,20 @@ def class_entries(tool, base, kind):
 
 
 def preset_entries(tool):
-    """带预设的工具要驱动两条预设入口: 侧栏与会话弹窗"""
+    """带预设的工具要驱动它的预设入口"""
     from source import preset_ui
 
     if tool.preset is None:
         return []
     preset = tool.preset
     owner = tool_settings(tool)
-    entries = [
+    return [
         Entry(
-            name=f"{tool.tool_id}/preset_row/侧栏",
-            call=lambda layout, context: preset_ui.draw_presets(layout, context, preset, owner),
+            name=f"{tool.tool_id}/preset_row/{preset.key}",
+            call=lambda layout, _context: preset_ui.draw_presets(layout, preset, owner),
             needs_token=True,
         )
     ]
-
-    def dialog_row(layout, context):
-        """会话弹窗路径: 令牌一次性, 绘制期不写参数组"""
-        token = preset_ui.new_session(preset, owner, context, "")
-        try:
-            preset_ui.draw_presets(layout, context, preset, owner, token)
-        finally:
-            preset_ui.end_session(token)
-
-    entries.append(Entry(name=f"{tool.tool_id}/preset_row/会话弹窗", call=dialog_row))
-    return entries
-
-
-def hook_entries(tool):
-    """菜单钩子回调"""
-    as_self = panel_layout()
-    entries = []
-    for menu_type, callback in tool.menu_hooks:
-        entries.append(
-            Entry(
-                name=f"{tool.tool_id}/menu_hook/{menu_type.__name__}",
-                call=lambda layout, context, cb=callback, as_self=as_self: cb(
-                    as_self(layout), context
-                ),
-            )
-        )
-    return entries
 
 
 def framework_entries(tools):
@@ -393,7 +366,7 @@ def framework_entries(tools):
 
     def preset_menu(layout, context):
         """菜单绘制需要一个带令牌的上下文, 令牌来自绘制方"""
-        token = preset_ui.panel_session(preset, owner, context)
+        token = preset_ui.panel_session(preset, owner)
         preset_ui.QD_MT_presets.draw(SimpleNamespace(layout=layout), menu_context(context, token))
 
     return [
@@ -424,7 +397,6 @@ def build_entries(tools):
         entries.extend(class_entries(tool, bpy.types.Panel, "panel"))
         entries.extend(class_entries(tool, bpy.types.Menu, "menu"))
         entries.extend(preset_entries(tool))
-        entries.extend(hook_entries(tool))
     entries.extend(framework_entries(tools))
     # 自检: 这条路径必须仍然禁止写 ID 数据, 否则整份测试的上下文不受限
     entries.append(

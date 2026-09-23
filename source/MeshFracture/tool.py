@@ -1,6 +1,5 @@
-"""工具声明 - 场景属性组, 交互类清单, 菜单入口, 会话清理与文件加载回调"""
+"""工具声明 - 场景属性组, 交互类清单, 会话清理与文件加载回调"""
 
-import bpy
 from bpy.app.handlers import persistent
 from bpy.types import PropertyGroup
 
@@ -29,18 +28,10 @@ def classes():
     return (MESH_FRACTURE_OT_generate_fragments, panel.MESH_FRACTURE_PT_settings)
 
 
-def menu_func(self, _context):
-    """在物体菜单的快速效果组添加 MeshFracture 入口"""
-    layout = self.layout
-    # 分隔线把本工具与菜单中的其它条目分开
-    layout.separator()
-    layout.operator("mesh_fracture.generate_fragments", text="MeshFracture", text_ctxt=CONTEXT)
-
-
 def clear_sessions():
-    """释放对话框持有的旧场景和参数对象"""
-    # 会话表由通用预设层统一持有, 因此这里清掉的是全部工具的对话框会话;
-    # 换文件后所有旧场景都已失效, 一并作废正是需要的效果
+    """丢弃指向旧场景的预设会话"""
+    # 会话表由通用预设层统一持有, 这里清掉的是全部工具的记录;
+    # 它们保存的是场景参数组, 换文件后已经失效, 一并作废正是需要的效果
     SESSIONS.clear()
 
 
@@ -62,8 +53,6 @@ TOOL = ToolSpec(
     classes=classes,
     # 预设归属: 目录, 参数规格与界面都由通用预设层按它提供
     preset=PRESET,
-    # 物体菜单中的入口
-    menu_hooks=((bpy.types.VIEW3D_MT_object_quick_effects, menu_func),),
     load_pre=load_pre,
     clear_sessions=clear_sessions,
 )

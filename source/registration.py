@@ -1,4 +1,4 @@
-"""扩展装配 - 先校验工具声明的唯一性, 再顺序注册属性组, 面板, 算子与外部入口, 失败或停用时逆序回滚"""
+"""扩展装配 - 先校验工具声明的唯一性, 再顺序注册属性组, 面板, 算子与文件加载挂钩, 失败或停用时逆序回滚"""
 
 import traceback
 from collections.abc import Callable
@@ -107,7 +107,7 @@ def _apply(action, undo, applied):
 def _release(applied):
     """尽量完成所有逆操作, 返回第一个错误供调用方报告"""
     first_error = None
-    # 逆序执行: 最后挂上的外部入口最先摘掉, 类型注册最后注销
+    # 逆序执行: 最后挂上的文件加载挂钩最先摘掉, 类型注册最后注销
     for undo in reversed(applied):
         try:
             undo()
@@ -120,7 +120,7 @@ def _release(applied):
 
 
 def register():
-    """先注册参数类型, 再接场景指针, 预设类, 工具类与外部入口"""
+    """先注册参数类型, 再接场景指针, 预设类, 工具类与文件加载挂钩"""
     # 已经注册过就整体拒绝: 重复注册会让后一份类顶替前一份, 留下无法注销的残骸
     if _undo_steps:
         raise RuntimeError("QuickDestruction is already registered")
@@ -171,7 +171,7 @@ def register():
                 lambda cls=cls: bpy.utils.unregister_class(cls),
                 applied,
             )
-        # 6) 工具声明的交互类: 生成算子, 菜单与侧栏面板
+        # 6) 工具声明的交互类: 生成算子与侧栏面板
         for group in tool_classes:
             for cls in group:
                 _apply(
@@ -179,20 +179,14 @@ def register():
                     lambda cls=cls: bpy.utils.unregister_class(cls),
                     applied,
                 )
-        # 7) 外部入口最后挂: 菜单与 handler 一旦生效就可能被用户触发,
+        # 7) 文件加载挂钩最后挂: handler 一旦生效就可能被用户触发,
         #    因此回滚时它们会最先被摘掉
         for tool in tools:
             if tool.clear_sessions is not None:
                 # 该回调只在卸载时执行, 没有对应的注册动作, 所以直接作为逆操作登记;
-                # 它排在本轮菜单挂钩之前, 逆序执行时便会晚于菜单解锁,
+                # 它排在本轮 handler 之前, 逆序执行时便会晚于 handler 解锁,
                 # 早于交互类注销, 正好满足"卸载交互类前清空会话"的要求
                 applied.append(tool.clear_sessions)
-            for menu_type, callback in tool.menu_hooks:
-                _apply(
-                    lambda menu_type=menu_type, callback=callback: menu_type.append(callback),
-                    lambda menu_type=menu_type, callback=callback: menu_type.remove(callback),
-                    applied,
-                )
             # 文件加载前后各一个挂点: load_pre 清理旧状态, load_post 按新场景重建
             for handler, callback in (
                 (bpy.app.handlers.load_pre, tool.load_pre),
@@ -213,7 +207,7 @@ def register():
 
 
 def unregister():
-    """先移除外部入口, 再逆序注销交互类和参数类型"""
+    """先移除文件加载挂钩, 再逆序注销交互类和参数类型"""
     # 先复制再清空: 逆操作执行中可能抛错, 但模块状态必须立刻复位,
     # 否则下一次 register() 会误判为仍在注册状态
     applied = list(_undo_steps)

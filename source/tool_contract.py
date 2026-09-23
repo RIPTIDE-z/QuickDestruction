@@ -36,13 +36,11 @@ class ToolSpec:
     settings_class: type | None = None
     # 预设归属; 为 None 时该工具不提供预设界面, 也不会有预设目录
     preset: PresetSpec | None = None
-    # 菜单挂钩, 每项为 (菜单类型, 绘制回调)
-    menu_hooks: tuple[tuple[type, Callable], ...] = ()
     # 加载新文件前的回调, 用于丢弃与旧文件绑定的状态
     load_pre: Callable | None = None
     # 加载新文件后的回调, 用于按新场景重建状态
     load_post: Callable | None = None
-    # 只在卸载时执行的回调, 用于清空对话框会话
+    # 只在卸载时执行的回调, 用于清空预设会话
     clear_sessions: Callable[[], None] | None = None
     # 工具顺序权重: 数值小的排在前面, 权重相同则按 TOOLS 中的声明顺序
     weight: int = 0
