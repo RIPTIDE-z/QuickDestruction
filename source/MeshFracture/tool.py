@@ -2,34 +2,31 @@
 
 import bpy
 from bpy.app.handlers import persistent
-from bpy.props import StringProperty
 from bpy.types import PropertyGroup
 
+from ..preset_ui import SESSIONS, preset_properties
 from ..tool_contract import ToolSpec
 from .constants import CONTEXT, SETTINGS_ATTR, TOOL_ID
-from .settings import PROPERTY_SPECS, property_definitions
+from .interaction import panel
+from .interaction.operators import MESH_FRACTURE_OT_generate_fragments
+from .settings import PRESET, PROPERTY_SPECS, property_definitions
 
 
 class MeshFractureSettings(PropertyGroup):
     """场景中的生成参数与本工具当前预设名"""
 
     # 27 项生成参数与生成算子共用同一份定义, 避免两处接口分叉;
-    # preset_name 只记录界面显示的名称, 不属于预设文件的参数
+    # preset_name 与 preset_session 由通用预设层提供, 两者都不属于预设文件
     __annotations__ = {
         **property_definitions(),
-        "preset_name": StringProperty(name="Preset", translation_context=CONTEXT),
+        **preset_properties(),
     }
 
 
 def classes():
-    """在根翻译目录建立后加载交互类, 避免导入环"""
-    # 函数体内导入是必需的: i18n 建立目录时会导入 tool_registry 与本模块,
-    # 若在顶层导入交互类就会形成导入环
-    from .interaction import panel, presets
-    from .interaction.operators import MESH_FRACTURE_OT_generate_fragments
-
-    # 顺序即注册顺序: 生成算子, 预设算子与菜单, 最后是子面板
-    return (MESH_FRACTURE_OT_generate_fragments, *presets.CLASSES, panel.MESH_FRACTURE_PT_settings)
+    """返回本工具要注册的算子与面板类, 元组顺序就是注册顺序"""
+    # 生成算子在前, 子面板在后: 面板的 bl_parent_id 指向根父面板, 与算子无关
+    return (MESH_FRACTURE_OT_generate_fragments, panel.MESH_FRACTURE_PT_settings)
 
 
 def menu_func(self, _context):
@@ -42,9 +39,8 @@ def menu_func(self, _context):
 
 def clear_sessions():
     """释放对话框持有的旧场景和参数对象"""
-    # 延迟导入: 预设模块属于交互层, 只在真正需要清理时才加载
-    from .interaction.presets import SESSIONS
-
+    # 会话表由通用预设层统一持有, 因此这里清掉的是全部工具的对话框会话;
+    # 换文件后所有旧场景都已失效, 一并作废正是需要的效果
     SESSIONS.clear()
 
 
@@ -55,24 +51,17 @@ def load_pre(_unused):
     clear_sessions()
 
 
-def scene_settings(context):
-    """取本工具在当前场景的参数组
-
-    字段名来自 SETTINGS_ATTR, 是交互层访问场景参数的唯一入口:
-    工具改名时只需改常量, 各处调用不必跟着改
-    """
-    return getattr(context.scene.qd_settings, SETTINGS_ATTR)
-
-
 TOOL = ToolSpec(
     tool_id=TOOL_ID,
     translation_module="MeshFracture",
     translation_context=CONTEXT,
     property_specs=PROPERTY_SPECS,
-    # QDSettings 上的字段名, 与 scene_settings() 读取的路径同源
+    # QDSettings 上的字段名, 与 settings.scene_settings() 读取的路径同源
     settings_attr=SETTINGS_ATTR,
     settings_class=MeshFractureSettings,
     classes=classes,
+    # 预设归属: 目录, 参数规格与界面都由通用预设层按它提供
+    preset=PRESET,
     # 物体菜单中的入口
     menu_hooks=((bpy.types.VIEW3D_MT_object_quick_effects, menu_func),),
     load_pre=load_pre,

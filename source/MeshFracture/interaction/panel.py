@@ -3,9 +3,8 @@
 from bpy.types import Panel
 
 from ...constants import SIDEBAR_CATEGORY
-from ..settings import CONTEXT, PROPERTY_SPECS, operator_keywords
-from ..tool import scene_settings
-from .presets import draw_presets
+from ...preset_ui import draw_presets
+from ..settings import CONTEXT, PRESET, PROPERTY_SPECS, operator_keywords, scene_settings
 
 # 每个字段只在这里排布一次; 一行内的字段独立判断启用状态
 ROW_LAYOUT = (
@@ -172,7 +171,7 @@ class MESH_FRACTURE_PT_settings(Panel):
         layout = self.layout
         owner = scene_settings(context)
         # 预设入口在参数之上, 与弹窗里的顺序保持一致
-        draw_presets(layout, context, owner)
+        draw_presets(layout, context, PRESET, owner)
         draw_parameters(layout, owner)
 
         # 生成按钮固定在全部参数之后, 也就是面板最底部

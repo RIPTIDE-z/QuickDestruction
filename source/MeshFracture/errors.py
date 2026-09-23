@@ -1,12 +1,10 @@
-"""领域异常 - MeshFractureError 只保存消息键与插值参数, 翻译交给界面层"""
+"""领域异常 - MeshFractureError 以及源几何非有限坐标共用的消息键"""
+
+from ..common.errors import DomainError
+
+# 源几何含非有限坐标时的消息键; 胞体构造与布尔诊断共用同一条
+NON_FINITE_MESSAGE = "Source geometry contains non-finite coordinates"
 
 
-class MeshFractureError(Exception):
+class MeshFractureError(DomainError):
     """message 保存消息键 - values 保存翻译后填入的参数"""
-
-    def __init__(self, message, **values):
-        """记录消息键与插值参数, 实际文案留给界面层翻译"""
-        # message 是英文消息键, 界面层先查译文再把 values 填进去
-        super().__init__(message)
-        self.message = message
-        self.values = values

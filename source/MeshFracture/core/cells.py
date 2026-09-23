@@ -5,21 +5,24 @@ from math import isfinite, sqrt
 from mathutils import Vector
 from mathutils.geometry import points_in_planes
 
-from ...common.errors import InvalidParameterError
+from ...common import measure
+from ...common.errors import InvalidParameterError, require_finite
 from ..constants import CELL_SCALE_MIN
-from ..errors import MeshFractureError
+from ..errors import NON_FINITE_MESSAGE, MeshFractureError
 
 
-def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, margin_cell=0.0):
+def points_as_bmesh_cells(
+    verts, points, points_scale=None, margin_bounds=0.05, margin_cell=0.0, bounds=None
+):
     """为每个种子点求出一个胞体, 返回 [(种子点, 顶点列表), ...]
 
     做法是从包围盒六个面出发, 依次用"种子点与邻居连线的中垂面"去切,
     只保留仍然切得到的那一侧, 最终得到该种子点的 Voronoi 胞体
+    verts 只用于初始包围盒; 调用方已经量过时可用 bounds 直接传入, 省掉一遍遍历
     """
     if not verts or not points:
         return []
-    if any(not isfinite(value) for point in (*verts, *points) for value in point):
-        raise MeshFractureError("Source geometry contains non-finite coordinates")
+    require_finite((verts, points), MeshFractureError, NON_FINITE_MESSAGE)
     scale = tuple(points_scale) if points_scale is not None else (1.0, 1.0, 1.0)
     if len(scale) != 3 or any(not isfinite(v) or v < CELL_SCALE_MIN for v in scale):
         raise InvalidParameterError("cell_scale")
@@ -28,10 +31,13 @@ def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, 
     points_scale = None if isotropic else scale
     points = list({tuple(point): point for point in points}.values())
     # 包围盒外扩一点作为初始半空间, 保证单种子时也有界
-    lo = [min(v[i] for v in verts) - margin_bounds for i in range(3)]
-    hi = [max(v[i] for v in verts) + margin_bounds for i in range(3)]
+    if bounds is None:
+        bounds = measure.bounds(verts)
+    lo = [value - margin_bounds for value in bounds[0]]
+    hi = [value + margin_bounds for value in bounds[1]]
     # 半空间用四分量向量表示: 前三维是法线, w 是常数项, 法线与坐标的点积加 w 不大于 0 的一侧为内侧
-    bounds = [
+    # 这是不可变的模板: 每个种子点都从它复制一份再平移到自己的坐标系
+    base_planes = [
         Vector((1, 0, 0, -hi[0])),
         Vector((-1, 0, 0, lo[0])),
         Vector((0, 1, 0, -hi[1])),
@@ -41,7 +47,7 @@ def points_as_bmesh_cells(verts, points, points_scale=None, margin_bounds=0.05, 
     ]
     cells = []
     for center in points:
-        planes = [plane.copy() for plane in bounds]
+        planes = [plane.copy() for plane in base_planes]
         for plane in planes:
             # 把包围盒面的常数项平移到以此种子点为原点
             plane.w += plane.xyz.dot(center)

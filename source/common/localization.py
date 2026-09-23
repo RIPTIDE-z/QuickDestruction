@@ -104,10 +104,16 @@ def load_catalogs(directory, modules):
         locale = data["locale"]
         if not isinstance(locale, str) or locale != path.stem:
             raise ValueError(f"{path}: locale must match the filename")
-        # 模块集合必须与代码登记的一致: 新增工具时每种语言都要补齐分组
+        # 模块集合必须与代码登记的一致: 新增工具时每种语言都要补齐分组;
+        # 报错带上差集, 否则增删工具时只能靠人工比对代码与语言文件
         sections = data["modules"]
         if not isinstance(sections, dict) or set(sections) != set(modules):
-            raise ValueError(f"{path}: translation modules differ from registered modules")
+            registered = set(modules)
+            present = set(sections) if isinstance(sections, dict) else set()
+            raise ValueError(
+                f"{path}: translation modules differ; "
+                f"missing={sorted(registered - present)}, extra={sorted(present - registered)}"
+            )
 
         for module, (_contexts, specs) in modules.items():
             section = sections[module]

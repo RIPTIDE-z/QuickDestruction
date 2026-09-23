@@ -1,9 +1,11 @@
-"""参数唯一来源 - PROPERTY_SPECS 描述 27 个字段, 并提供校验, 序列化与错误标签转换"""
+"""参数唯一来源 - PROPERTY_SPECS 描述 27 个字段, 并提供场景访问, 校验, 序列化与预设归属"""
+
+from pathlib import Path
 
 from ..common import rna, schema
-from ..common.errors import InvalidParameterError
-from .constants import CELL_SCALE_MIN, CONTEXT, RANDOM_SEED_DEFAULT
-from .errors import MeshFractureError
+from ..common.errors import describe_error as describe_domain_error
+from ..tool_contract import PresetSpec
+from .constants import CELL_SCALE_MIN, CONTEXT, RANDOM_SEED_DEFAULT, SETTINGS_ATTR, TOOL_ID
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 # name 与 description 是英文原文, 也是翻译文件里稳定字段路径的来源;
@@ -347,22 +349,28 @@ PROPERTY_SPECS = {
 }
 
 
-def field_label(field):
-    """从参数规格读取界面标签 - 未知字段原样返回"""
-    # 规格里取不到时退回字段名本身, 保证出错信息里总有可定位的线索
-    return PROPERTY_SPECS.get(field, ("", {"name": field}))[1]["name"]
+# 预设归属: 通用预设层据它定位目录, 校验参数并写回
+# 首级 quick_destruction 是扩展 ID, 以 blender_manifest.toml 的 id 为准
+PRESET = PresetSpec(
+    key=TOOL_ID,
+    subdir=Path("quick_destruction") / "presets" / TOOL_ID,
+    specs=PROPERTY_SPECS,
+)
+
+
+def scene_settings(context):
+    """取本工具在当前场景的参数组
+
+    字段名来自 SETTINGS_ATTR, 是交互层访问场景参数的唯一入口:
+    工具改名时只需改常量, 各处调用不必跟着改
+    """
+    return getattr(context.scene.qd_settings, SETTINGS_ATTR)
 
 
 def describe_error(error):
     """把字段错误映射为参数标签, 保留领域错误的消息键"""
-    if isinstance(error, InvalidParameterError):
-        # 校验错误只带字段名, 这里换成界面标签再交给消息模板
-        return "Invalid parameter: {name}", {"name": field_label(error.field)}
-    if isinstance(error, MeshFractureError):
-        # 领域错误已经保存了消息键与插值参数, 直接透传
-        return error.message, dict(error.values)
-    # 其余异常按原文展示
-    return str(error), {}
+    # 标签来自本工具的规格, 转换逻辑由通用层提供
+    return describe_domain_error(error, PROPERTY_SPECS)
 
 
 def property_definitions():

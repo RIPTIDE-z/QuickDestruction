@@ -1,11 +1,13 @@
 """布尔边界策略 - 诊断输入网格并选择求解器, 检查求交结果是否越界, 不修改源几何"""
 
 from dataclasses import dataclass
-from math import isfinite, sqrt
+from math import isfinite
 
 import bmesh
 
-from ..errors import MeshFractureError
+from ...common import measure
+from ...common.errors import require_finite
+from ..errors import NON_FINITE_MESSAGE, MeshFractureError
 
 
 @dataclass(frozen=True)
@@ -14,9 +16,13 @@ class BooleanSource:
 
     # 源物体名, 只用于错误消息
     name: str
+    # 世界空间顶点坐标; 胞体构造的包围盒与尺度都取自这一份
+    vertices: tuple
     # 世界空间包围盒的最小与最大角点
     minimum: tuple
     maximum: tuple
+    # 包围盒体对角线长度, 即本次切割的整体尺度
+    diagonal: float
     # 允许的越界余量, 由物体尺度与浮点精度推出
     tolerance: float
     # 输入含非流形时启用 Hole Tolerant 求解
@@ -24,17 +30,20 @@ class BooleanSource:
 
 
 def inspect_source(obj, depsgraph):
-    """每批胞体检查一次实际求值源,覆盖修改器产生或修复的开放拓扑"""
+    """求值一次源物体并量出本批胞体共用的全部数值
+
+    覆盖修改器产生或修复的开放拓扑; 世界空间顶点与包围盒只在这里算一次,
+    胞体构造与布尔校验都复用它, 不再对同一源重复求值与测量
+    """
+    # 临时求值网格只在本次调用内存在, 量完所需数值立即释放
     evaluated = obj.evaluated_get(depsgraph)
     try:
         mesh = evaluated.to_mesh()
         if mesh is None or not mesh.vertices or not mesh.polygons:
             raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
-        coordinates = [evaluated.matrix_world @ vertex.co for vertex in mesh.vertices]
-        if any(not isfinite(value) for point in coordinates for value in point):
-            raise MeshFractureError("Source geometry contains non-finite coordinates")
-        minimum = tuple(min(point[i] for point in coordinates) for i in range(3))
-        maximum = tuple(max(point[i] for point in coordinates) for i in range(3))
+        vertices = tuple(evaluated.matrix_world @ vertex.co for vertex in mesh.vertices)
+        require_finite((vertices,), MeshFractureError, NON_FINITE_MESSAGE)
+        minimum, maximum = measure.bounds(vertices)
         bm = bmesh.new()
         try:
             bm.from_mesh(mesh)
@@ -48,11 +57,11 @@ def inspect_source(obj, depsgraph):
     finally:
         evaluated.to_mesh_clear()
     # minimum/maximum 是同一个 range(3) 生成的两个三元组, 长度必然一致
-    diagonal = sqrt(sum((hi - lo) ** 2 for lo, hi in zip(minimum, maximum, strict=True)))
+    diagonal = measure.diagonal(minimum, maximum)
     magnitude = max(abs(value) for point in (minimum, maximum) for value in point)
     # 相对尺度容差,加上世界坐标 float32 精度余量;不拿艺术间隙或焊接距离当容差
     tolerance = max(diagonal * 1e-5, magnitude * 2**-21, 1e-9)
-    return BooleanSource(obj.name, minimum, maximum, tolerance, needs_tolerance)
+    return BooleanSource(obj.name, vertices, minimum, maximum, diagonal, tolerance, needs_tolerance)
 
 
 def configure_intersection(modifier, source):

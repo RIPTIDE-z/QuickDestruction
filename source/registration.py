@@ -6,12 +6,27 @@ from collections.abc import Callable
 import bpy
 from bpy.props import PointerProperty
 
-from .i18n import TRANSLATIONS_DOMAIN, translations_dict
+from .i18n import COMMON_MODULE, TRANSLATIONS_DOMAIN, translations_dict
 from .panel import QD_PT_main
+from .preset_ui import CLASSES as PRESET_CLASSES
 from .properties import QDSettings
 from .tool_registry import ordered_tools
 
 _undo_steps: list[Callable[[], None]] = []
+
+
+def _collect_classes(tools):
+    """取各工具的交互类, 取不到时补上工具标识
+
+    classes() 内部是工具包的首次导入, 裸的导入错误里没有工具名, 很难定位
+    """
+    groups = []
+    for tool in tools:
+        try:
+            groups.append(tool.classes())
+        except Exception as error:
+            raise RuntimeError(f"Tool {tool.tool_id} failed to provide its classes") from error
+    return tuple(groups)
 
 
 def _check_unique(tools, tool_classes):
@@ -30,9 +45,21 @@ def _check_unique(tools, tool_classes):
         values = [getattr(tool, field) for tool in tools if getattr(tool, field) is not None]
         if len(values) != len(set(values)):
             raise ValueError(f"Duplicate tool {field}")
+    # 框架消息固定占用一个翻译分组, 工具与它同名会让语言文件的模块集合撞车
+    for tool in tools:
+        if tool.translation_module == COMMON_MODULE:
+            raise ValueError(f"Tool {tool.tool_id} uses the reserved translation module")
+    # 预设归属也要唯一: 工具标识决定预设目录, 同时是侧栏预设会话的令牌,
+    # 两者撞车会让一个工具读写到另一个工具的预设
+    presets = [tool.preset for tool in tools if tool.preset is not None]
+    for field in ("key", "subdir"):
+        values = [str(getattr(preset, field)) for preset in presets]
+        if len(values) != len(set(values)):
+            raise ValueError(f"Duplicate preset {field}")
 
-    # 汇总本次要注册的全部类: 根层参数组与父面板, 各工具的参数组, 各工具声明的交互类
-    classes = (QDSettings, QD_PT_main)
+    # 汇总本次要注册的全部类: 根层参数组与父面板, 框架的通用预设类,
+    # 各工具的参数组, 各工具声明的交互类
+    classes = (QDSettings, QD_PT_main, *PRESET_CLASSES)
     classes += tuple(tool.settings_class for tool in tools if tool.settings_class is not None)
     classes += tuple(cls for group in tool_classes for cls in group)
     # Blender 对重复 bl_idname 不报错, 而是静默用后注册的实现顶替先注册的,
@@ -46,8 +73,10 @@ def _check_unique(tools, tool_classes):
             [cls.__dict__["bl_idname"] for cls in classes if "bl_idname" in cls.__dict__],
         ),
     ):
-        if len(values) != len(set(values)):
-            raise ValueError(f"Duplicate {label} in tool registry")
+        # 报出具体撞车的名字: 只说"有重复"会让新增工具时无从下手
+        duplicates = sorted({value for value in values if values.count(value) > 1})
+        if duplicates:
+            raise ValueError(f"Duplicate {label} in tool registry: {', '.join(duplicates)}")
 
 
 def _apply(action, undo, applied):
@@ -79,9 +108,9 @@ def register():
         raise RuntimeError("QuickDestruction is already registered")
     # 工具集合按 weight 排序取一次, 注册顺序与父面板, 翻译目录共用同一份
     tools = ordered_tools()
-    # 交互类由各工具的 classes() 延迟提供, 这里一次性取齐, 以便在改动任何
-    # Blender 状态之前完成唯一性检查; 取类本身也会执行工具包内的延迟导入
-    tool_classes = tuple(tool.classes() for tool in tools)
+    # 交互类由各工具的 classes() 提供, 这里一次性取齐, 以便在改动任何
+    # Blender 状态之前完成唯一性检查; 取类本身也会完成工具包的首次导入
+    tool_classes = _collect_classes(tools)
     _check_unique(tools, tool_classes)
     # applied 记录本次已经成功的每一步及其逆操作; 中途失败时按它回滚
     applied = []
@@ -121,7 +150,14 @@ def register():
             lambda: bpy.utils.unregister_class(QD_PT_main),
             applied,
         )
-        # 6) 工具声明的交互类: 生成算子, 预设算子, 菜单, 子面板
+        # 6) 框架的通用预设算子与菜单: 各工具的子面板绘制时会引用它们
+        for cls in PRESET_CLASSES:
+            _apply(
+                lambda cls=cls: bpy.utils.register_class(cls),
+                lambda cls=cls: bpy.utils.unregister_class(cls),
+                applied,
+            )
+        # 7) 工具声明的交互类: 生成算子, 菜单与子面板
         for group in tool_classes:
             for cls in group:
                 _apply(
@@ -129,7 +165,7 @@ def register():
                     lambda cls=cls: bpy.utils.unregister_class(cls),
                     applied,
                 )
-        # 7) 外部入口最后挂: 菜单与 handler 一旦生效就可能被用户触发,
+        # 8) 外部入口最后挂: 菜单与 handler 一旦生效就可能被用户触发,
         #    因此回滚时它们会最先被摘掉
         for tool in tools:
             if tool.clear_sessions is not None:

@@ -2,6 +2,19 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class PresetSpec:
+    """描述工具的预设归属 - 声明它的工具才获得通用的预设界面"""
+
+    # 工具标识: 用于预设归属校验, 同时作为侧栏预设会话的令牌
+    key: str
+    # 相对用户脚本目录的预设目录, 每个工具独占一层, 互不可见
+    subdir: Path
+    # 参数规格: 预设字段的范围校验, 写回与翻译字段路径都按它进行
+    specs: dict
 
 
 @dataclass(frozen=True)
@@ -21,6 +34,8 @@ class ToolSpec:
     # 场景参数组的字段名与类型: 两者必须同时提供或同时省略
     settings_attr: str | None = None
     settings_class: type | None = None
+    # 预设归属; 为 None 时该工具不提供预设界面, 也不会有预设目录
+    preset: PresetSpec | None = None
     # 菜单挂钩, 每项为 (菜单类型, 绘制回调)
     menu_hooks: tuple[tuple[type, Callable], ...] = ()
     # 加载新文件前的回调, 用于丢弃与旧文件绑定的状态

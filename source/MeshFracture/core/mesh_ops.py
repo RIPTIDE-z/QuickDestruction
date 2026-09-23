@@ -7,21 +7,22 @@
 import random
 import uuid
 from dataclasses import dataclass
-from math import isfinite
 
 import bmesh
 import bpy
 from mathutils import Vector
 
+from ...common import measure
 from ...common.blender_context import mesh_edit
 from ...common.created_data import track
+from ...common.errors import require_finite
 from ..constants import (
     INTERIOR_VGROUP_NAME,
     RANDOM_SEED_DEFAULT,
     WELD_SCALE_RATIO,
     WELD_TO_JITTER_RATIO,
 )
-from ..errors import MeshFractureError
+from ..errors import NON_FINITE_MESSAGE, MeshFractureError
 from . import boolean
 from .sampling import points_from_object, random_unit_vector
 
@@ -88,18 +89,6 @@ def remove_generated_object(obj):
         bpy.data.meshes.remove(mesh)
 
 
-def _source_vertices(obj, depsgraph):
-    """求值源物体的世界空间顶点; 没有顶点时返回空列表"""
-    # 顶点取求值后的网格: 修改器结果要参与包围盒尺度与胞体构造
-    evaluated = obj.evaluated_get(depsgraph)
-    try:
-        evaluated_mesh = evaluated.to_mesh()
-        return [obj.matrix_world @ vertex.co for vertex in evaluated_mesh.vertices]
-    finally:
-        # 求值网格是临时数据, 必须显式释放
-        evaluated.to_mesh_clear()
-
-
 def _seed_points(context, depsgraph, obj, source, source_limit, rng):
     """采样种子点: 取来源, 为空则回退自身顶点, 按上限随机截断, 再精确去重"""
     points = points_from_object(context, depsgraph, obj, source)
@@ -114,19 +103,6 @@ def _seed_points(context, depsgraph, obj, source, source_limit, rng):
         points = points[:source_limit]
     # 精确去重: 按固定小数位取整会丢掉小尺寸物体的真实点
     return list({tuple(point): point for point in points}.values())
-
-
-def _require_finite(point_groups):
-    """任一组点里出现非有限坐标就报错; 消息键由界面层翻译"""
-    if any(not isfinite(value) for group in point_groups for point in group for value in point):
-        raise MeshFractureError("Source geometry contains non-finite coordinates")
-
-
-def _bounding_diagonal(verts):
-    """世界空间顶点包围盒的体对角线长度, 作为整体尺度"""
-    lo = [min(vertex[i] for vertex in verts) for i in range(3)]
-    hi = [max(vertex[i] for vertex in verts) for i in range(3)]
-    return Vector(tuple(hi[i] - lo[i] for i in range(3))).length
 
 
 def _scatter_points(points, scale, source_noise, rng):
@@ -148,9 +124,26 @@ def _create_debug_points(points, collection, tracker):
     collection.objects.link(debug_object)
 
 
+def _weld_vertices(bm, weld_dist):
+    """把间距小于焊接距离的顶点合并成一个"""
+    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
+
+
+def _dissolve_coplanar(bm, *, with_edges=False):
+    """合并近似共面的小面, 让面数更少更规整
+
+    胞体阶段只按顶点判断, 布尔结果还要按边判断, 因此用一个开关表达这处差异
+    """
+    bm.normal_update()
+    options = {"verts": list(bm.verts), "angle_limit": 0.001}
+    if with_edges:
+        options["edges"] = list(bm.edges)
+    bmesh.ops.dissolve_limit(bm, **options)
+
+
 def _convex_body(bm, weld_dist):
     """焊接重合点并闭合成凸包; 顶点不足或退化时返回 False"""
-    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
+    _weld_vertices(bm, weld_dist)
     # 少于四个顶点无法构成凸体, 直接丢弃
     if len(bm.verts) < 4:
         return False
@@ -173,8 +166,7 @@ def _convex_cell_mesh(cell_points, weld_dist, jitter_half, style, rng, batch, fa
             return None
         if style.clean:
             # 合并近似共面的小面, 让胞体面数更少更规整
-            bm.normal_update()
-            bmesh.ops.dissolve_limit(bm, verts=list(bm.verts), angle_limit=0.001)
+            _dissolve_coplanar(bm)
         # 写在基础网格上的着色与材质会在布尔求值后带到碎块上
         for face in bm.faces:
             face.smooth = style.use_smooth_faces
@@ -223,25 +215,23 @@ def _sync_slot_links(source_object, cell):
         target_slot.material = source_slot.material
 
 
-def _prepare_geometry(context, obj, source, source_limit, source_noise, rng):
+def _prepare_geometry(context, depsgraph, obj, snapshot, source, source_limit, source_noise, rng):
     """采样种子点并求出尺度
 
-    返回 (种子点, 顶点, 焊接距离, 抖动半幅); 种子点或顶点为空时返回 None
+    返回 (种子点, 顶点, 焊接距离, 抖动半幅); 种子点为空时返回 None
+    顶点与尺度取自快照, 本阶段不再对源物体求值一次
     随机流的消费顺序在这里固定: 截断洗牌 -> 噪波
     """
-    depsgraph = context.evaluated_depsgraph_get()
     points = _seed_points(context, depsgraph, obj, source, source_limit, rng)
     if not points:
         return None
-    verts = _source_vertices(obj, depsgraph)
-    if not verts:
-        return None
-    _require_finite((verts, points))
-    scale = _bounding_diagonal(verts)
+    # 快照已保证顶点存在且有限, 这里只查本次采样得到的种子点
+    require_finite((points,), MeshFractureError, NON_FINITE_MESSAGE)
+    scale = snapshot.diagonal
     # 噪波用尺度换算位移上限, 因此必须排在求尺度之后
     points = _scatter_points(points, scale, source_noise, rng)
     weld_dist, jitter_half = _weld_distances(scale)
-    return points, verts, weld_dist, jitter_half
+    return points, snapshot.vertices, weld_dist, jitter_half
 
 
 def build_cells(
@@ -265,6 +255,7 @@ def build_cells(
     group=None,
     target=None,
     rng=None,
+    snapshot=None,
 ):
     """采样种子点并生成凸胞体, 返回胞体物体列表
 
@@ -273,8 +264,9 @@ def build_cells(
     这两项由调用方决定, 因为"这一批属于哪一组"是流程层面的信息, 这里不去猜
     naming 为 None 时使用 "<源物体名>_cell", 允许独立调用本阶段
     rng 由管线在各轮间共享; 单独调用未提供时使用固定默认种子的局部随机流
+    snapshot 是流程编排取好的求值源快照; 为 None 时本阶段自己求值一次
 
-    阶段顺序固定为: 采样种子 -> 求值顶点 -> 非有限检查 -> 求尺度 -> 噪波
+    阶段顺序固定为: 采样种子 -> 非有限检查 -> 取尺度 -> 噪波
     -> 建胞体网格 -> 落点; 随机流的消费顺序也按这个次序
     """
     # 延迟导入: cells 只依赖 mathutils, 放模块顶层会把几何依赖提前拉起
@@ -283,10 +275,16 @@ def build_cells(
     if rng is None:
         # 独立调用本函数时给一个固定种子的局部随机流, 保证结果可复现
         rng = random.Random(RANDOM_SEED_DEFAULT)
+    depsgraph = context.evaluated_depsgraph_get()
+    if snapshot is None:
+        # 独立调用本阶段时自己求值一次源物体
+        snapshot = boolean.inspect_source(obj, depsgraph)
     batch = ShardBatch(collection, target, naming, level, group, tracker)
     # 没有命名计划时的后备名, 网格与物体各取一次
     fallback_name = obj.name + "_cell"
-    geometry = _prepare_geometry(context, obj, source, source_limit, source_noise, rng)
+    geometry = _prepare_geometry(
+        context, depsgraph, obj, snapshot, source, source_limit, source_noise, rng
+    )
     if geometry is None:
         return []
     points, verts, weld_dist, jitter_half = geometry
@@ -294,8 +292,10 @@ def build_cells(
         # 诊断几何, 跟随碎块一起落点
         _create_debug_points(points, batch.destination, batch.tracker)
     style = CellStyle(clean, use_smooth_faces, material_index)
-    # 胞体构造: verts 决定初始包围盒, points 是 Voronoi 站点
-    cells = points_as_bmesh_cells(verts, points, cell_scale, margin_cell=margin)
+    # 胞体构造: points 是 Voronoi 站点, 初始包围盒复用快照已经量过的结果
+    cells = points_as_bmesh_cells(
+        verts, points, cell_scale, margin_cell=margin, bounds=(snapshot.minimum, snapshot.maximum)
+    )
     objects = []
     for center, cell_points in cells:
         mesh = _convex_cell_mesh(
@@ -317,14 +317,13 @@ def build_cells(
 
 
 def _object_diagonal(obj):
-    """源物体世界空间包围盒的体对角线长度"""
+    """源物体自身包围盒的体对角线长度
+
+    布尔阶段用它派生焊接距离, 与胞体阶段的求值尺度各自独立:
+    这里的对象是源物体自身的尺寸, 不受修改器输出大小影响
+    """
     corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-    return Vector(
-        tuple(
-            max(point[i] for point in corners) - min(point[i] for point in corners)
-            for i in range(3)
-        )
-    ).length
+    return measure.points_diagonal(corners)
 
 
 def _unhide_source_faces(obj):
@@ -384,16 +383,14 @@ def _validate_pending_cell(cell, source, depsgraph):
 
 def _clean_intersection(mesh, weld_dist, clean, remove_doubles):
     """合并近共面面并焊接重合顶点; 两项都关闭时不做任何事"""
+    # 与胞体阶段共用同一对帮手, 两个阶段的差异只在顺序与是否按边判断
     if not (clean or remove_doubles):
         return
     with mesh_edit(mesh) as bm:
         if clean:
-            bm.normal_update()
-            bmesh.ops.dissolve_limit(
-                bm, verts=list(bm.verts), edges=list(bm.edges), angle_limit=0.001
-            )
+            _dissolve_coplanar(bm, with_edges=True)
         if remove_doubles:
-            bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
+            _weld_vertices(bm, weld_dist)
         bm.to_mesh(mesh)
 
 
@@ -449,25 +446,30 @@ def intersect_cells(
     level=0,
     remove_doubles=True,
     tracker=None,
+    snapshot=None,
 ):
-    """把每个胞体与源物体求交, 得到贴合表面的碎块, 返回碎块列表"""
+    """把每个胞体与源物体求交, 得到贴合表面的碎块, 返回碎块列表
+
+    snapshot 是流程编排取好的求值源快照; 为 None 时本阶段自己求值一次
+    """
     # 焊接距离按源物体包围盒对角线派生, 与胞体阶段保持同一套尺度
     weld_dist = _weld_distances(_object_diagonal(obj))[0]
     if use_interior_hide and level == 0:
         # 只有首次切割需要干净起点: 源物体上原有的隐藏标记会干扰内部判定
         _unhide_source_faces(obj)
     # 求解策略只在布尔边界决定, 每个源/递归父块检查一次, 所有胞体共用
-    source = boolean.inspect_source(obj, context.evaluated_depsgraph_get())
-    modifiers = _add_boolean_modifiers(objects, obj, source, use_interior_hide, use_debug_bool)
+    if snapshot is None:
+        snapshot = boolean.inspect_source(obj, context.evaluated_depsgraph_get())
+    modifiers = _add_boolean_modifiers(objects, obj, snapshot, use_interior_hide, use_debug_bool)
     # 修改器与隐藏标记都要先刷新视图层, 依赖图里才会包含它们
     context.view_layer.update()
     depsgraph = context.evaluated_depsgraph_get()
     results = []
     for cell in objects:
         if use_debug_bool:
-            _validate_pending_cell(cell, source, depsgraph)
+            _validate_pending_cell(cell, snapshot, depsgraph)
         else:
-            mesh = _bake_intersection(cell, modifiers[cell], source, depsgraph, tracker)
+            mesh = _bake_intersection(cell, modifiers[cell], snapshot, depsgraph, tracker)
             # 求交结果为空说明胞体落在源物体之外, 丢弃该胞体
             if not mesh.polygons:
                 remove_generated_object(cell)

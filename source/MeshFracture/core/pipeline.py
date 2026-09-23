@@ -9,7 +9,7 @@ from mathutils import Vector
 from ...common.created_data import CreatedData
 from ..constants import RANDOM_SEED_DEFAULT
 from ..errors import MeshFractureError
-from . import mesh_ops
+from . import boolean, mesh_ops
 from .naming import NamingPlan
 
 
@@ -64,6 +64,10 @@ def _cut(
         if settings["use_debug_redraw"]:
             # 线框显示方便观察切割进度, 结果不受影响
             obj.display_type = "WIRE"
+        # 求值源快照每次切割只取一次: 胞体构造要用它的顶点与尺度,
+        # 布尔求交要用它的包围盒与容差, 两处共用同一份就不会对同一源重复求值
+        depsgraph = context.evaluated_depsgraph_get()
+        snapshot = boolean.inspect_source(obj, depsgraph)
         # 两个阶段: 先按种子点建凸胞体, 再与源物体求交得到贴合表面的碎块
         cells = mesh_ops.build_cells(
             context,
@@ -75,6 +79,7 @@ def _cut(
             group=group,
             target=target,
             rng=rng,
+            snapshot=snapshot,
             **options,
         )
         cells = mesh_ops.intersect_cells(
@@ -87,6 +92,7 @@ def _cut(
             use_debug_redraw=settings["use_debug_redraw"],
             level=level,
             tracker=tracker,
+            snapshot=snapshot,
         )
         if cells and settings["use_recenter"]:
             # 只移动原点, 不动几何

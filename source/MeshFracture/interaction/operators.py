@@ -3,18 +3,17 @@
 import traceback
 from typing import ClassVar
 
-from bpy.props import StringProperty
 from bpy.types import Operator
 
+from ... import preset_ui
 from ...common.blender_context import restore_selection
 from ...common.errors import InvalidParameterError
-from ...i18n import tr_report
+from ...common.translate import tr_report
 from .. import settings
 from ..api import generate_fragments
 from ..errors import MeshFractureError
-from ..settings import CONTEXT, describe_error, property_definitions
-from ..tool import scene_settings
-from . import panel, presets
+from ..settings import CONTEXT, PRESET, describe_error, property_definitions, scene_settings
+from . import panel
 
 
 class MESH_FRACTURE_OT_generate_fragments(Operator):
@@ -32,7 +31,7 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
     # preset_session 是隐藏字段, 只用于把对话框预设指向本次对话框而非侧栏
     __annotations__ = {
         **property_definitions(),
-        "preset_session": StringProperty(options={"HIDDEN", "SKIP_SAVE"}),
+        "preset_session": preset_ui.session_property(),
     }
 
     # 菜单入口不使用 poll: 无选中网格时由阶段 API 报出具体原因
@@ -56,7 +55,7 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
                 settings.dict_to_settings(owner, data)
                 if self.preset_session:
                     # 对话框里的改动只写回名称, 参数本身不覆盖侧栏
-                    owner.preset_name = presets.preset_name(context, self.preset_session)
+                    owner.preset_name = preset_ui.preset_name(self.preset_session)
             except Exception as error:
                 # 几何已经生成, 这里只提示同步失败, 不做回滚
                 traceback.print_exc()
@@ -86,7 +85,7 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
                 tr_report("Fragment generation failed: {detail}", detail=tr_report(str(error))),
             )
         finally:
-            presets.end_session(self.preset_session)
+            preset_ui.end_session(self.preset_session)
             self.preset_session = ""
         return {"CANCELLED"}
 
@@ -102,13 +101,13 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
             if not self.properties.is_property_set(key):
                 setattr(self, key, value)
         # 会话令牌把本次对话框与侧栏区分开, 预设算子据此定位读写目标
-        presets.end_session(self.preset_session)
-        self.preset_session = presets.new_session(self, context)
+        preset_ui.end_session(self.preset_session)
+        self.preset_session = preset_ui.new_session(PRESET, self, context, owner.preset_name)
         return context.window_manager.invoke_props_dialog(self, width=520)
 
     def cancel(self, _context):
         """结束对话框会话 - 保证未确认的临时改动不会写回侧栏"""
-        presets.end_session(self.preset_session)
+        preset_ui.end_session(self.preset_session)
         self.preset_session = ""
 
     def draw(self, context):
@@ -117,6 +116,6 @@ class MESH_FRACTURE_OT_generate_fragments(Operator):
         F9 重做没有活动会话, 此时不画预设操作, 以免误指到侧栏
         """
         if self.preset_session:
-            presets.draw_presets(self.layout, context, self, self.preset_session)
+            preset_ui.draw_presets(self.layout, context, PRESET, self, self.preset_session)
         # 参数并排而非每行一个, 弹窗因此更宽更矮
         panel.draw_parameters(self.layout, self)
