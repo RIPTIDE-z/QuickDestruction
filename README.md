@@ -8,6 +8,7 @@
 
 - [x] `MeshFracture` 参考并派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)
     - 在种子点上构建 3D Voronoi 图，把每个胞体做成凸多面体，再与原物体做**布尔求交**，得到贴合原表面的碎块，用于破坏动画预切割
+- [ ] `PhysicalSettings` 物理设置：占位面板，只有一行用途提示，参数与逻辑待实现
 - [ ] 刚体设定和自定义外力
 - [ ] 破坏动画生成
 - [ ] 自动绑定以及动画烘焙

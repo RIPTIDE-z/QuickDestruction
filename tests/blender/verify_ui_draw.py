@@ -21,7 +21,8 @@
 判据:
     - 每个入口都不抛异常
     - 控件数不低于该入口的期望值 (捕捉"静默提前返回"的空面板)
-    - 工具的侧栏面板必须提供本工具某个算子的入口 (仓库约定: 面板是工具的入口面板)
+    - 声明了算子的工具, 它的侧栏面板必须提供其中某个算子的入口 (仓库约定: 面板是入口)
+    - 只声明面板的工具没有算子可入口, 该条不适用, 只核对控件数
     - 带预设的工具在绘制期必须设置会话令牌
     - 框架预设菜单必须请求到全部通用预设算子
     - 面板的折叠状态与 ToolSpec 声明一致, 且默认收起的面板确实没有被 Blender 绘制
@@ -406,10 +407,12 @@ def framework_entries(tools):
 
 def id_write_probe(tools):
     """自检用: 在绘制期写 ID 数据, 必须被 Blender 拒绝"""
+    # 必须挑一个带场景参数组的工具: 没有参数组的工具没有可写的 ID 数据
+    owner = next(tool_settings(tool) for tool in tools if tool.settings_class is not None)
 
     def call(_layout, _context):
         """写一个场景参数组的字段; 绘制回调里不允许这样做"""
-        tool_settings(tools[0]).preset_name = uuid.uuid4().hex
+        owner.preset_name = uuid.uuid4().hex
 
     return call
 
@@ -563,11 +566,15 @@ def check_entry(result):
     operators = requested_operators(calls)
     if entry.tool is not None:
         own = tool_operator_ids(entry.tool)
-        check(
-            f"{entry.name} 提供本工具算子入口",
-            bool(operators & own),
-            f"请求 {sorted(operators)} 本工具 {sorted(own)}",
-        )
+        if own:
+            check(
+                f"{entry.name} 提供本工具算子入口",
+                bool(operators & own),
+                f"请求 {sorted(operators)} 本工具 {sorted(own)}",
+            )
+        else:
+            # 只声明了面板的工具没有算子可入口, 控件数已在上一条核对, 这里不重复断言
+            print(f"       {entry.name} 未声明算子, 跳过算子入口核对", flush=True)
     if entry.operator_ids:
         check(
             f"{entry.name} 请求到声明的全部算子",

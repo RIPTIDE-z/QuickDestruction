@@ -18,7 +18,7 @@
 
 ## 工具装配
 
-`tool_registry.TOOLS` 是工具顺序来源，`ordered_tools()` 按 `weight` 给出界面顺序，注册与翻译目录共用它。每个 `ToolSpec` 声明：
+`tool_registry.TOOLS` 是工具顺序来源，`ordered_tools()` 按 `weight` 给出界面顺序，注册与翻译目录共用它。当前清单是 `MeshFracture`（切割）与 `PhysicalSettings`（占位）。每个 `ToolSpec` 声明：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -79,7 +79,7 @@
 
 ## MeshFracture
 
-预切割工具：点源采样 → 有界胞体 → 凸包 → Exact 布尔求交 → 递归与断面收尾。它是当前唯一的工具，也是新增工具时的参照实现。
+预切割工具：点源采样 → 有界胞体 → 凸包 → Exact 布尔求交 → 递归与断面收尾。它是目前唯一带完整计算链路的工具，也是新增工具时的参照实现。
 
 ### 包结构
 
@@ -115,3 +115,18 @@ generate_fragments(context, sources, config, output_collection, *, rng=None)
 | `rng` | 可选局部随机流，提供时按调用顺序消费。 |
 
 API 由显式的 `output_collection` 决定输出位置。它在完成或失败后恢复原选择和活动物体；交互算子在成功后选中生成的碎块。返回的 `MeshFractureResult` 包含碎块元组 `shards`、按源物体索引的只读映射 `source_to_shards`、耗时 `seconds` 和诊断元组 `diagnostics`。只读的是结果容器，Blender 对象本身仍可编辑。
+
+## PhysicalSettings
+
+破坏动画的物理设置，**占位工具**：只有一块侧栏面板，里面一行用途提示，尚无参数、算子、预设与计算链路。
+
+| 项 | 现状 |
+| --- | --- |
+| `tool_id` | `physical_settings` |
+| 场景参数组 | 无。`settings_attr` 与 `settings_class` 都省略，因此它不参与场景持久化 |
+| 参数规格 | 空字典，面板上没有可绑定的参数 |
+| 算子 | 无。面板只显示说明，没有算子入口 |
+| 预设 | 无 `PresetSpec`，因此没有预设目录与预设界面 |
+| 面板 | `PHYSICAL_SETTINGS_PT_settings`，`default_closed = True`，默认收起 |
+
+实现这块面板时，按 MeshFracture 的结构补齐：参数写进 `settings.py` 的规格并给出场景参数组，逻辑按需要放进 `core/` 与 `api.py`，算子放 `interaction/`，要预设时再加 `PRESET`；同时给每种语言的 JSON 补上属性译文。

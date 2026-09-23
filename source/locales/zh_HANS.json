@@ -144,6 +144,13 @@
         "Generate fragments from selected editable meshes; source objects are kept": "将选中的可编辑网格生成碎块，保留源物体",
         "Fragment generation failed: {detail}": "生成碎块失败：{detail}"
       }
+    },
+    "PhysicalSettings": {
+      "properties": {},
+      "messages": {
+        "Physical Settings": "物理设置",
+        "Physics settings for destruction animation": "用于破碎动画的物理设置"
+      }
     }
   }
 }
