@@ -8,3 +8,7 @@ NON_FINITE_MESSAGE = "Source geometry contains non-finite coordinates"
 
 class MeshFractureError(DomainError):
     """message 保存消息键 - values 保存翻译后填入的参数"""
+
+
+class IntersectionBoundsError(MeshFractureError):
+    """布尔交集超出操作数边界 - 允许使用保守求解路径重试"""

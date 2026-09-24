@@ -94,6 +94,8 @@
 
 `core/mesh_ops.py` 的两个阶段 `build_cells` 与 `intersect_cells` 都接受可选的 `snapshot`：流程编排对每个源只取一次求值快照传给两者，同一次切割的世界空间顶点、包围盒与尺度因此只求一次；两个阶段被独立调用时各自求值。
 
+求交结果在 `intersect_cells` 里只做两件事：焊接重合顶点，以及把平面偏离超过焊接距离的面三角化；**不合并面**。面合并由流程编排在全部切割结束之后对最终碎块调用一次（`mesh_ops.dissolve_final_shards`）。原因是递归层的布尔操作数正是上一轮产生的碎块，而精确布尔要求操作数只含平面面：不共面的面没有唯一面平面，会让结果留下未裁剪的残片；面合并又会把近共面的多个面并成一个并不共面的 n-gon，因此它不能作用在中间碎块上。三角化只改变面数，不改变渲染表面。
+
 ### 场景参数与界面标识
 
 场景参数位于 `Scene.qd_settings.mesh_fracture`，其中 `preset_name` 只记录本工具当前预设名。侧栏面板 ID 为 `MESH_FRACTURE_PT_settings`，生成算子 ID 为 `mesh_fracture.generate_fragments`，它只由面板按钮执行，不出现在任何菜单或算子搜索里。侧栏面板显示 **MeshFracture／网格破碎**；生成动作显示 **Generate Fragments／生成碎块**。

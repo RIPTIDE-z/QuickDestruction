@@ -2,6 +2,7 @@
 
 两个主函数 build_cells 与 intersect_cells 只做阶段编排,
 每一步都拆成下面的私有帮手; ShardBatch 负责携带一批碎块的落点与身份
+减少操作数的非平面面, 且面合并只在收尾做一次: 中间碎块会被递归当成操作数
 """
 
 import random
@@ -352,15 +353,15 @@ def _bake_intersection(cell, modifier, source, depsgraph, tracker):
     """取布尔求值结果替换胞体网格, 返回新网格; 调用方负责判空与清理"""
     # 求值后的网格就是布尔结果, 直接取出来替换胞体网格并移除修改器
     # 名字这里不管: 全部切完后 apply_names() 会把物体与网格一起定名
-    evaluated = cell.evaluated_get(depsgraph)
-    mesh = track(
-        tracker,
-        "meshes",
-        bpy.data.meshes.new_from_object(
-            evaluated, preserve_all_data_layers=True, depsgraph=depsgraph
-        ),
-    )
-    boolean.validate_intersection(mesh, evaluated.matrix_world, source)
+    # 先验证临时求值结果 - 重试失败不会留下持久化的无用户网格
+    with boolean.validated_evaluation(cell, modifier, source, depsgraph) as evaluated:
+        mesh = track(
+            tracker,
+            "meshes",
+            bpy.data.meshes.new_from_object(
+                evaluated, preserve_all_data_layers=True, depsgraph=depsgraph
+            ),
+        )
     # 换网格前先记下旧网格, 换完再按使用者数量决定是否回收
     old_mesh = cell.data
     cell.data = mesh
@@ -370,28 +371,63 @@ def _bake_intersection(cell, modifier, source, depsgraph, tracker):
     return mesh
 
 
-def _validate_pending_cell(cell, source, depsgraph):
+def _validate_pending_cell(cell, modifier, source, depsgraph):
     """调试布尔路径: 保留修改器, 只校验求值结果是否越界"""
     # 保留修改器时检查求值结果; 基础凸胞体超出源轮廓是正常的
-    evaluated = cell.evaluated_get(depsgraph)
-    try:
-        mesh = evaluated.to_mesh()
-        boolean.validate_intersection(mesh, evaluated.matrix_world, source)
-    finally:
-        evaluated.to_mesh_clear()
+    with boolean.validated_evaluation(cell, modifier, source, depsgraph):
+        pass
 
 
-def _clean_intersection(mesh, weld_dist, clean, remove_doubles):
-    """合并近共面面并焊接重合顶点; 两项都关闭时不做任何事"""
-    # 与胞体阶段共用同一对帮手, 两个阶段的差异只在顺序与是否按边判断
-    if not (clean or remove_doubles):
-        return
+def _flatten_faces(bm, tolerance):
+    """把平面偏离超过容差的面三角化, 返回处理的面数
+
+    三角形必然共面, 因此只需要看四边形及以上的面;
+    退化面没有法线, 同样需要处理
+    """
+    targets = []
+    for face in bm.faces:
+        if len(face.verts) <= 3:
+            continue
+        normal = face.normal
+        if normal.length == 0:
+            targets.append(face)
+            continue
+        origin = face.verts[0].co
+        if max(abs((vert.co - origin).dot(normal)) for vert in face.verts) > tolerance:
+            targets.append(face)
+    if targets:
+        # 三角化明确面片平面 - 非平面多边形的表面可能随对角线选择改变
+        bmesh.ops.triangulate(bm, faces=targets)
+    return len(targets)
+
+
+def _weld_intersection(mesh, weld_dist):
+    """整理求交结果以供递归使用: 焊接顶点, 再处理超出容差的非平面面
+
+    求交会产生大量重合顶点, 不焊接会让后续的递归切割拿到退化输入
+    把偏离超过焊接距离的面三角化可缓解部分递归求交失败
+    该处理不保证操作数无自交或始终有效 - 求交仍需验证
+    """
     with mesh_edit(mesh) as bm:
-        if clean:
-            _dissolve_coplanar(bm, with_edges=True)
-        if remove_doubles:
-            _weld_vertices(bm, weld_dist)
+        _weld_vertices(bm, weld_dist)
+        # 焊接会改动拓扑, 重新算法线后才能判断面是否共面
+        bm.normal_update()
+        _flatten_faces(bm, weld_dist)
         bm.to_mesh(mesh)
+
+
+def dissolve_final_shards(cells):
+    """对最终碎块合并近共面面; 收尾阶段调用一次
+
+    合并面会把多个近共面的面并成一个 n-gon, 而布尔结果里这类 n-gon 并不共面
+    不共面的 n-gon 会让精确布尔留下未裁剪的残片, 所以面合并不能作用在
+    还会被递归当成布尔操作数的中间碎块上, 只能留到全部切割结束之后再统一做
+    """
+    for cell in cells:
+        with mesh_edit(cell.data) as bm:
+            _dissolve_coplanar(bm, with_edges=True)
+            bm.to_mesh(cell.data)
+        cell.data.update()
 
 
 def _select_cells(context, cells):
@@ -405,6 +441,28 @@ def _select_cells(context, cells):
         if cell is not None:
             cell.select_set(True)
     context.view_layer.objects.active = cells[0]
+
+
+def _island_sort_key(obj):
+    """孤岛结果的稳定排序键, 只用几何本身, 与对象创建顺序无关
+
+    bpy.ops.mesh.separate 产出对象的顺序不定 (内部按哈希遍历不连通块),
+    而递归的停止阈值判断依赖处理顺序, 不排序会让同一输入得到不同的碎块数
+    位置优先, 位置相同再比包围盒与顶点数, 保证键互不相同
+    """
+    mesh = obj.data
+    count = len(mesh.vertices)
+    if not count:
+        return ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0)
+    # foreach_get 一次取出全部坐标, 再按轴切片求极值; 避免逐顶点访问 RNA
+    flat = [0.0] * (count * 3)
+    mesh.vertices.foreach_get("co", flat)
+    axes = (flat[0::3], flat[1::3], flat[2::3])
+    return (
+        tuple(round(min(axis), 6) for axis in axes),
+        tuple(round(max(axis), 6) for axis in axes),
+        count,
+    )
 
 
 def _split_islands(context, cells, tracker):
@@ -431,7 +489,9 @@ def _split_islands(context, cells, tracker):
             track(tracker, "objects", cell)
             track(tracker, "meshes", cell.data)
             del cell["_qd_split_owner"]
-    return claimed
+    # 认领顺序来自 separate 的产出顺序, 这里按几何重新排序:
+    # 命名与递归的阈值判断都按列表顺序进行, 顺序不定会让结果不可复现
+    return sorted(claimed, key=_island_sort_key)
 
 
 def intersect_cells(
@@ -439,18 +499,17 @@ def intersect_cells(
     obj,
     objects,
     use_debug_bool=False,
-    clean=True,
     use_island_split=False,
     use_interior_hide=False,
     use_debug_redraw=False,
     level=0,
-    remove_doubles=True,
     tracker=None,
     snapshot=None,
 ):
     """把每个胞体与源物体求交, 得到贴合表面的碎块, 返回碎块列表
 
     snapshot 是流程编排取好的求值源快照; 为 None 时本阶段自己求值一次
+    本阶段只焊接并压平求交结果, 不合并面: 见 dissolve_final_shards 的说明
     """
     # 焊接距离按源物体包围盒对角线派生, 与胞体阶段保持同一套尺度
     weld_dist = _weld_distances(_object_diagonal(obj))[0]
@@ -467,14 +526,14 @@ def intersect_cells(
     results = []
     for cell in objects:
         if use_debug_bool:
-            _validate_pending_cell(cell, snapshot, depsgraph)
+            _validate_pending_cell(cell, modifiers[cell], snapshot, depsgraph)
         else:
             mesh = _bake_intersection(cell, modifiers[cell], snapshot, depsgraph, tracker)
             # 求交结果为空说明胞体落在源物体之外, 丢弃该胞体
             if not mesh.polygons:
                 remove_generated_object(cell)
                 continue
-            _clean_intersection(mesh, weld_dist, clean, remove_doubles)
+            _weld_intersection(mesh, weld_dist)
         results.append(cell)
         if use_debug_redraw:
             redraw()

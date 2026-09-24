@@ -1,5 +1,6 @@
 """布尔边界策略 - 诊断输入网格并选择求解器, 检查求交结果是否越界, 不修改源几何"""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite
 
@@ -7,7 +8,7 @@ import bmesh
 
 from ...common import measure
 from ...common.errors import require_finite
-from ..errors import NON_FINITE_MESSAGE, MeshFractureError
+from ..errors import NON_FINITE_MESSAGE, IntersectionBoundsError, MeshFractureError
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ def configure_intersection(modifier, source):
     """显式选 Exact,只有开放/非流形输入启用 Hole Tolerant"""
     modifier.operation = "INTERSECT"
     modifier.solver = "EXACT"
+    modifier.use_self = False
     modifier.use_hole_tolerant = source.use_hole_tolerant
 
 
@@ -91,7 +93,33 @@ def validate_intersection(mesh, matrix_world, source):
             or value > source.maximum[i] + source.tolerance
             for i, value in enumerate(point)
         ):
-            raise MeshFractureError(
+            raise IntersectionBoundsError(
                 'Boolean intersection extends outside "{name}"; check for open or invalid source geometry',
                 name=source.name,
             )
+
+
+@contextmanager
+def validated_evaluation(cell, modifier, source, depsgraph):
+    """验证临时求值几何 - 越界时仅启用一次自交处理并重算同一对操作数
+
+    成功后交给调用者烘焙或保留修改器
+    每次求值都释放临时网格 - 无效候选不会进入 Blender 数据库
+    """
+    for attempt in range(2):
+        evaluated = cell.evaluated_get(depsgraph)
+        try:
+            mesh = evaluated.to_mesh()
+            validate_intersection(mesh, evaluated.matrix_world, source)
+        except IntersectionBoundsError:
+            # 非有限值和程序错误不重试 - 已开启自交处理时也不能重复尝试
+            if attempt or modifier.use_self:
+                raise
+        else:
+            yield evaluated
+            return
+        finally:
+            evaluated.to_mesh_clear()
+        # 不改种子或容差 - 只换求解路径并刷新依赖图
+        modifier.use_self = True
+        depsgraph.update()

@@ -200,6 +200,10 @@ def main_object(context, collection, obj, settings, rng=None, *, tracker):
                 # 删除被替换的父块, 避免父子几何重叠
                 cells.remove(parent)
                 mesh_ops.remove_generated_object(parent)
+    # 全部切割结束后才能合并面: 中间碎块会被递归当作布尔操作数,
+    # 而合并出的非平面 n-gon 会让精确布尔留下未裁剪的残片
+    if cells and not settings["use_debug_bool"]:
+        mesh_ops.dissolve_final_shards(cells)
     # 被递归替换掉的父碎块会腾空它所在的集合, 这里统一收回, 避免大纲里留下空壳
     naming.prune_empty_collections()
     # 全部切割结束后统一命名: 序号只按保留下来的碎块连续编, 不分组时因此不会断号,
