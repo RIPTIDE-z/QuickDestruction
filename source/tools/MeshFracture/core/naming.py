@@ -1,4 +1,4 @@
-"""命名计划 - 切割期分配临时名与组集合, 全部切割结束后统一命名, 名字都带上源物体名"""
+"""命名计划 - 切割期分配临时名与组集合, 收纳保留的上级碎块, 全部切割结束后统一命名, 名字都带上源物体名"""
 
 from dataclasses import dataclass
 
@@ -8,6 +8,8 @@ from ....common import shards
 
 # 切割期临时名的前缀, 最终名字由 apply_names 统一分配
 TEMP_NAME_PREFIX = "QDTMP_"
+# 保留的上级碎块所在集合名的后缀, 集合名为 <源物体>_Parents
+PARENTS_SUFFIX = "_Parents"
 # 名字里源物体名最多占的 UTF-8 字节数: 默认前缀与序号下, 碎块网格名不超过 Blender 4.2 的 63 字节上限
 # 前缀过长时 Blender 仍会截断名字, 截断后撞名由 Blender 加后缀区分
 SOURCE_NAME_BYTES = 32
@@ -64,6 +66,10 @@ class NamingPlan:
         self.temp_counter = 0
         # 建过的组集合, 收尾时清理被搬空的
         self.created_collections = []
+        # 已被细分但保留下来的上级碎块, 与子块一起统一命名
+        self.parents = []
+        # 上级碎块集合, 第一次保留上级碎块时才建立
+        self.parents_collection = None
 
     def first_batch(self):
         """首次切割的批次: 层号 0, 组号 0, 直接落在输出集合"""
@@ -92,6 +98,22 @@ class NamingPlan:
         if not batch.collection.objects and not batch.collection.children:
             bpy.data.collections.remove(batch.collection)
 
+    def keep_parent(self, parent):
+        """把已被细分的碎块移进上级碎块集合并加上标记, 此后它不再参与递归"""
+        if self.parents_collection is None:
+            name = f"{self.label}{PARENTS_SUFFIX}"
+            self.parents_collection = self.tracker.track(
+                "collections", bpy.data.collections.new(name)
+            )
+            self.collection.children.link(self.parents_collection)
+        # 先链接再解除原集合, 物体始终至少属于一个集合
+        self.parents_collection.objects.link(parent)
+        for collection in parent.users_collection:
+            if collection is not self.parents_collection:
+                collection.objects.unlink(parent)
+        shards.mark_parent(parent)
+        self.parents.append(parent)
+
     def prune(self):
         """收回被递归替换后腾空的组集合"""
         for collection in self.created_collections:
@@ -104,7 +126,10 @@ class NamingPlan:
         return f"{TEMP_NAME_PREFIX}{self.temp_counter:06d}"
 
     def apply_names(self, cells):
-        """全部切割结束后统一命名, 序号只按保留下来的碎块连续编, 网格名跟随物体名"""
+        """全部切割结束后统一命名, 序号只按保留下来的物体连续编, 网格名跟随物体名
+
+        cells 含最终碎块与保留的上级碎块, 两者按层号与组号共用计数, 名字不会重复
+        """
         order = range(len(cells))
         if self.use_collections:
             # 分组时按 (层, 组) 重排, 每组从 1 起编号; 同组内保持创建顺序

@@ -30,7 +30,7 @@ def _check_sources(context, sources, settings):
             )
         if not obj.data.polygons:
             raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
-        if settings["use_data_match"] and index > 0 and index >= len(obj.material_slots):
+        if index > 0 and index >= len(obj.material_slots):
             raise MeshFractureError(
                 'Material slot {index} does not exist on "{name}"', index=index, name=obj.name
             )
@@ -128,18 +128,22 @@ def _select_recursion(cells, settings, cursor, rng):
 
 
 def _finish(cells, settings, naming):
-    """全部切割结束后的收尾: 合并共面面, 清理空集合, 统一命名与断面标记"""
+    """全部切割结束后的收尾: 合并共面面, 清理空集合, 统一命名与断面标记; 保留的上级碎块一并处理"""
     debug = settings["use_debug_bool"]
-    if cells and not debug:
-        mesh_ops.dissolve_final_shards(cells)
+    objects = cells + naming.parents
+    if objects and not debug:
+        mesh_ops.dissolve_final_shards(objects)
     naming.prune()
-    naming.apply_names(cells)
-    if cells and not debug and mesh_ops.uses_interior(settings):
-        mesh_ops.finish_interior(cells, settings)
+    naming.apply_names(objects)
+    if objects and not debug and mesh_ops.uses_interior(settings):
+        mesh_ops.finish_interior(objects, settings)
 
 
 def main_object(context, collection, obj, settings, rng, tracker, done):
-    """对单个源物体做首次切割并按需递归, 最后统一收尾; done 是之前的源已经生成的碎块数"""
+    """对单个源物体做首次切割并按需递归, 最后统一收尾, 返回最终碎块
+
+    done 是之前的源已经生成的碎块数; 被细分的父块总是离开碎块列表, 删除或移进上级碎块集合
+    """
     naming = NamingPlan(obj.name, collection, settings, tracker)
     cells = _cut(context, obj, settings, naming.first_batch(), rng)
     _check_limit(done + len(cells))
@@ -164,10 +168,13 @@ def main_object(context, collection, obj, settings, rng, tracker, done):
                 continue
             cells.extend(children)
             _check_limit(done + len(cells))
+            # 父块已被子块取代, 不再参与之后的递归与阈值计数
+            cells.remove(parent)
             if settings["use_remove_original"]:
                 # 删除被替换的父块, 避免父子几何重叠
-                cells.remove(parent)
                 mesh_ops.remove_generated_object(parent)
+            else:
+                naming.keep_parent(parent)
     _finish(cells, settings, naming)
     return cells
 

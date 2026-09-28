@@ -6,6 +6,8 @@ SOURCE_MARK = "_qd_source"
 LEVEL_MARK = "_qd_level"
 # 同一轮次内的组号, 首次切割为 0
 GROUP_MARK = "_qd_group"
+# 已被细分但保留下来的上级碎块, 与子块几何重叠, 不算作碎块
+PARENT_MARK = "_qd_parent"
 
 
 def mark(shard, source_name, level, group):
@@ -15,6 +17,15 @@ def mark(shard, source_name, level, group):
     shard[GROUP_MARK] = group
 
 
+def mark_parent(shard):
+    """把已被细分的碎块标记为上级碎块, 它保留来源, 层号与组号"""
+    shard[PARENT_MARK] = True
+
+
 def shards_of(objects, source_name):
-    """筛选出某个源物体生成的全部碎块"""
-    return [obj for obj in objects if obj.get(SOURCE_MARK) == source_name]
+    """筛选出某个源物体生成的全部碎块, 不含保留下来的上级碎块"""
+    return [
+        obj
+        for obj in objects
+        if obj.get(SOURCE_MARK) == source_name and not obj.get(PARENT_MARK, False)
+    ]

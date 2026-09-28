@@ -101,7 +101,7 @@ TOOL = ToolSpec(
 
 ## 工具间契约
 
-生成碎块的工具通过 `common/shards.py` 写入三个隐藏属性：`_qd_source`（源物体名）、`_qd_level`（生成轮次）、`_qd_group`（轮次内的组号）。其他工具用 `shards_of(objects, source_name)` 识别碎块，不必导入生成它的工具。
+生成碎块的工具通过 `common/shards.py` 写入三个隐藏属性：`_qd_source`（源物体名）、`_qd_level`（生成轮次）、`_qd_group`（轮次内的组号）。已被细分但保留下来的上级碎块另外带有 `_qd_parent`，它与子块几何重叠，不算作碎块。其他工具用 `shards_of(objects, source_name)` 识别碎块（不含上级碎块），不必导入生成它的工具。
 
 ## MeshFracture
 

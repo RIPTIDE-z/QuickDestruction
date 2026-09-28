@@ -120,7 +120,7 @@ def _convex_cell_mesh(cell_points, weld_dist, jitter_half, settings, batch, rng)
 
 
 def _copy_source_layers(mesh, source_mesh):
-    """复制材质槽与 UV, 颜色层, 让布尔插值能带上外表面数据"""
+    """复制材质槽与 UV, 颜色层; 布尔求交本身也会合并这些层, 预先建好才能保持活动层与材质槽一致"""
     for material in source_mesh.materials:
         mesh.materials.append(material)
     for layer in source_mesh.uv_layers:
@@ -156,12 +156,10 @@ def build_cells(context, obj, snapshot, points, settings, batch, rng):
         mesh = _convex_cell_mesh(cell_points, weld_dist, jitter_half, settings, batch, rng)
         if mesh is None:
             continue
-        if settings["use_data_match"]:
-            _copy_source_layers(mesh, obj.data)
+        _copy_source_layers(mesh, obj.data)
         cell = batch.new_object(mesh, center)
         objects.append(cell)
-        if settings["use_data_match"]:
-            _sync_slot_links(obj, cell)
+        _sync_slot_links(obj, cell)
         if settings["use_debug_redraw"]:
             context.view_layer.update()
             _redraw()
@@ -335,16 +333,11 @@ def _mark_interior_group(cell, bm):
             vert[deform][group.index] = 1.0
 
 
-def _mark_sharp_edges(bm, apply):
-    """两侧隐藏状态不同的边就是内外交界边, 标记为锐边; apply 时实际拆开全部锐边"""
+def _mark_sharp_edges(bm):
+    """两侧隐藏状态不同的边就是内外交界边, 标记为锐边; 着色直接读取锐边, 不拆开几何"""
     for edge in bm.edges:
         if len({face.hide for face in edge.link_faces}) == 2:
             edge.smooth = False
-    if apply:
-        edges = [edge for edge in bm.edges if not edge.smooth]
-        if edges:
-            bm.normal_update()
-            bmesh.ops.split_edges(bm, edges=edges)
 
 
 def finish_interior(cells, settings):
@@ -354,7 +347,7 @@ def finish_interior(cells, settings):
             if settings["use_interior_vgroup"]:
                 _mark_interior_group(cell, bm)
             if settings["use_sharp_edges"]:
-                _mark_sharp_edges(bm, settings["use_sharp_edges_apply"])
+                _mark_sharp_edges(bm)
             # 隐藏标记只用于内部判定, 收尾后全部取消
             for face in bm.faces:
                 face.hide = False

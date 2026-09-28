@@ -29,17 +29,10 @@ GROUPS = (
         ),
     ),
     ParamGroup(
-        "Mesh Data",
-        (
-            "use_smooth_faces",
-            "use_sharp_edges",
-            "use_sharp_edges_apply",
-            "use_interior_vgroup",
-            "use_island_split",
-            "use_recenter",
-        ),
+        "Interior Faces",
+        ("use_smooth_faces", "use_sharp_edges", "material_index", "use_interior_vgroup"),
     ),
-    ParamGroup("Match Data", ("material_index",), toggle="use_data_match"),
+    ParamGroup("Shard Objects", ("use_island_split", "use_recenter")),
     ParamGroup(
         "Output",
         ("collection_name", "shard_prefix", "use_shard_collections", "shard_index_padding"),
@@ -48,9 +41,7 @@ GROUPS = (
     ParamGroup("Debug", ("use_debug_redraw", "use_debug_points", "use_debug_bool"), closed=True),
 )
 # 保留布尔修改器时, 收尾与递归阶段都不执行
-DEBUG_INACTIVE = frozenset(
-    {"use_sharp_edges", "use_sharp_edges_apply", "use_interior_vgroup", "use_island_split"}
-)
+DEBUG_INACTIVE = frozenset({"use_sharp_edges", "use_interior_vgroup", "use_island_split"})
 # 只被递归阶段读取的参数
 RECURSION_DEPENDENT = frozenset(
     {
@@ -65,9 +56,6 @@ RECURSION_DEPENDENT = frozenset(
 
 def _param_active(owner, key):
     """参数对应的执行阶段可达时才显示为可用, 否则置灰"""
-    # 拆分是锐边标记的后续动作, 必须排在 DEBUG_INACTIVE 之前判断
-    if key == "use_sharp_edges_apply":
-        return owner.use_sharp_edges and not owner.use_debug_bool
     if key in DEBUG_INACTIVE or key == "recursion":
         return not owner.use_debug_bool
     recursion_enabled = owner.recursion > 0 and not owner.use_debug_bool

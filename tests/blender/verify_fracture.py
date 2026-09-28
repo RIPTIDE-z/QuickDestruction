@@ -3,11 +3,12 @@
 测试目的:
     1. 体积守恒: 不同尺度, 非等轴权重, 两轮递归, 凹体加孤岛拆分后碎块体积之和等于源体积
     2. 可复现: 同一输入两次切割的几何完全一致
-    3. 断面收尾: Interior 顶点组, 锐边, 隐藏面清理与断面材质索引
+    3. 断面收尾: Interior 顶点组, 锐边, 隐藏面清理与断面材质索引, 标记锐边后碎块仍然封闭
     4. 命名: 多源输出不重名, 名字与组集合名带源物体名, 超长中文源名也不会撞名
     5. 失败处理: 注入异常后本次新建的数据全部回收, 源物体状态还原
     6. 输入边界: 碎块硬上限与未知参数被拒绝, 链接库网格只在标记断面时被拒绝
     7. 重设原点: 碎块原点等于切割时顶点的平均位置, 世界几何不动
+    8. 保留上级碎块: 2 到 5 轮递归下父块只被切一次, 移进上级碎块集合, 最终碎块与删除父块时一致
 测试过程:
     每个场景先清空数据, 建立源物体与子物体种子, 经 MeshFracture.api.generate_fragments 切割,
     不注册插件界面; 每条判据输出 [PASS] 或 [FAIL]
@@ -28,6 +29,7 @@ import bpy
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from source.common import shards as shard_contract  # noqa: E402
 from source.common.errors import InvalidParameterError  # noqa: E402
 from source.tools.MeshFracture.api import generate_fragments  # noqa: E402
 from source.tools.MeshFracture.core import mesh_ops, pipeline  # noqa: E402
@@ -182,7 +184,6 @@ def case_interior():
         "recursion": 0,
         "use_interior_vgroup": True,
         "use_sharp_edges": True,
-        "use_sharp_edges_apply": False,
         "material_index": 1,
     }
     shards = cut([source], config).shards
@@ -190,10 +191,80 @@ def case_interior():
     sharp = sum(edge.use_edge_sharp for shard in shards for edge in shard.data.edges)
     hidden = sum(face.hide for shard in shards for face in shard.data.polygons)
     inner = sum(face.material_index == 1 for shard in shards for face in shard.data.polygons)
+    closed = sum(closed_mesh(shard) for shard in shards)
     check("每块都有 Interior 顶点组", grouped)
     check("内外交界标记了锐边", sharp > 0, str(sharp))
     check("收尾后没有隐藏面", hidden == 0, str(hidden))
     check("断面使用材质索引 1", inner > 0, str(inner))
+    check("标记锐边后碎块仍然封闭", closed == len(shards), f"{closed}/{len(shards)}")
+
+
+def closed_mesh(obj):
+    """网格没有开放边与非流形边"""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    result = all(edge.is_manifold for edge in bm.edges)
+    bm.free()
+    return result
+
+
+def keep_parents_run(rounds, remove):
+    """3 个种子, 每个父块 2 个种子, 按给定轮数递归, 返回切割结果"""
+    reset()
+    source = cube("Src")
+    seeds(source, 3, 0.9, 21)
+    config = {
+        **BASE,
+        "recursion": rounds,
+        "recursion_source_limit": 2,
+        "recursion_clamp": 0,
+        "use_remove_original": remove,
+    }
+    return cut([source], config, "Out")
+
+
+def check_parents(rounds, result, parents):
+    """上级碎块只在上级碎块集合里, 已收尾, 不在结果里, 每个父块恰好对应一个组"""
+    leaves = set(result.shards)
+    groups = {
+        (obj[shard_contract.LEVEL_MARK], obj[shard_contract.GROUP_MARK])
+        for obj in (*leaves, *parents)
+        if obj[shard_contract.LEVEL_MARK] > 0
+    }
+    holder = bpy.data.collections.get("Src_Parents")
+    check(f"{rounds} 轮 上级碎块不在结果里", not leaves & set(parents))
+    check(f"{rounds} 轮 每个父块对应一个组", len(parents) == len(groups), f"{len(parents)} 个父块")
+    check(
+        f"{rounds} 轮 上级碎块只在 Src_Parents 集合",
+        holder is not None and all(obj.users_collection == (holder,) for obj in parents),
+    )
+    check(
+        f"{rounds} 轮 上级碎块已收尾",
+        not any(face.hide for obj in parents for face in obj.data.polygons),
+    )
+    names = [obj.name for obj in (*leaves, *parents)]
+    check(f"{rounds} 轮 名字不重复", not any("." in name for name in names), str(names[:3]))
+    check(
+        f"{rounds} 轮 碎块契约不含上级碎块",
+        set(shard_contract.shards_of(bpy.data.objects, "Src")) == leaves,
+    )
+
+
+def case_keep_parents():
+    """关闭移除上级碎块: 父块只切一次并移进上级碎块集合, 最终碎块与删除父块时一致"""
+    for rounds in (2, 3, 4, 5):
+        removed = fingerprint(keep_parents_run(rounds, True))
+        result = keep_parents_run(rounds, False)
+        parents = [obj for obj in bpy.data.objects if obj.get(shard_contract.PARENT_MARK)]
+        levels = sorted({shard[shard_contract.LEVEL_MARK] for shard in result.shards})
+        ratio = volume_ratio(result, 8.0)
+        print(
+            f"   {rounds} 轮: {len(result.shards)} 块碎块, {len(parents)} 个上级碎块, 层号 {levels}"
+        )
+        check(f"{rounds} 轮 碎块体积守恒", abs(ratio - 1) < VOLUME_TOLERANCE, f"{ratio:.6f}")
+        check(f"{rounds} 轮 碎块与删除父块时一致", fingerprint(result) == removed)
+        check(f"{rounds} 轮 递归到第 {rounds} 层", levels[-1] == rounds, str(levels))
+        check_parents(rounds, result, parents)
 
 
 def case_naming():
@@ -345,6 +416,7 @@ CASES = (
     case_rollback,
     case_limits,
     case_recenter,
+    case_keep_parents,
 )
 
 

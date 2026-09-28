@@ -25,8 +25,8 @@ PROPERTY_SPECS = {
                 (
                     "PARTICLE_OWN",
                     "Own Particles",
-                    "Use particle positions from all particle systems on the source object; "
-                    "particle child instances are not included.",
+                    "Use current positions of all particles, including unborn and dead ones, from "
+                    "all particle systems on the source object; child particles are not included.",
                 ),
                 (
                     "PARTICLE_CHILD",
@@ -85,8 +85,10 @@ PROPERTY_SPECS = {
     "cell_scale": (
         "FloatVectorProperty",
         {
-            "name": "Scale",
-            "description": "Axis weights from 0.001 to 1 for cell dividing planes; changes their direction and distance, not object scale. Equal weights give the unscaled partition.",
+            "name": "Axis Weights",
+            "description": "Axis weights from 0.001 to 1 for cell dividing planes; only their ratios "
+            "matter, and a lower weight stretches cells along that axis. Does not scale the "
+            "object. Equal weights give the unweighted partition.",
             "size": 3,
             "min": CELL_SCALE_MIN,
             "max": 1.0,
@@ -108,10 +110,10 @@ PROPERTY_SPECS = {
         "IntProperty",
         {
             "name": "Seeds per Shard",
-            "description": "Maximum seed points sampled for each recursively cut "
-            "shard, before deduplication; 0 keeps all available points. "
-            "Has no further effect once it reaches the parent shard's "
-            "vertex count.",
+            "description": "Maximum seed points sampled for each recursively cut shard, before "
+            "deduplication; 0 keeps all available points. Parent shards have no particles or "
+            "children, so unless Annotation Pencil is selected their seeds are their own "
+            "vertices and values above the vertex count have no further effect.",
             "min": 0,
             "max": 5000,
             "default": 8,
@@ -120,7 +122,7 @@ PROPERTY_SPECS = {
     "recursion_clamp": (
         "IntProperty",
         {
-            "name": "Max Shards",
+            "name": "Stop Threshold",
             "description": "Stop further recursion when the current shard count per source "
             "object reaches this threshold. One cut or island split may exceed "
             "it. 0 disables the threshold; the first cut is not limited. Generation stops "
@@ -194,24 +196,6 @@ PROPERTY_SPECS = {
             "default": True,
         },
     ),
-    "use_sharp_edges_apply": (
-        "BoolProperty",
-        {
-            "name": "Apply Split Edge",
-            "description": "Physically split all sharp edges, including inherited ones, when Sharp Edges is enabled. Duplicates vertices and can make closed shards non-watertight.",
-            "default": True,
-        },
-    ),
-    "use_data_match": (
-        "BoolProperty",
-        {
-            "name": "Match Data",
-            "description": "Copy material slots and create matching UV/color layers. Boolean "
-            "interpolation transfers supported exterior data; interior UVs are "
-            "not unwrapped.",
-            "default": True,
-        },
-    ),
     "use_island_split": (
         "BoolProperty",
         {
@@ -239,10 +223,10 @@ PROPERTY_SPECS = {
     "material_index": (
         "IntProperty",
         {
-            "name": "Material",
-            "description": "Zero-based material slot index for interior faces; 0 selects the "
-            "first slot. Requires matching data and an existing slot for a "
-            "visible material.",
+            "name": "Interior Slot",
+            "description": "Zero-based material slot index for interior faces; 0 selects the first "
+            "slot. Shards copy the source material slots and UV/color layers; interior UVs "
+            "are not unwrapped.",
             "default": 0,
             "min": 0,
         },
@@ -251,7 +235,8 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Interior VGroup",
-            "description": "Create the vertex group Interior for interior-only vertices before splitting sharp edges. Boundary vertices shared with exterior faces are excluded; split copies are not reclassified.",
+            "description": "Create the vertex group Interior for interior-only vertices. Boundary "
+            "vertices shared with exterior faces are excluded.",
             "default": False,
         },
     ),
@@ -268,8 +253,9 @@ PROPERTY_SPECS = {
         {
             "name": "Remove Parents",
             "description": "Delete generated parent shards after successful recursive "
-            "replacement. The originally selected source objects are "
-            "always kept.",
+            "replacement. When off, cut parents move into the <source>_Parents collection, "
+            "are not cut again and are not part of the result. The originally selected "
+            "source objects are always kept.",
             "default": True,
         },
     ),
@@ -307,9 +293,8 @@ PROPERTY_SPECS = {
         {
             "name": "Index Digits",
             "description": "Minimum digit width of the shard sequence number, padded with zeros. "
-            "Beyond 3 digits this only shows when the stop threshold allows "
-            "more than 999 shards. Does not pad level/group numbers or "
-            "guarantee global creation-order sorting.",
+            "Longer numbers are not cut. Does not pad level/group numbers or guarantee "
+            "global creation-order sorting.",
             "min": 0,
             "max": 8,
             "default": 3,
@@ -319,8 +304,8 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Seed Points",
-            "description": "Create a DebugPoints mesh showing sampled seeds, including "
-            "recursive seeds. It is diagnostic geometry, not a shard.",
+            "description": "Create a DebugPoints object for every cut, including recursive "
+            "cuts, showing its seed points after noise. It is diagnostic geometry, not a shard.",
             "default": False,
         },
     ),
@@ -328,8 +313,9 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Live Progress",
-            "description": "Refresh the viewport after every cell to show progress. Makes "
-            "cutting several times slower; has no effect in background mode.",
+            "description": "Refresh the viewport after every cell to show progress, drawing the "
+            "object being cut as wireframe until its cut ends. Makes cutting several times "
+            "slower; has no effect in background mode.",
             "default": False,
         },
     ),
