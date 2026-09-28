@@ -1,4 +1,4 @@
-"""阶段入口 - generate_fragments 接受显式输入并隔离 Blender 交互状态, 返回只读结果对象"""
+"""阶段入口 - generate_fragments 接受显式输入并隔离 Blender 交互状态, 返回只读结果对象; source_issues 做切割前体检"""
 
 import random
 from collections.abc import Mapping
@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from ...common.blender_context import preserve_selection
+from .core import diagnosis
 from .core.pipeline import run
 from .settings import SCHEMA
 
@@ -20,6 +21,19 @@ class MeshFractureResult:
     source_to_shards: Mapping
     # 编排耗时, 不含此后的界面刷新与选择恢复
     seconds: float
+
+
+def source_issues(context, sources):
+    """切割前的源网格体检: 返回 {源物体: 问题集合}, 只包含有问题的网格物体"""
+    depsgraph = context.evaluated_depsgraph_get()
+    found = {}
+    for obj in sources:
+        if obj.type != "MESH":
+            continue
+        issues = diagnosis.mesh_issues(obj, depsgraph)
+        if issues:
+            found[obj] = issues
+    return found
 
 
 def generate_fragments(context, sources, config, *, rng=None):

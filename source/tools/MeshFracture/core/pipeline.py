@@ -3,12 +3,11 @@
 from time import perf_counter
 
 import bpy
-from mathutils import Vector
 
 from ....common.created_data import CreatedData
 from ..constants import SHARD_LIMIT
 from ..errors import MeshFractureError
-from . import boolean, mesh_ops
+from . import boolean, mesh_ops, recursion
 from .naming import NamingPlan
 
 # 超出碎块硬上限时的消息
@@ -70,8 +69,11 @@ def _check_limit(count):
         raise MeshFractureError(LIMIT_MESSAGE, limit=SHARD_LIMIT)
 
 
-def _cut(context, obj, settings, batch, rng):
-    """对单个物体执行一次切割, 返回按路径编号的碎块; 源物体的显示方式与面隐藏状态无论成败都还原"""
+def _cut(context, obj, settings, batch, rng, limit):
+    """对单个物体执行一次切割, 种子最多 limit 个, 返回按路径编号的碎块
+
+    源物体的显示方式与面隐藏状态无论成败都还原
+    """
     old_display = obj.display_type
     # 只有首次切割且需要标记断面时才会清掉源网格的面隐藏标记, 其余情况不写源网格
     old_hidden = None
@@ -83,7 +85,7 @@ def _cut(context, obj, settings, batch, rng):
             obj.display_type = "WIRE"
         # 求值快照每次切割只取一次, 胞体构造与布尔求交共用
         snapshot = boolean.inspect_source(obj, context.evaluated_depsgraph_get())
-        points = mesh_ops.seed_points(context, obj, settings, batch.first, rng)
+        points = mesh_ops.seed_points(context, obj, settings, limit, rng)
         # 种子点数就已超限时, 在耗时的布尔求交之前报错
         _check_limit(len(points))
         cells = mesh_ops.build_cells(context, obj, snapshot, points, settings, batch, rng)
@@ -99,85 +101,58 @@ def _cut(context, obj, settings, batch, rng):
             obj.data.update()
 
 
-def _select_recursion(cells, settings, cursor, rng):
-    """按每轮细分比例与优先细分方式挑出本轮参与递归的碎块, 数量向下取整"""
-    fraction = settings["recursion_chance"]
-    selected = list(cells)
-    if fraction == 1:
-        # 全选时不消耗随机流
-        return selected
-    mode = settings["recursion_chance_select"]
-    if mode == "RANDOM":
-        # 洗牌后取前 N 个, 等价于无放回随机抽取
-        rng.shuffle(selected)
-    elif mode.startswith("SIZE"):
-        # 按世界空间包围盒对角线的平方排序, 省去开方
-        selected.sort(
-            key=lambda obj: (
-                (
-                    obj.matrix_world @ Vector(obj.bound_box[0])
-                    - obj.matrix_world @ Vector(obj.bound_box[6])
-                ).length_squared
-            ),
-            reverse=mode == "SIZE_MAX",
-        )
-    else:
-        # 按物体原点与 3D 游标的距离排序
-        selected.sort(
-            key=lambda obj: (obj.matrix_world.translation - cursor).length_squared,
-            reverse=mode == "CURSOR_MAX",
-        )
-    return selected[: int(fraction * len(selected))]
-
-
 def _finish(cells, settings, naming):
-    """全部切割结束后的收尾: 合并共面面, 清理空集合, 统一命名与断面标记; 保留的父碎块一并处理"""
+    """全部切割结束后的收尾: 合并共面面, 统一命名与断面标记; 保留的父碎块一并处理"""
     debug = settings["use_debug_bool"]
     objects = cells + naming.parents
     if objects and not debug:
         mesh_ops.dissolve_final_shards(objects)
-    naming.prune()
     naming.apply_names(objects)
     if objects and not debug and mesh_ops.uses_interior(settings):
         mesh_ops.finish_interior(objects, settings)
 
 
+def _subdivide(context, parent, limit, cells, naming, settings, rng):
+    """细分一个父块: 子块加入碎块列表, 父块离开列表并按设置删除或移进父碎块集合; 返回是否有产出"""
+    batch = naming.next_batch(parent)
+    children = _cut(context, parent, settings, batch, rng, limit)
+    if not children:
+        # 细分没有产出时保留父块
+        return False
+    cells.extend(children)
+    # 父块已被子块取代, 不再参与之后的递归与上限计数
+    cells.remove(parent)
+    if settings["use_keep_parents"]:
+        naming.keep_parent(parent)
+    else:
+        # 删除被替换的父块, 避免父子几何重叠
+        mesh_ops.remove_generated_object(parent)
+    return True
+
+
 def main_object(context, collection, obj, settings, rng, tracker, done):
     """对单个源物体做首次切割并按需递归, 最后统一收尾, 返回最终碎块
 
-    done 是之前的源已经生成的碎块数; 被细分的父块总是离开碎块列表, 删除或移进父碎块集合
+    done 是之前的源已经生成的碎块数; 每轮先规划再整批细分, 碎块总数上限只在轮与轮之间扣减
     """
     naming = NamingPlan(obj.name, collection, settings, tracker)
-    cells = _cut(context, obj, settings, naming.first_batch(), rng)
+    cells = _cut(context, obj, settings, naming.first_batch(), rng, settings["source_limit"])
     _check_limit(done + len(cells))
-    threshold = settings["recursion_clamp"]
+    maximum = settings["recursion_clamp"]
+    cursor = context.scene.cursor.location
     # 保留布尔修改器时递归会让引用失效, 直接跳过
     rounds = 0 if settings["use_debug_bool"] else settings["recursion"]
     for _round in range(rounds):
-        if not cells or (threshold and len(cells) >= threshold):
+        # 上限为 0 表示不限, 预算记为 None
+        budget = maximum - len(cells) if maximum else None
+        if not cells or (budget is not None and budget <= 0):
             break
-        candidates = _select_recursion(cells, settings, context.scene.cursor.location, rng)
-        if not candidates:
+        plan = recursion.plan_round(context, cells, settings, cursor, rng, budget)
+        if not plan:
             break
-        for parent in candidates:
-            # 每个父块细分前再判断一次阈值; 单次细分或孤岛拆分仍可能超出
-            if threshold and len(cells) >= threshold:
-                break
-            batch = naming.next_batch(parent)
-            children = _cut(context, parent, settings, batch, rng)
-            if not children:
-                # 细分没有产出时保留父块, 删除刚建的空组集合
-                naming.drop(batch)
-                continue
-            cells.extend(children)
-            _check_limit(done + len(cells))
-            # 父块已被子块取代, 不再参与之后的递归与阈值计数
-            cells.remove(parent)
-            if settings["use_keep_parents"]:
-                naming.keep_parent(parent)
-            else:
-                # 删除被替换的父块, 避免父子几何重叠
-                mesh_ops.remove_generated_object(parent)
+        for parent, limit in plan:
+            if _subdivide(context, parent, limit, cells, naming, settings, rng):
+                _check_limit(done + len(cells))
     _finish(cells, settings, naming)
     return cells
 

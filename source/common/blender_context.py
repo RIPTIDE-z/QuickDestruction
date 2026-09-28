@@ -20,10 +20,10 @@ def mesh_edit(mesh=None):
 
 
 def select_only(context, selection, active):
-    """只选中指定物体并设置活动物体 - 跳过视图层中的空条目"""
-    for obj in context.view_layer.objects:
-        # 物体可能已被删除而残留空条目, 需要跳过
-        if obj is not None and obj.select_get():
+    """只选中指定物体并设置活动物体 - 只遍历已选中的物体, 不随场景物体总数变慢"""
+    # 先复制成列表: 取消选择会改变正在遍历的选中集合; 物体可能已被删除而残留空条目, 需要跳过
+    for obj in list(context.view_layer.objects.selected):
+        if obj is not None:
             obj.select_set(False)
     for obj in selection:
         obj.select_set(True)

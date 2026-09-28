@@ -1,5 +1,6 @@
 """界面约定 - 工具面板基类, 标题栏预设入口, 参数绘制, 以及按分组表生成参数子面板与弹出面板"""
 
+from collections.abc import Callable
 from typing import NamedTuple
 
 from bpy.types import Panel
@@ -47,6 +48,8 @@ class ParamGroup(NamedTuple):
     toggle: str | None = None
     # 为真时不占子面板, 在面板底部画成弹出按钮, 用于很少调整的参数
     popover: bool = False
+    # 工具专属的绘制函数 draw(layout, owner), 需要特殊排法时使用; fields 仍要列出它画的字段
+    draw: Callable | None = None
 
 
 def field_keys(fields):
@@ -118,6 +121,9 @@ def _group_draw(tool_id, schema, group, active):
         owner = scene_settings(context, tool_id)
         if group.toggle:
             self.layout.active = getattr(owner, group.toggle)
+        if group.draw:
+            group.draw(self.layout, owner)
+            return
         draw_fields(self.layout, owner, schema, group.fields, active)
 
     return draw

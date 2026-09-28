@@ -45,14 +45,18 @@ def remove_generated_object(obj):
         bpy.data.meshes.remove(mesh)
 
 
-def seed_points(context, obj, settings, first, rng):
-    """采样种子点: 取来源, 为空则回退自身顶点, 按本层上限随机截断, 精确去重并检查有限性"""
+def sample_points(context, obj, settings):
+    """取来源的全部候选点, 为空则回退自身顶点; 不消耗随机流, 规划递归时也用它估算块数"""
     depsgraph = context.evaluated_depsgraph_get()
     points = points_from_object(context, depsgraph, obj, settings["source"])
     if not points:
         points = points_from_object(context, depsgraph, obj, {"VERT_OWN"})
-    # 递归细分换用递归种子上限
-    limit = settings["source_limit"] if first else settings["recursion_source_limit"]
+    return points
+
+
+def seed_points(context, obj, settings, limit, rng):
+    """采样种子点: 取候选点, 超过 limit 时随机截断, 精确去重并检查有限性; limit 为 0 表示全部保留"""
+    points = sample_points(context, obj, settings)
     if limit and limit < len(points):
         # 先打乱再截断, 得到随机子集而不是前 N 个
         rng.shuffle(points)
@@ -75,12 +79,13 @@ def _scatter_points(points, scale, source_noise, rng):
 
 
 def _create_debug_points(points, batch):
-    """建立 DebugPoints 诊断几何, 显示实际采样到的种子点"""
+    """建立 DebugPoints 诊断几何, 显示扰动后实际用于切割的种子点"""
     tracker = batch.naming.tracker
     mesh = tracker.track("meshes", bpy.data.meshes.new("DebugPoints"))
     mesh.from_pydata(points, [], [])
     debug_object = tracker.track("objects", bpy.data.objects.new("DebugPoints", mesh))
-    batch.collection.objects.link(debug_object)
+    # 调试几何放在源物体集合里, 不混进碎块集合
+    batch.naming.root.objects.link(debug_object)
 
 
 def _dissolve_coplanar(bm, *, with_edges=False):
@@ -223,11 +228,57 @@ def _flatten_faces(bm, tolerance):
         bmesh.ops.triangulate(bm, faces=targets)
 
 
+def _face_components(bm):
+    """按共享边把面分成连通块; 只在顶点处相接的部分分属不同的块"""
+    seen = set()
+    parts = []
+    for face in bm.faces:
+        if face in seen:
+            continue
+        seen.add(face)
+        stack, part = [face], []
+        while stack:
+            current = stack.pop()
+            part.append(current)
+            for edge in current.edges:
+                others = [other for other in edge.link_faces if other not in seen]
+                seen.update(others)
+                stack.extend(others)
+        parts.append(part)
+    return parts
+
+
+def _drop_loose(bm):
+    """删除没有面的散边与散点, 否则拆分孤岛会把它们拆成没有面的空碎块"""
+    loose = [edge for edge in bm.edges if not edge.link_faces]
+    if loose:
+        bmesh.ops.delete(bm, geom=loose, context="EDGES")
+    lonely = [vert for vert in bm.verts if not vert.link_edges]
+    if lonely:
+        bmesh.ops.delete(bm, geom=lonely, context="VERTS")
+
+
+def _disconnect_components(bm):
+    """把只在顶点处相接的几部分断开, 让拆分孤岛按共享边判断连通
+
+    这样的几部分留在同一物体里时, 下一轮以它为源的 Exact 求交会判错内外, 丢掉大片几何
+    """
+    parts = _face_components(bm)
+    if len(parts) < 2:
+        return
+    # 最大的一块保留原顶点, 其余各块复制共享顶点后断开
+    parts.sort(key=len)
+    for part in parts[:-1]:
+        bmesh.ops.split(bm, geom=part, use_only_faces=True)
+
+
 def _weld_intersection(mesh, weld_dist):
-    """整理求交结果供递归使用: 焊接重合顶点, 再三角化非平面面; 结果仍需校验"""
+    """整理求交结果供递归使用: 焊接重合顶点, 清掉散边散点, 断开点接触的部分, 再三角化非平面面"""
     with mesh_edit(mesh) as bm:
         bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
-        # 焊接会改动拓扑, 重新算法线后才能判断面是否共面
+        _drop_loose(bm)
+        _disconnect_components(bm)
+        # 焊接与清理会改动拓扑, 重新算法线后才能判断面是否共面
         bm.normal_update()
         _flatten_faces(bm, weld_dist)
         bm.to_mesh(mesh)
@@ -275,8 +326,9 @@ def _split_islands(context, cells, batch):
         ):
             bpy.ops.mesh.separate(type="LOOSE")
     finally:
-        # 拆出的物体与原物体在同一集合里, 只扫描本批集合; 抛错时也要完成认领与清理
-        claimed = [item for item in batch.collection.objects if item.get(SPLIT_TOKEN) == token]
+        # separate 会选中拆出的物体, 只扫描选中物体即可, 不随碎块总数变慢; 抛错时也要完成认领与清理
+        selected = context.view_layer.objects.selected
+        claimed = [item for item in selected if item.get(SPLIT_TOKEN) == token]
         for item in claimed:
             batch.naming.tracker.track("objects", item)
             batch.naming.tracker.track("meshes", item.data)
@@ -285,7 +337,7 @@ def _split_islands(context, cells, batch):
 
 
 def intersect_cells(context, obj, snapshot, cells, settings, batch):
-    """把每个胞体与源物体求交得到贴合表面的碎块; 只焊接与压平结果, 不合并面"""
+    """把每个胞体与被切物体求交得到贴合表面的碎块; 只做焊接, 清理与压平, 不合并面"""
     # 焊接距离与胞体阶段共用同一份快照尺度
     weld_dist = snapshot.diagonal * WELD_SCALE_RATIO
     debug = settings["use_debug_bool"]
@@ -306,11 +358,11 @@ def intersect_cells(context, obj, snapshot, cells, settings, batch):
                 pass
         else:
             mesh = _bake_intersection(cell, modifier, snapshot, depsgraph, batch.naming.tracker)
+            _weld_intersection(mesh, weld_dist)
             if not mesh.polygons:
                 # 求交为空说明胞体落在源物体之外
                 remove_generated_object(cell)
                 continue
-            _weld_intersection(mesh, weld_dist)
         results.append(cell)
         if settings["use_debug_redraw"]:
             _redraw()

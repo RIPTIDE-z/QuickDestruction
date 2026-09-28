@@ -4,12 +4,15 @@
     1. 体积守恒: 不同尺度, 非等轴权重, 两轮递归, 凹体加孤岛拆分后碎块体积之和等于源体积
     2. 可复现: 同一输入两次切割的几何完全一致
     3. 断面收尾: Interior 顶点组, 锐边, 隐藏面清理与断面材质索引, 标记锐边后碎块仍然封闭
-    4. 命名: 多源输出不重名, 名字由源物体名与逐层序号组成, 组集合以被切物体命名, 超长中文源名也不会撞名
+    4. 命名: 多源输出不重名, 名字由源物体名与逐层序号组成, 每个源物体一个集合且碎块集中在 <源>_Shards,
+       超长中文源名也不会撞名
     5. 失败处理: 注入异常后本次新建的数据全部回收, 源物体状态还原
     6. 输入边界: 碎块硬上限与未知参数被拒绝, 链接库网格只在标记断面时被拒绝
     7. 重设原点: 碎块原点等于切割时顶点的平均位置, 世界几何不动
-    8. 保留父碎块: 2 到 5 轮递归下父块只被切一次, 按层移进 Src_Parents_L<层>, 名字与集合能从路径对应到父级,
+    8. 保留父碎块: 2 到 5 轮递归下父块只被切一次, 按层移进 Src_Parents_L<层>, 名字能从路径对应到父级,
        最终碎块与删除父块时一致
+    9. 碎块总数上限: 放不下整轮细分时总数不超过上限; 平均细分时每块都被细分, 大碎块优先时被切的正是最大的几块
+    10. 点接触的部分: 默认参数切割猴头, 封闭父块的体积都被子块接住, 没有没有面的空碎块
 测试过程:
     每个场景先清空数据, 建立源物体与子物体种子, 经 MeshFracture.api.generate_fragments 切割,
     不注册插件界面; 每条判据输出 [PASS] 或 [FAIL]
@@ -26,6 +29,7 @@ from pathlib import Path
 
 import bmesh
 import bpy
+from mathutils import Vector
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -41,6 +45,8 @@ FAILURES = []
 BASE = {"source": {"VERT_CHILD"}, "source_limit": 0, "source_noise": 0.0, "margin": 0.0}
 # 体积比允许的偏差: 凸包阶段的抖动与焊接带来约 1e-5 的误差
 VOLUME_TOLERANCE = 1e-4
+# 默认参数切割猴头时单个父块允许丢失的体积: 高于切面内缩造成的缝隙, 远低于求交出错时的损失
+TOUCH_LOSS_LIMIT = 0.005
 
 
 def check(label, condition, detail=""):
@@ -230,10 +236,11 @@ def expected_name(obj):
 
 
 def check_parents(rounds, result, parents):
-    """父碎块按层收纳且已收尾, 不在结果里; 名字与集合都能从路径对应到父级"""
+    """父碎块按层收纳且已收尾, 不在结果里, 最终碎块都在 Src_Shards; 名字能从路径对应到父级"""
     leaves = set(result.shards)
     everything = (*leaves, *parents)
     root = bpy.data.collections.get("Src_Parents")
+    root = root if root and root.name in bpy.data.collections["Src"].children else None
     placed = (
         all(
             obj.users_collection == (bpy.data.collections.get(f"Src_Parents_L{obj['_qd_level']}"),)
@@ -245,10 +252,9 @@ def check_parents(rounds, result, parents):
     )
     kept = {tuple(obj[shard_contract.PATH_MARK]) for obj in parents}
     referenced = {shard_contract.parent_path(obj) for obj in everything} - {()}
-    grouped = all(
-        obj.users_collection[0].name
-        == (expected_name(obj).rsplit("_", 1)[0] if obj["_qd_level"] > 1 else "Src")
-        for obj in leaves
+    shards_collection = bpy.data.collections.get("Src_Shards")
+    collected = shards_collection.name in bpy.data.collections["Src"].children and all(
+        obj.users_collection == (shards_collection,) for obj in leaves
     )
     check(f"{rounds} 轮 父碎块不在结果里", not leaves & set(parents))
     check(f"{rounds} 轮 父碎块按层放在 Src_Parents_L<层>", placed)
@@ -257,7 +263,7 @@ def check_parents(rounds, result, parents):
         kept == referenced,
         f"{len(kept)} 个父块",
     )
-    check(f"{rounds} 轮 碎块在以父级命名的组集合里", grouped)
+    check(f"{rounds} 轮 最终碎块都在 Src_Shards 里", collected)
     check(
         f"{rounds} 轮 父碎块已收尾",
         not any(face.hide for obj in parents for face in obj.data.polygons),
@@ -292,14 +298,90 @@ def case_keep_parents():
         check_parents(rounds, result, parents)
 
 
+def diagonal(obj):
+    """世界空间包围盒对角线长度"""
+    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    return (corners[0] - corners[6]).length
+
+
+def max_shards_run(priority):
+    """30 个种子首次切成 30 块, 每块最多切 8 块, 上限 80 放不下整轮细分; 保留父碎块便于检查"""
+    reset()
+    source = cube("Src")
+    seeds(source, 30, 0.95, 7)
+    config = {
+        **BASE,
+        "recursion": 1,
+        "recursion_source_limit": 8,
+        "recursion_clamp": 80,
+        "recursion_chance_select": priority,
+        "use_keep_parents": True,
+    }
+    result = cut([source], config, "Out")
+    parents = [obj for obj in bpy.data.objects if obj.get(shard_contract.PARENT_MARK)]
+    first = [obj for obj in (*result.shards, *parents) if obj[shard_contract.LEVEL_MARK] == 1]
+    return result, parents, first
+
+
+def case_max_shards():
+    """碎块总数上限: 整轮放不下时按细分优先级规划, 总数不超过上限"""
+    result, parents, first = max_shards_run("EVEN")
+    count = len(result.shards)
+    print(f"   平均细分: 首次 {len(first)} 块, 细分 {len(parents)} 块, 最终 {count} 块")
+    check("平均细分 总数不超过上限", count <= 80, str(count))
+    check(
+        "平均细分 首次切割的每块都被细分",
+        len(parents) == len(first),
+        f"{len(parents)}/{len(first)}",
+    )
+    ratio = volume_ratio(result, 8.0)
+    check("平均细分 体积守恒", abs(ratio - 1) < VOLUME_TOLERANCE, f"{ratio:.6f}")
+    result, parents, first = max_shards_run("SIZE_MAX")
+    count = len(result.shards)
+    untouched = [obj for obj in first if obj not in parents]
+    print(f"   大碎块优先: 首次 {len(first)} 块, 细分 {len(parents)} 块, 最终 {count} 块")
+    check("大碎块优先 总数不超过上限", count <= 80, str(count))
+    check(
+        "大碎块优先 被细分的正是最大的几块",
+        parents and untouched and min(map(diagonal, parents)) >= max(map(diagonal, untouched)),
+        f"细分 {len(parents)} 块",
+    )
+
+
+def case_touching_parts():
+    """点接触的部分: 只在顶点处相接的两部分会被拆开, 下一轮 Exact 求交不再丢掉大片几何"""
+    reset()
+    bpy.ops.mesh.primitive_monkey_add()
+    source = bpy.context.active_object
+    result = cut([source], {"use_keep_parents": True}, "Out")
+    parents = [obj for obj in bpy.data.objects if obj.get(shard_contract.PARENT_MARK)]
+    children = {}
+    for shard in result.shards:
+        children.setdefault(shard_contract.parent_path(shard), []).append(shard)
+    worst = 0.0
+    for parent in parents:
+        if not closed_mesh(parent):
+            # 开放的父块没有确定的体积, 只比较封闭的
+            continue
+        kids = children.get(tuple(parent[shard_contract.PATH_MARK]), [])
+        worst = max(worst, volume(parent) - sum(map(volume, kids)))
+    empty = [shard.name for shard in result.shards if not shard.data.polygons]
+    print(
+        f"   {len(result.shards)} 块碎块, {len(parents)} 个父块, 单个父块最多丢失体积 {worst:.4f}"
+    )
+    # 切面内缩留出的缝隙每块约丢 0.001 量级; 出错时曾一次丢掉 0.0437, 约为父块的一半
+    check("封闭父块的体积被子块接住", worst < TOUCH_LOSS_LIMIT, f"{worst:.4f}")
+    check("没有空碎块", not empty, str(empty[:3]))
+
+
 def case_naming():
-    """多源与超长中文源名不重名, 名字与组集合名带源物体名与路径"""
+    """多源与超长中文源名不重名, 名字带源物体名与路径, 碎块集中在各源物体的 <源>_Shards 里"""
     reset()
     long_name = "非常长的中文源物体名字用来检查字节截断"
     sources = [cube("A"), cube("B", location=(5.0, 0.0, 0.0)), cube(long_name, location=(10, 0, 0))]
-    result = cut(sources, {"recursion": 1}, "Shards")
+    result = cut(sources, {"recursion": 1}, "Out")
     names = [shard.name for shard in result.shards]
-    groups = [coll.name for coll in bpy.data.collections if coll.name != "Shards"]
+    groups = [coll.name for coll in bpy.data.collections if coll.name != "Out"]
     check("多源碎块没有重名后缀", not any("." in name for name in names), str(names[:3]))
     check(
         "碎块名带源物体名与两层序号",
@@ -308,13 +390,21 @@ def case_naming():
             for name in names
         ),
     )
-    check("组集合没有重名后缀", groups and not any("." in name for name in groups), str(groups[:3]))
-    output = bpy.data.collections["Shards"]
-    inside = {output, *output.children}
-    check(
-        "碎块都落在 collection_name 指定的集合里",
-        all(s.users_collection[0] in inside for s in result.shards),
-    )
+    check("集合没有重名后缀", groups and not any("." in name for name in groups), str(groups))
+    output = bpy.data.collections["Out"]
+
+    def placed(shard):
+        """碎块只在 输出集合/<源>/<源>_Shards 里, <源> 是按字节截短的源物体名"""
+        label = shard["_qd_source"].encode("utf-8")[:32].decode("utf-8", "ignore")
+        holder = bpy.data.collections.get(f"{label}_Shards")
+        return (
+            label in output.children
+            and holder is not None
+            and holder.name in output.children[label].children
+            and shard.users_collection == (holder,)
+        )
+
+    check("碎块都在各自源物体的 <源>_Shards 里", all(map(placed, result.shards)))
     marks = {shard["_qd_source"] for shard in result.shards}
     check("来源标记记录完整源名", marks == {"A", "B", long_name}, str(marks))
 
@@ -445,6 +535,8 @@ CASES = (
     case_limits,
     case_recenter,
     case_keep_parents,
+    case_max_shards,
+    case_touching_parts,
 )
 
 

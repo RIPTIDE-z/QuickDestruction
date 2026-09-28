@@ -37,7 +37,7 @@ def _cell_vertices(center, points, base_planes, scale, margin, epsilon):
         if scale is None and length > distance_max:
             break
         plane = normal.normalized().to_4d()
-        # 中垂面位于连线中点; 内缩量让平面再往里挪, 相邻碎块之间留出缝隙
+        # 中垂面位于连线中点; 切面内缩量让平面再往里挪, 相邻碎块之间留出缝隙
         plane.w = -length / 2.0 + margin
         planes.append(plane)
         vertices, indices = points_in_planes(planes, EPSILON_COPLANAR, epsilon)
@@ -46,7 +46,7 @@ def _cell_vertices(center, points, base_planes, scale, margin, epsilon):
         if len(indices) != len(planes):
             # 已经被切掉的平面不再参与后续求交
             planes = [planes[index] for index in indices]
-        # 距离大于 2(R + 内缩量) 的邻居切不到半径为 R 的胞体
+        # 距离大于 2(R + 切面内缩量) 的邻居切不到半径为 R 的胞体
         radius = sqrt(max(v.length_squared for v in vertices))
         distance_max = 2.0 * (radius + margin) + max(radius, 1.0) * 1e-6
     return vertices

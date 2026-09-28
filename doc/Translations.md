@@ -12,7 +12,7 @@
 ```json
 {
   "locale": "zh_HANS",
-  "interface": {"Max Pieces": "首次切分上限"},
+  "interface": {"Max Pieces": "首次切割上限"},
   "tooltips": {"Maximum pieces of the first cut: ...": "首次切割最多切成的块数……"}
 }
 ```

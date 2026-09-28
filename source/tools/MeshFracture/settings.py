@@ -43,7 +43,7 @@ PROPERTY_SPECS = {
                 ),
             ),
             "options": {"ENUM_FLAG"},
-            "default": {"PARTICLE_OWN"},
+            "default": {"VERT_OWN"},
             "description": "Combine selected seed sources. Child means direct child objects. If no "
             "points are found, use the source mesh vertices.",
         },
@@ -105,7 +105,7 @@ PROPERTY_SPECS = {
             "name": "Rounds",
             "description": "Subdivision rounds after the first cut; the first cut is level 1 and "
             "each round adds a level. 0 disables recursion. Growth also depends on the split "
-            "fraction and the stop value.",
+            "fraction and Max Shards.",
             "min": 0,
             "max": 5000,
             "default": 1,
@@ -128,10 +128,10 @@ PROPERTY_SPECS = {
     "recursion_clamp": (
         "IntProperty",
         {
-            "name": "Stop Splitting At",
-            "description": "Stop further subdivision when the current shard count per source "
-            "object reaches this value. One cut or island split may exceed it. 0 disables "
-            "it; the first cut is not limited. Generation stops "
+            "name": "Max Shards",
+            "description": "Maximum shard count per source object. Before each round, the "
+            "subdivision is planned to fit following Split Priority; only island splitting can "
+            "exceed it. 0 disables the limit; the first cut is not limited. Generation stops "
             f"with an error beyond {SHARD_LIMIT} shards in total.",
             "min": 0,
             "max": 10000,
@@ -143,7 +143,7 @@ PROPERTY_SPECS = {
         {
             "name": "Split Fraction",
             "description": "Fraction of current shards subdivided each round, rounded down. 0 "
-            "selects none; 1 selects all. Prefer chooses which shards.",
+            "selects none; 1 selects all. Split Priority chooses which shards.",
             "min": 0.0,
             "max": 1.0,
             "default": 1.0,
@@ -152,9 +152,16 @@ PROPERTY_SPECS = {
     "recursion_chance_select": (
         "EnumProperty",
         {
-            "name": "Prefer",
+            "name": "Split Priority",
             "items": (
-                ("RANDOM", "Random", "Randomly choose the required fraction of shards."),
+                (
+                    "EVEN",
+                    "None - Even Split",
+                    "When Max Shards cannot fit a full round, subdivide every shard a little, "
+                    "sharing the allowed pieces evenly; bigger shards get the remainder first. "
+                    "With a split fraction below 1, bigger shards are selected.",
+                ),
+                ("RANDOM", "Random", "Choose shards to subdivide at random."),
                 (
                     "SIZE_MIN",
                     "Small Shards",
@@ -176,8 +183,9 @@ PROPERTY_SPECS = {
                     "Choose shard origins farthest from the 3D cursor first.",
                 ),
             ),
-            "default": "RANDOM",
-            "description": "Which shards to subdivide first when the split fraction is below 1. "
+            "default": "EVEN",
+            "description": "How subdivision is shared when not every shard can be fully "
+            "subdivided: the split fraction is below 1, or Max Shards cannot fit a full round. "
             "Size uses the world-space bounding-box diagonal; cursor distance uses object "
             "origins.",
         },
@@ -204,8 +212,9 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Split Islands",
-            "description": "Separate disconnected parts of each Boolean result into objects. "
-            "This can produce more shards than seed points.",
+            "description": "Separate disconnected parts of each Boolean result into objects; "
+            "parts that touch only at a vertex count as disconnected. This can produce more "
+            "shards than seed points.",
             "default": True,
         },
     ),
@@ -268,7 +277,8 @@ PROPERTY_SPECS = {
             "name": "Collection",
             "description": "Output collection name. Empty uses the current collection. A named "
             "collection must be editable and visible in this view layer; create it only if no "
-            "collection has that name. All shards are placed here or in its child collections.",
+            "collection has that name. Each source object gets its own collection here, holding "
+            "all final shards in <source>_Shards.",
             "default": "cell_collection",
         },
     ),
@@ -280,17 +290,6 @@ PROPERTY_SPECS = {
             "index per cut level: cell_Cube_003 is the third shard of the first cut and "
             "cell_Cube_003_002 is the second shard cut from it.",
             "default": "cell",
-        },
-    ),
-    "use_shard_collections": (
-        "BoolProperty",
-        {
-            "name": "Group by Parent",
-            "description": "Put the shards of every cut into a collection named after the "
-            "object that was cut, inside the output collection: the source object for the "
-            "first cut, the parent shard for recursive cuts. When off, every shard is linked "
-            "directly into the output collection.",
-            "default": True,
         },
     ),
     "shard_index_padding": (

@@ -32,7 +32,7 @@ source/
 TOOL = ToolSpec(
     tool_id="mesh_fracture",
     locales=Path(__file__).with_name("locales"),
-    classes=(QD_MESH_FRACTURE_OT_generate, QD_MESH_FRACTURE_PT_main),
+    classes=(QD_MESH_FRACTURE_OT_generate, QD_MESH_FRACTURE_PT_main, *SUBPANELS),
     schema=SCHEMA,
     presets=True,
 )
@@ -42,7 +42,7 @@ TOOL = ToolSpec(
 | --- | --- |
 | `tool_id` | 唯一身份，只能用小写字母、数字与下划线。场景参数 `Scene.qd_settings.<tool_id>`、预设目录 `presets/<tool_id>` 与翻译上下文 `QuickDestruction.<tool_id>` 都由它派生 |
 | `locales` | 工具自带的语言文件目录 |
-| `classes` | 要注册的算子、面板与菜单类 |
+| `classes` | 要注册的算子、面板与菜单类，包括 `parameter_panels` 生成的子面板与弹出面板 |
 | `schema` | 参数规格 `Schema(PROPERTY_SPECS, CONTEXT)`；为空表示没有参数，也没有预设 |
 | `presets` | 为真时获得通用预设界面 |
 
@@ -60,8 +60,8 @@ TOOL = ToolSpec(
 
 侧栏很窄，工具以后还会增加，所以面板按"常用项直接可见，其余逐层展开"来排：
 
-- **主面板**：最上面是主操作按钮，下面是少数常用参数。主面板类设置 `tool_id`，带预设的工具由 `ToolPanel.draw_header_preset` 自动在标题栏显示预设入口，不占内容高度。
-- **子面板**：其余参数用 `ParamGroup(标题, 字段表, closed=是否默认收起, toggle=标题上的总开关, popover=是否画成弹出按钮)` 声明，由 `parameter_panels(主面板类, SCHEMA, 主面板字段, 分组表, active)` 生成挂在主面板下的子面板类。
+- **主面板**：最上面是主操作按钮，需要时下面放少数常用参数（MeshFracture 的参数全部在子面板里）。主面板类设置 `tool_id`，带预设的工具由 `ToolPanel.draw_header_preset` 自动在标题栏显示预设入口，不占内容高度。
+- **子面板**：其余参数用 `ParamGroup(标题, 字段表, closed=是否默认收起, toggle=标题上的总开关, popover=是否画成弹出按钮, draw=自绘函数)` 声明，由 `parameter_panels(主面板类, SCHEMA, 主面板字段, 分组表, active)` 生成挂在主面板下的子面板类。
   - Blender 会记住每个子面板的折叠状态；
   - 不常调的分组默认收起；
   - 有总开关的分组把开关画在子面板标题上，关闭时整组置灰；
@@ -71,7 +71,7 @@ TOOL = ToolSpec(
   - 向量的分量并排一行；
   - 多选枚举的标签单独占一行，选项分两列排开；
   - `CheckGrid(布尔字段...)` 把几个勾选框两列排开，占满面板宽度，省去左侧的空白标签列。
-- **自绘字段**：个别字段需要工具专属的排法时（例如 MeshFracture 的来源按"自身 / 子物体"分行），由主面板自己绘制，但仍要算在传给 `parameter_panels` 的主面板字段里。
+- **自绘分组**：个别字段需要工具专属的排法时（例如 MeshFracture 的切割种子来源按"自身 / 子物体 / 特殊"分行），在分组上给出 `draw(layout, owner)`，字段表里仍要列出它画的字段，以便排布检查。
 - **置灰**：`active(owner, key)` 为假的字段只置灰、不锁定，与 Blender 的惯例一致，仍然可以预先设置。
 - **检查**：`parameter_panels` 会检查每个参数恰好排布一次（主面板字段、分组字段与标题开关合计），漏排或重复在导入时就会报错。
 - **标签**：写得短，不重复面板标题已经给出的上下文。例如"递归破碎"子面板里的字段叫 `Split Fraction`，不叫 `Recursion Split Fraction`。
@@ -122,19 +122,24 @@ TOOL = ToolSpec(
 | --- | --- |
 | `tool.py` | `ToolSpec` 声明 |
 | `settings.py` | 参数规格 `PROPERTY_SPECS` 与 `SCHEMA` |
-| `interaction.py` | 主面板 `QD_MESH_FRACTURE_PT_main`、常用字段与分组表（由此生成参数子面板）、生成算子 `qd_mesh_fracture.generate` |
-| `api.py` | 阶段 API 与结果对象 |
-| `core/pipeline.py` | 编排：前置检查、首次切割、递归、收尾、碎块硬上限、失败回滚 |
+| `interaction.py` | 主面板 `QD_MESH_FRACTURE_PT_main`、分组表与切割种子来源的自绘函数（由此生成参数子面板）、生成算子 `qd_mesh_fracture.generate` |
+| `api.py` | 阶段 API、切割前体检与结果对象 |
+| `core/pipeline.py` | 编排：前置检查、首次切割、按轮执行递归、收尾、碎块硬上限、失败回滚 |
+| `core/recursion.py` | 递归规划：按细分比例挑候选，碎块总数上限放不下整轮时按细分优先级分配块数 |
+| `core/diagnosis.py` | 源网格体检：不封闭（非流形边）与自相交（BVH 重叠面对，排除共享顶点的相邻面） |
 | `core/` 其余模块 | 种子采样、胞体构造、布尔策略、网格操作、命名 |
 
 **关键设计**：
 
 - **生成算子不声明参数**：执行时直接读取场景参数组。它是 `UNDO` 加 `INTERNAL`，只由面板按钮调用。
-- **每次切割只求值一次源物体**：得到快照 `BooleanSource`。胞体构造、种子扰动、焊接距离与越界校验共用快照里的包围盒与尺度。
-- **中间结果只焊接顶点与三角化非平面面，不合并面**：原因有三：
-  - 递归时，上一轮的碎块就是下一轮的布尔操作数；
-  - 精确布尔要求操作数的每个面都是平面；
-  - 面合并会产生不共面的 n-gon，让下一轮布尔留下未裁剪的残片。
+- **切割前体检只在交互时进行**：算子的 `invoke` 调用 `source_issues`，有问题时弹出确认框，确认后才执行；`execute` 与阶段 API 不体检，也不弹窗。
+- **每次切割只求值一次被切物体**（首次切割是源物体，递归时是父碎块）：得到快照 `BooleanSource`。胞体构造、种子扰动、焊接距离与越界校验共用快照里的包围盒与尺度。
+- **中间结果只做焊接、清理与三角化，不合并面**：每次求交后焊接重合顶点，删掉没有面的散边散点，断开只在顶点处相接的部分，再把非平面的面三角化。
+  - 断开点接触的部分：它们留在同一物体里时，下一轮以它为操作数的 Exact 求交会判错内外，丢掉大片几何；断开后拆分孤岛会把它们分成独立碎块；关闭拆分孤岛时它们仍在同一物体里，这类输入可能再次丢块。
+  - 不合并面的原因有三：
+    - 递归时，上一轮的碎块就是下一轮的布尔操作数；
+    - 精确布尔要求操作数的每个面都是平面；
+    - 面合并会产生不共面的 n-gon，让下一轮布尔留下未裁剪的残片。
 
   所以面合并只在全部切割结束后，对最终碎块做一次（`mesh_ops.dissolve_final_shards`）。
 
@@ -155,3 +160,4 @@ result = generate_fragments(context, sources, config, *, rng=None)
 
 - **返回值**：`MeshFractureResult`，包含碎块元组 `shards`、按源物体索引的只读映射 `source_to_shards`，以及耗时 `seconds`。
 - **选择状态**：完成或失败后，都会恢复调用前的选择与活动物体。
+- **切割前体检**：`source_issues(context, sources)` 返回 `{源物体: 问题集合}`，只包含有问题的网格物体；问题标识是 `core.diagnosis` 里的 `NOT_CLOSED` 与 `SELF_INTERSECTING`。
