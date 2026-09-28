@@ -36,7 +36,7 @@
 - **结构**：没有重复键，`locale` 与文件名一致，译文非空，占位符一致，各模块的 `tooltips` 译法不冲突。
 - **覆盖与陈旧**：
   - 必须有译文的文字：参数规格的名称与说明，以及用 AST 从源码中提取的界面文字；
-  - 提取范围：`bl_label`、`bl_description`、字面量 `text=`、`tr` 和 `tr_report` 的字面量消息、领域异常的消息、模块级 `*_MESSAGE` 常量、`ParamGroup` 的标题与提示、`*Property` 的 `name` 与 `description`；
+  - 提取范围：`bl_label`、`bl_description`、字面量 `text=`、`tr` 和 `tr_report` 的字面量消息、领域异常的消息、模块级 `*_MESSAGE` 常量、`ParamGroup` 的标题、`*Property` 的 `name` 与 `description`；
   - 语言文件里不能有代码已经不用的键。
 - **写法**：
   - 字面量 `text=` 必须带 `text_ctxt`，或写 `translate=False`；

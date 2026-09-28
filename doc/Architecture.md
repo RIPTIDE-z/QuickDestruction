@@ -50,11 +50,25 @@ TOOL = ToolSpec(
 | --- | --- |
 | 包结构 | `__init__.py` 只写文档字符串；带参数的工具在 `settings.py` 里给出 `SCHEMA`。这样单元测试不启动 Blender 也能导入参数规格 |
 | 命名 | 类名以 `QD_<TOOL_ID>_` 开头，算子 ID 以 `qd_<tool_id>.` 开头；框架自己的类用 `QD_` 与 `qd.`。注册时检查前缀与重名，因为 Blender 遇到重复的 `bl_idname` 会静默顶替 |
-| 面板 | 继承 `framework.ui.ToolPanel`，它固定了侧栏位置与标签页；默认收起的面板自己写 `bl_options = {"DEFAULT_CLOSED"}`；用 `draw_parameters` 按 `ParamGroup` 分组表绘制参数 |
-| 算子 | 继承 `framework.ui.ToolOperator`，只实现 `run(context)`，它返回的文本作为 INFO 报告 |
+| 面板 | 继承 `framework.ui.ToolPanel`，它固定了侧栏位置与标签页；默认收起的面板自己写 `bl_options = {"DEFAULT_CLOSED"}`；界面排版见下一节 |
+| 算子 | 继承 `framework.operators.ToolOperator`，只实现 `run(context)`，它返回的文本作为 INFO 报告 |
 | 说明 | 面板、菜单与算子都要写英文 `bl_description`。否则 Blender 会把中文文档字符串当作悬停提示 |
 
 参数组类 `QD_PG_<tool_id>` 由注册层按参数规格自动生成。注册按"翻译 → 类 → `Scene.qd_settings` → 预设登记"的顺序执行，任一步失败都会逆序撤销已经完成的步骤。
+
+## 界面排版
+
+侧栏很窄，工具以后还会增加，所以面板按"常用项直接可见，其余逐层展开"来排：
+
+- **主面板**：最上面是主操作按钮，下面是少数常用参数。主面板类设置 `tool_id`，带预设的工具由 `ToolPanel.draw_header_preset` 自动在标题栏显示预设入口，不占内容高度。
+- **子面板**：其余参数用 `ParamGroup(标题, 字段, closed=是否默认收起, toggle=标题上的总开关)` 声明，由 `parameter_panels(主面板类, SCHEMA, 常用字段, 分组表, active)` 生成挂在主面板下的子面板类。
+  - Blender 会记住每个子面板的折叠状态；
+  - 不常调的分组默认收起；
+  - 有总开关的分组把开关画在子面板标题上，关闭时整组置灰。
+- **字段**：`draw_fields` 一行画一个字段，标签在左、数值在右（`use_property_split`），在任何宽度和语言下标签都能完整显示。多选枚举的标签单独占一行，选项分两列排开。
+- **置灰**：`active(owner, key)` 为假的字段只置灰、不锁定，与 Blender 的惯例一致，仍然可以预先设置。
+- **检查**：`parameter_panels` 会检查每个参数恰好排布一次（常用字段、分组字段与标题开关合计），漏排或重复在导入时就会报错。
+- **标签**：写得短，不重复面板标题已经给出的上下文。例如"递归破碎"子面板里的字段叫 `Fraction`，不叫 `Recursion Fraction`。
 
 ## 错误与报告
 
@@ -97,7 +111,7 @@ TOOL = ToolSpec(
 | --- | --- |
 | `tool.py` | `ToolSpec` 声明 |
 | `settings.py` | 参数规格 `PROPERTY_SPECS` 与 `SCHEMA` |
-| `interaction.py` | 面板 `QD_MESH_FRACTURE_PT_main`、参数分组表与生成算子 `qd_mesh_fracture.generate` |
+| `interaction.py` | 主面板 `QD_MESH_FRACTURE_PT_main`、常用字段与分组表（由此生成参数子面板）、生成算子 `qd_mesh_fracture.generate` |
 | `api.py` | 阶段 API 与结果对象 |
 | `core/pipeline.py` | 编排：前置检查、首次切割、递归、收尾、碎块硬上限、失败回滚 |
 | `core/` 其余模块 | 种子采样、胞体构造、布尔策略、网格操作、命名 |

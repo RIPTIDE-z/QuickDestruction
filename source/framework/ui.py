@@ -1,101 +1,115 @@
-"""界面约定 - 工具面板与算子的混入类, 失败报告的翻译, 以及按分组表绘制参数"""
+"""界面约定 - 工具面板基类, 标题栏预设入口, 一行一个字段的参数绘制, 以及按分组表生成参数子面板"""
 
-import traceback
 from typing import NamedTuple
 
-from ..common.errors import DomainError
-from ..common.translate import tr_report
-from .constants import CONTEXT, SIDEBAR_CATEGORY
+from bpy.types import Panel
+
+from . import presets
+from .constants import SIDEBAR_CATEGORY
+from .contract import scene_settings
 
 
 class ToolPanel:
-    """工具侧栏面板的公共设置 - 固定在 3D 视图侧栏的插件标签页, 与其它工具面板并列"""
+    """工具侧栏面板的公共设置 - 固定在 3D 视图侧栏的插件标签页, 带预设的工具在标题栏显示预设入口"""
 
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = SIDEBAR_CATEGORY
+    # 所属工具的标识: 工具登记了预设时, 标题栏按它显示预设入口; 子面板保持 None
+    tool_id = None
 
-
-def failure_text(operator, error):
-    """把异常换成报告文本: 领域错误按自己的上下文翻译, 其余异常原样展示"""
-    if isinstance(error, DomainError):
-        # 参数名这类界面术语先按各自的上下文翻译, 再填入消息
-        values = {
-            key: tr_report(error.terms[key], value) if key in error.terms else value
-            for key, value in error.values.items()
-        }
-        detail = tr_report(error.context or CONTEXT, error.message, **values)
-    else:
-        detail = str(error)
-    operation = tr_report(operator.bl_translation_context, operator.bl_label)
-    return tr_report(CONTEXT, "{operation} failed: {detail}", operation=operation, detail=detail)
-
-
-class ToolOperator:
-    """工具算子的公共执行流程 - 子类实现 run, 这里把结果与异常转成可翻译的报告"""
-
-    def execute(self, context):
-        """执行 run 并报告结果, 失败时取消本次操作"""
-        try:
-            message = self.run(context)
-        except Exception as error:
-            # 领域错误是可预期的, 其余异常打印堆栈便于排查
-            if not isinstance(error, DomainError):
-                traceback.print_exc()
-            self.report({"ERROR"}, failure_text(self, error))
-            return {"CANCELLED"}
-        if message:
-            self.report({"INFO"}, message)
-        return {"FINISHED"}
+    def draw_header_preset(self, context):
+        """在面板标题栏右侧绘制预设入口, 不占面板内容的高度"""
+        if self.tool_id in presets.SCHEMAS:
+            presets.draw_presets(self.layout, self.tool_id, scene_settings(context, self.tool_id))
 
 
 class ParamGroup(NamedTuple):
-    """参数面板里的一个分组"""
+    """一个参数子面板的声明"""
 
-    # 分组标题, 按工具上下文翻译
+    # 子面板标题, 按工具上下文翻译
     title: str
-    # 每行是若干字段名, 一行内的字段各自判断启用状态
-    rows: tuple
-    # 分组末尾的提示行, 写 RNA 说明里没有但用户一定会踩的前提
-    notes: tuple = ()
+    # 子面板里的字段, 一行一个
+    fields: tuple
+    # 为真时子面板默认收起, 用于不常调的参数
+    closed: bool = False
+    # 画在子面板标题上的总开关字段, 关闭时子面板内容置灰
+    toggle: str | None = None
 
 
 def _draw_field(layout, owner, schema, key):
-    """多选枚举画成一排按钮, 向量逐个分量标注轴名, 其余用默认控件"""
-    kind, options = schema.specs[key]
-    if "ENUM_FLAG" in options.get("options", ()):
-        layout.use_property_split = False
-        for identifier, name, _description in options["items"]:
-            layout.prop_enum(owner, key, identifier, text=name, text_ctxt=schema.context)
-    elif kind == "FloatVectorProperty":
-        # 显式写出属性名与轴名, 避免 Blender 用属性名顶替第一个分量的标签
-        layout.use_property_split = False
-        layout.alignment = "EXPAND"
-        layout.label(text=options["name"], text_ctxt=schema.context)
-        for index in range(options["size"]):
-            if index:
-                layout.separator()
-            layout.prop(owner, key, index=index, text="XYZW"[index], translate=False)
-    else:
+    """绘制一个字段; 多选枚举的标签单独一行, 选项两列排开, 保证名称完整显示"""
+    options = schema.specs[key][1]
+    if "ENUM_FLAG" not in options.get("options", ()):
         layout.prop(owner, key)
+        return
+    column = layout.column(align=True)
+    column.use_property_split = False
+    column.label(text=options["name"], text_ctxt=schema.context)
+    grid = column.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
+    for identifier, name, _description in options["items"]:
+        grid.prop_enum(owner, key, identifier, text=name, text_ctxt=schema.context)
 
 
-def draw_parameters(layout, owner, schema, groups, enabled):
-    """按分组表绘制参数, enabled(owner, key) 为假的控件置灰"""
-    # 紧凑排布由分组表决定, 不按属性分栏, 侧栏窄时也不会挤掉标签
-    layout.use_property_split = False
-    layout.use_property_decorate = False
+def draw_fields(layout, owner, schema, keys, active):
+    """一行一个字段, 标签在左数值在右; active(owner, key) 为假的字段置灰, 但仍可编辑"""
+    column = layout.column()
+    column.use_property_split = True
+    column.use_property_decorate = False
+    for key in keys:
+        # 每个字段单独一层子布局, 置灰从属字段时不会连带置灰它的控制字段
+        item = column.column()
+        item.active = active(owner, key)
+        _draw_field(item, owner, schema, key)
+
+
+def _group_draw(tool_id, schema, group, active):
+    """生成子面板的 draw: 绘制本组字段, 标题开关关闭时整组置灰"""
+
+    def draw(self, context):
+        """绘制本组字段"""
+        owner = scene_settings(context, tool_id)
+        if group.toggle:
+            self.layout.active = getattr(owner, group.toggle)
+        draw_fields(self.layout, owner, schema, group.fields, active)
+
+    return draw
+
+
+def _toggle_draw(tool_id, toggle):
+    """生成子面板的 draw_header: 在标题上绘制总开关"""
+
+    def draw_header(self, context):
+        """绘制标题上的总开关, 标签由子面板标题承担"""
+        self.layout.prop(scene_settings(context, tool_id), toggle, text="")
+
+    return draw_header
+
+
+def parameter_panels(parent, schema, core, groups, active):
+    """按分组表生成挂在 parent 下的参数子面板类, 并检查每个参数恰好排布一次
+
+    core 是 parent 自己绘制的常用字段; 返回的类按分组顺序注册, 也就是界面上的上下顺序
+    """
+    # 标题上的总开关也算已排布
+    placed = [*core, *(key for g in groups for key in (*g.fields, g.toggle) if key is not None)]
+    if sorted(placed) != sorted(schema.specs):
+        missing = sorted(set(schema.specs) - set(placed))
+        repeated = sorted({key for key in placed if placed.count(key) > 1})
+        extra = sorted(set(placed) - set(schema.specs))
+        raise ValueError(f"Parameter layout mismatch: {missing=} {repeated=} {extra=}")
+    panels = []
     for group in groups:
-        box = layout.box()
-        box.label(text=group.title, text_ctxt=schema.context)
-        column = box.column()
-        for keys in group.rows:
-            # 单独占一行的项用对齐行, 与多列行保持相同的缩进
-            row = column.row(align=True) if len(keys) == 1 else column.row()
-            for key in keys:
-                # 每个控件套一层子布局: 置灰从属项时不会连带置灰它的控制开关
-                item = row.row(align=True)
-                item.enabled = enabled(owner, key)
-                _draw_field(item, owner, schema, key)
-        for note in group.notes:
-            box.label(text=note, text_ctxt=schema.context, icon="INFO")
+        namespace = {
+            "bl_label": group.title,
+            "bl_parent_id": parent.__name__,
+            "bl_translation_context": schema.context,
+            "bl_options": {"DEFAULT_CLOSED"} if group.closed else set(),
+            "draw": _group_draw(parent.tool_id, schema, group, active),
+        }
+        if group.toggle:
+            namespace["draw_header"] = _toggle_draw(parent.tool_id, group.toggle)
+        # 类名由父面板与标题派生, 保持稳定, Blender 按它记住折叠状态
+        name = f"{parent.__name__}_{group.title.lower().replace(' ', '_')}"
+        panels.append(type(name, (ToolPanel, Panel), namespace))
+    return tuple(panels)

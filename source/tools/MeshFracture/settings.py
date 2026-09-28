@@ -107,7 +107,7 @@ PROPERTY_SPECS = {
     "recursion_source_limit": (
         "IntProperty",
         {
-            "name": "Recursion Seed Limit",
+            "name": "Seeds per Shard",
             "description": "Maximum seed points sampled for each recursively cut "
             "shard, before deduplication; 0 keeps all available points. "
             "Has no further effect once it reaches the parent shard's "
@@ -120,7 +120,7 @@ PROPERTY_SPECS = {
     "recursion_clamp": (
         "IntProperty",
         {
-            "name": "Shard Stop Threshold",
+            "name": "Max Shards",
             "description": "Stop further recursion when the current shard count per source "
             "object reaches this threshold. One cut or island split may exceed "
             "it. 0 disables the threshold; the first cut is not limited. Generation stops "
@@ -133,7 +133,7 @@ PROPERTY_SPECS = {
     "recursion_chance": (
         "FloatProperty",
         {
-            "name": "Recursion Fraction",
+            "name": "Fraction",
             "description": "Fraction of current shards selected each round, rounded down. 0 "
             "selects none; 1 selects all. The selection mode chooses which "
             "shards.",
@@ -266,7 +266,7 @@ PROPERTY_SPECS = {
     "use_remove_original": (
         "BoolProperty",
         {
-            "name": "Remove Parent Shards",
+            "name": "Remove Parents",
             "description": "Delete generated parent shards after successful recursive "
             "replacement. The originally selected source objects are "
             "always kept.",
@@ -327,7 +327,7 @@ PROPERTY_SPECS = {
     "use_debug_redraw": (
         "BoolProperty",
         {
-            "name": "Show Progress Realtime",
+            "name": "Live Progress",
             "description": "Refresh the viewport after every cell to show progress. Makes "
             "cutting several times slower; has no effect in background mode.",
             "default": False,

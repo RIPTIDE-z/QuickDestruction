@@ -42,16 +42,19 @@ uv run pytest
 ## 打包与安装
 
 ```powershell
-<Blender> -c extension build --source-dir=./source
-install.bat 5.2 -Force /nopause
+install.bat <Blender> [/nopause]     # 也可以先 set BLENDER=<Blender>
 ```
 
-- **打包**：在仓库根目录生成带版本号的 ZIP，内容只有 `source/`。
-- **`install.bat` 的参数**：
-  - 不写版本号时，选已配置的最高版本；
-  - 已有安装时默认询问，直接回车表示覆盖，`-Force` 表示不询问；
-  - `/nopause` 表示结束时不等待按键。
-- **找包顺序**：先找脚本目录，再找上级目录；每个目录取修改时间最新的 QuickDestruction ZIP。
-- **安装过程**：先解压到暂存目录，备份旧安装后再替换，任何一步失败都会回滚。
-- **依赖**：只用 cmd 内置命令与系统自带的 `tar`。
+`install.bat` 全程使用指定的 Blender，所以装进的一定是这个 Blender 版本的配置，而且装的一定是刚打出的包：
+
+1. `extension build`：把 `source/` 打包到临时目录；
+2. `extension install-file -r user_default -e`：安装到 `user_default` 仓库并启用。覆盖安装会整体替换目录，不留旧文件；
+3. `scripts/install_verify.py`：在后台 Blender 里核对。
+   - 包内每个文件都逐字节一致；
+   - 安装目录里没有包外的文件；
+   - 扩展已启用并注册成功。
+
+Blender 自带的 `install-file` 在出错时只打印信息，退出码仍为 0（4.2 连信息都不打印），所以以第 3 步的结果为准。任何一步失败都会打印 `INSTALL FAILED`，退出码为 1。
+
 - **预设**：存放在扩展用户目录，重装不会丢失。
+- **单独打包**：需要单独的扩展包时，运行 `<Blender> -c extension build --source-dir=./source`，ZIP 生成在仓库根目录。

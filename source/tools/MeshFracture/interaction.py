@@ -1,4 +1,4 @@
-"""交互层 - 侧栏面板与生成算子, 参数直接读写场景参数组, 预设界面由框架层提供"""
+"""交互层 - 侧栏面板, 参数子面板与生成算子, 参数直接读写场景参数组"""
 
 from typing import ClassVar
 
@@ -7,46 +7,45 @@ from bpy.types import Operator, Panel
 from ...common.blender_context import restore_selection
 from ...common.translate import tr_report
 from ...framework.contract import scene_settings
-from ...framework.presets import draw_presets
-from ...framework.ui import ParamGroup, ToolOperator, ToolPanel, draw_parameters
+from ...framework.operators import ToolOperator
+from ...framework.ui import ParamGroup, ToolPanel, draw_fields, parameter_panels
 from .api import generate_fragments
 from .constants import CONTEXT, TOOL_ID
 from .settings import SCHEMA
 
-# 参数分组: 每个字段只在这里排布一次, 一行内的字段各自判断启用状态
+# 主面板上的常用参数, 一行一个, 始终可见
+CORE_FIELDS = ("source", "source_limit", "source_noise", "recursion", "margin")
+# 其余参数按用途分进子面板; 不常调的默认收起
 GROUPS = (
-    ParamGroup(
-        "Point Source",
-        (("source",), ("source_limit", "source_noise"), ("random_seed",), ("cell_scale",)),
-        notes=("Seeds are existing geometry positions, not random points",),
-    ),
+    ParamGroup("Pattern", ("random_seed", "cell_scale"), closed=True),
     ParamGroup(
         "Recursive Shatter",
         (
-            ("recursion",),
-            ("recursion_source_limit", "recursion_clamp"),
-            ("recursion_chance", "recursion_chance_select"),
-        ),
-        notes=(
-            "Both seed limits act only below the parent shard vertex count; "
-            "larger values change nothing",
+            "recursion_source_limit",
+            "recursion_clamp",
+            "recursion_chance",
+            "recursion_chance_select",
+            "use_remove_original",
         ),
     ),
     ParamGroup(
         "Mesh Data",
         (
-            ("use_smooth_faces", "use_sharp_edges", "use_sharp_edges_apply", "use_data_match"),
-            ("material_index", "use_interior_vgroup"),
-            ("margin", "use_island_split"),
-            ("use_remove_original",),
+            "use_smooth_faces",
+            "use_sharp_edges",
+            "use_sharp_edges_apply",
+            "use_interior_vgroup",
+            "use_island_split",
+            "use_recenter",
         ),
     ),
-    ParamGroup("Object", (("use_recenter",),)),
-    ParamGroup("Collection", (("collection_name",), ("shard_prefix", "use_shard_collections"))),
+    ParamGroup("Match Data", ("material_index",), toggle="use_data_match"),
     ParamGroup(
-        "Debug",
-        (("use_debug_redraw", "use_debug_points", "use_debug_bool"), ("shard_index_padding",)),
+        "Output",
+        ("collection_name", "shard_prefix", "use_shard_collections", "shard_index_padding"),
+        closed=True,
     ),
+    ParamGroup("Debug", ("use_debug_redraw", "use_debug_points", "use_debug_bool"), closed=True),
 )
 # 保留布尔修改器时, 收尾与递归阶段都不执行
 DEBUG_INACTIVE = frozenset(
@@ -64,8 +63,8 @@ RECURSION_DEPENDENT = frozenset(
 )
 
 
-def _param_enabled(owner, key):
-    """仅在参数对应的执行阶段可达时启用控件"""
+def _param_active(owner, key):
+    """参数对应的执行阶段可达时才显示为可用, 否则置灰"""
     # 拆分是锐边标记的后续动作, 必须排在 DEBUG_INACTIVE 之前判断
     if key == "use_sharp_edges_apply":
         return owner.use_sharp_edges and not owner.use_debug_bool
@@ -77,9 +76,6 @@ def _param_enabled(owner, key):
         return recursion_enabled and 0 < owner.recursion_chance < 1
     if key in RECURSION_DEPENDENT:
         return recursion_enabled
-    if key == "material_index":
-        # 不匹配源材质槽时, 索引无法对应最终碎块的材质
-        return owner.use_data_match
     return True
 
 
@@ -116,24 +112,29 @@ class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
 
 
 class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
-    """网格破碎的侧栏面板 - 预设入口, 全部参数与生成按钮"""
+    """网格破碎的侧栏主面板 - 生成按钮与常用参数, 预设入口在标题栏, 其余参数在子面板"""
 
     bl_label = "MeshFracture"
     bl_description = "Cut selected meshes into fragments with a Voronoi pattern"
     bl_translation_context = CONTEXT
+    tool_id = TOOL_ID
 
     def draw(self, context):
-        """依次绘制预设入口, 参数分组与生成按钮"""
+        """生成按钮放在最上面, 打开面板就能看到; 其下是常用参数"""
         layout = self.layout
-        owner = scene_settings(context, TOOL_ID)
-        draw_presets(layout, TOOL_ID, owner)
-        draw_parameters(layout, owner, SCHEMA, GROUPS, _param_enabled)
         ready = _can_apply(context)
-        actions = layout.column(align=True)
-        actions.enabled = ready
-        actions.operator(QD_MESH_FRACTURE_OT_generate.bl_idname, icon="MOD_EXPLODE")
+        button = layout.column()
+        button.enabled = ready
+        button.scale_y = 1.4
+        button.operator(QD_MESH_FRACTURE_OT_generate.bl_idname, icon="MOD_EXPLODE")
         if not ready:
             # 置灰时说明原因, 否则只看到一个灰按钮
             layout.label(
                 text="Select editable mesh objects in Object Mode", text_ctxt=CONTEXT, icon="INFO"
             )
+        owner = scene_settings(context, TOOL_ID)
+        draw_fields(layout, owner, SCHEMA, CORE_FIELDS, _param_active)
+
+
+# 参数子面板, 挂在主面板下, 按分组顺序排列
+SUBPANELS = parameter_panels(QD_MESH_FRACTURE_PT_main, SCHEMA, CORE_FIELDS, GROUPS, _param_active)

@@ -15,7 +15,7 @@ from ..common.translate import tr, tr_report
 from . import preset_files
 from .constants import CONTEXT
 from .contract import scene_settings
-from .ui import ToolOperator
+from .operators import ToolOperator
 
 # 布局上下文里记录目标工具标识的成员名, 预设菜单绘制时据此找回目标工具
 TOOL_MEMBER = "qd_preset_tool"
@@ -220,12 +220,12 @@ class QD_MT_presets(Menu):
 
 
 def draw_presets(layout, tool_id, owner):
-    """预设入口: 预设名下拉菜单加一个快捷保存按钮"""
+    """预设入口: 预设下拉菜单加一个快捷保存按钮, 用于面板标题栏"""
     # 工具标识经布局上下文交给同一布局上的菜单, 绘制期不写任何 ID 数据
     layout.context_string_set(TOOL_MEMBER, tool_id)
     row = layout.row(align=True)
-    text = owner.preset_name or tr(CONTEXT, "Presets")
-    row.menu(QD_MT_presets.bl_idname, text=text, translate=False, icon="PRESET")
+    # 标题栏空间有限: 没有当前预设时只显示图标, 有时显示预设名
+    row.menu(QD_MT_presets.bl_idname, text=owner.preset_name, translate=False, icon="PRESET")
     row.operator_context = "INVOKE_DEFAULT"
     save = row.operator(QD_OT_preset_save.bl_idname, text="", icon="ADD")
     save.tool_id, save.name = tool_id, owner.preset_name

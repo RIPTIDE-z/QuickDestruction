@@ -110,8 +110,6 @@ class Extractor:
             self.interface.add(literal(node.args[0]))
         elif name == "ParamGroup":
             self.interface.add(literal(node.args[0]))
-            notes = keyword(node, "notes")
-            self.interface.update(literal(item) for item in getattr(notes, "elts", ()))
         elif name in LAYOUT_CALLS and literal(keyword(node, "text")):
             self.interface.add(literal(keyword(node, "text")))
             translate = keyword(node, "translate")

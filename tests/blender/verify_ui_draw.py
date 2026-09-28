@@ -7,13 +7,14 @@
 测试过程:
     1. 注册插件, 把各工具的面板放进出厂设置下侧栏默认显示的 Item 页, 交给 Blender 自己绘制
     2. 另注册一个驱动面板, 在它的 draw 里用真实 layout 与真实绘制上下文逐个驱动绘制入口:
-       工具面板, 预设入口, 预设菜单; 转发型 layout 代理记录每次控件调用
+       工具面板与子面板, 子面板标题开关, 标题栏预设入口, 预设菜单; 转发型 layout 代理记录每次控件调用
     3. 自检: 在同一上下文里写 ID 数据必须被拒绝, 否则说明驱动上下文并不受限, 整个结论不成立
     入口全部由 registration.TOOLS 推导, 新增工具会自动纳入
 判据:
-    - 工具面板都是顶层面板; bl_options 含 DEFAULT_CLOSED 的面板没有被绘制, 其余都被绘制且不抛异常
-    - 每个驱动入口不抛异常并至少产生一个控件
-    - 面板提供本工具的算子入口; 预设入口经布局上下文写入工具标识; 预设菜单请求到全部预设算子
+    - 工具的顶层面板没有父面板, 子面板挂在本工具的面板下; 自身或上级默认收起的面板没有被绘制,
+      其余都被绘制且不抛异常
+    - 每个驱动入口不抛异常并至少产生一个控件, 包括子面板内容与标题开关
+    - 顶层面板提供本工具的算子入口; 标题栏预设入口经布局上下文写入工具标识; 预设菜单请求到全部预设算子
 运行方式 (仓库根目录, 不能加 -b):
     <Blender 可执行文件> --factory-startup --python-exit-code 1 --python tests\\blender\\verify_ui_draw.py
 实测环境: Blender 5.2.2 (Python 3.13) 与 Blender 4.2.23 (Python 3.11)
@@ -126,27 +127,43 @@ def tool_panels(tool):
     return [cls for cls in tool.classes if issubclass(cls, bpy.types.Panel)]
 
 
+def parent_of(cls):
+    """子面板的父面板名, 顶层面板返回空串"""
+    return cls.__dict__.get("bl_parent_id", "")
+
+
 def tool_entries(tool, context):
-    """一个工具的绘制入口: 它的面板, 以及带预设时的预设入口与预设菜单"""
+    """一个工具的绘制入口: 面板内容, 子面板标题开关, 以及带预设时的标题栏预设入口与预设菜单"""
     own = [cls.bl_idname for cls in tool.classes if issubclass(cls, bpy.types.Operator)]
-    entries = [
-        Entry(
-            f"{tool.tool_id}/{cls.__name__}",
-            lambda layout, ctx, draw=ORIGINAL_DRAWS[cls]: draw(as_self(layout), ctx),
-            own,
-            any_operator=True,
+    entries = []
+    for cls in tool_panels(tool):
+        # 顶层面板必须提供本工具的算子入口, 子面板只放参数
+        entries.append(
+            Entry(
+                f"{tool.tool_id}/{cls.__name__}",
+                lambda layout, ctx, draw=ORIGINAL_DRAWS[cls]: draw(as_self(layout), ctx),
+                () if parent_of(cls) else own,
+                any_operator=True,
+            )
         )
-        for cls in tool_panels(tool)
-    ]
+        if "draw_header" in cls.__dict__:
+            entries.append(
+                Entry(
+                    f"{tool.tool_id}/{cls.__name__}/标题开关",
+                    lambda layout, ctx, cls=cls: cls.draw_header(as_self(layout), ctx),
+                )
+            )
     if not tool.presets:
         return entries
-    owner = getattr(context.scene.qd_settings, tool.tool_id)
+    main = next(cls for cls in tool_panels(tool) if not parent_of(cls))
     menu_context = SimpleNamespace(**{presets.TOOL_MEMBER: tool.tool_id}, scene=context.scene)
     preset_ids = [cls.bl_idname for cls in presets.CLASSES if issubclass(cls, bpy.types.Operator)]
     entries.append(
         Entry(
-            f"{tool.tool_id}/预设入口",
-            lambda layout, _ctx: presets.draw_presets(layout, tool.tool_id, owner),
+            f"{tool.tool_id}/标题栏预设入口",
+            lambda layout, ctx: main.draw_header_preset(
+                SimpleNamespace(layout=layout, tool_id=main.tool_id), ctx
+            ),
             token=True,
         )
     )
@@ -244,17 +261,30 @@ def start():
     redraw()
 
 
+def folded(cls, panels):
+    """面板或它的任一上级默认收起时, Blender 不会绘制它"""
+    by_name = {panel.__name__: panel for panel in panels}
+    while cls is not None:
+        if "DEFAULT_CLOSED" in set(getattr(cls, "bl_options", ()) or ()):
+            return True
+        cls = by_name.get(parent_of(cls))
+    return False
+
+
 def check_sidebar():
-    """Blender 自己绘制的面板: 顶层, 默认收起的不绘制, 其余绘制且不抛异常"""
+    """Blender 自己绘制的面板: 顶层面板没有父面板, 子面板挂在本工具面板下, 收起的不绘制, 其余绘制且不抛异常"""
     for tool in registration.TOOLS:
-        for cls in tool_panels(tool):
+        panels = tool_panels(tool)
+        names = {cls.__name__ for cls in panels}
+        for cls in panels:
             name = cls.__name__
-            closed = "DEFAULT_CLOSED" in set(getattr(cls, "bl_options", ()) or ())
-            check(f"{name} 是顶层面板", not getattr(cls, "bl_parent_id", ""))
+            parent = parent_of(cls)
+            check(f"{name} 挂在本工具的面板下或是顶层面板", not parent or parent in names, parent)
+            closed = folded(cls, panels)
             check(
                 f"{name} 的绘制情况与折叠状态一致",
                 (name in DRAWN) == (not closed),
-                f"被绘制 {name in DRAWN}, 默认收起 {closed}",
+                f"被绘制 {name in DRAWN}, 收起 {closed}",
             )
             if name in DRAWN:
                 check(f"{name} 绘制没有抛异常", DRAWN[name] is None, repr(DRAWN[name]))

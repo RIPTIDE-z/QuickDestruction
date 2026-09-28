@@ -12,16 +12,12 @@
 
 ## 安装
 
-在仓库根目录打包，然后安装：
-
 ```bat
-<Blender 可执行文件> -c extension build --source-dir=./source
-install.bat            :: 自动选择已配置的最高 Blender 版本
-install.bat 5.2        :: 安装到指定版本
-install.bat 5.2 -Force :: 覆盖已有安装时不询问
+install.bat <Blender 可执行文件>
 ```
 
-安装后需要重启 Blender。
+- **过程**：用指定的 Blender 打包、安装并启用扩展，装进的就是这个 Blender 版本的配置。
+- **重启**：安装后需要重启 Blender。
 
 ## 使用
 

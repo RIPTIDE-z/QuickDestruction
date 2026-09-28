@@ -4,6 +4,7 @@
 - source/ 为插件主体代码
 - doc/ 为插件说明文档
 - analysis/ 为本地分析文档，对架构代码等的临时分析只允许写在这个文件夹
+- scripts/ 为开发辅助脚本，例如 install.bat 调用的安装验证脚本，不会打包进插件
 
 - tests/ 为测试文件夹
     - unit 用于普通python的单元测试，会使用 pytest 进行检查
@@ -29,8 +30,9 @@
 - 若有测试文件，则按测试标准进行单元测试和blender真实运行环境测速
 
 - 所有修改完毕后，需要进行一次插件打包和安装测试
-    - 按 `<path_to_blender> -c extension build --source-dir=./source` 进行打包
-    - 使用根目录的 `install.bat` 进行安装
+    - 在根目录运行 `install.bat <path_to_blender> /nopause`，它会用这个 Blender 完成打包、安装、启用和安装验证
+    - 以输出的 `INSTALL SUCCEEDED` 和退出码 0 为准，失败时会输出 `INSTALL FAILED` 以及具体的 `[FAIL]` 项
+    - 只需要扩展包而不安装时，按 `<path_to_blender> -c extension build --source-dir=./source` 进行打包
 
 - 所有代码都必须要有干净且清晰的注释
     - 包括函数/类的作用
