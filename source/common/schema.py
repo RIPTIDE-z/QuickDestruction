@@ -99,9 +99,10 @@ class Schema:
         """全部字段的默认值, 每个规格都必须声明 default"""
         return {key: options["default"] for key, (_kind, options) in self.specs.items()}
 
-    def label(self, key):
-        """字段的英文参数名, 未知字段退回字段名本身"""
-        return self.specs[key][1]["name"] if key in self.specs else key
+    def invalid(self, key):
+        """字段 key 的参数错误; 参数名取规格里的英文名, 未知字段退回字段名本身"""
+        label = self.specs[key][1]["name"] if key in self.specs else key
+        return InvalidParameterError(key, label, self.context)
 
     def read(self, owner):
         """把参数组或算子上的参数读成数据形态"""
@@ -114,15 +115,14 @@ class Schema:
         """整体校验并返回 RNA 形态的值; 拒绝未知字段, 缺失字段不出现在结果里"""
         unknown = set(data) - set(self.specs)
         if unknown:
-            # 只抛出字段名, 界面文案由调用方翻译
-            raise InvalidParameterError(min(unknown))
+            raise self.invalid(min(unknown))
         values = {}
         # 按规格顺序遍历, 结果的字段顺序与规格一致
         for key, (kind, options) in self.specs.items():
             if key not in data:
                 continue
             if not _valid(kind, options, data[key]):
-                raise InvalidParameterError(key)
+                raise self.invalid(key)
             values[key] = _to_rna(data[key], kind, options)
         return values
 

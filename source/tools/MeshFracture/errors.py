@@ -1,6 +1,6 @@
 """领域异常 - MeshFractureError 的消息按本工具的翻译上下文翻译"""
 
-from ..common.errors import DomainError
+from ...common.errors import DomainError
 from .constants import CONTEXT
 
 # 源几何含非有限坐标时的消息, 求值快照与种子采样两处共用

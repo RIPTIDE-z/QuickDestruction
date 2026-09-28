@@ -3,8 +3,8 @@
 import traceback
 from typing import NamedTuple
 
-from ..common.errors import DomainError, InvalidParameterError
-from ..common.translate import tr, tr_report
+from ..common.errors import DomainError
+from ..common.translate import tr_report
 from .constants import CONTEXT, SIDEBAR_CATEGORY
 
 
@@ -17,13 +17,14 @@ class ToolPanel:
 
 
 def failure_text(operator, error):
-    """把异常换成报告文本: 领域错误按自己的上下文翻译, 参数错误先翻译参数名, 其余异常原样展示"""
-    schema = operator.schema
-    if isinstance(error, InvalidParameterError) and schema is not None:
-        name = tr(schema.context, schema.label(error.field))
-        detail = tr_report(CONTEXT, "Invalid parameter: {name}", name=name)
-    elif isinstance(error, DomainError):
-        detail = tr_report(error.context, error.message, **error.values)
+    """把异常换成报告文本: 领域错误按自己的上下文翻译, 其余异常原样展示"""
+    if isinstance(error, DomainError):
+        # 参数名这类界面术语先按各自的上下文翻译, 再填入消息
+        values = {
+            key: tr_report(error.terms[key], value) if key in error.terms else value
+            for key, value in error.values.items()
+        }
+        detail = tr_report(error.context or CONTEXT, error.message, **values)
     else:
         detail = str(error)
     operation = tr_report(operator.bl_translation_context, operator.bl_label)
@@ -33,16 +34,13 @@ def failure_text(operator, error):
 class ToolOperator:
     """工具算子的公共执行流程 - 子类实现 run, 这里把结果与异常转成可翻译的报告"""
 
-    # 参数规格: 把参数错误里的字段名换成界面参数名, 没有参数的算子保持 None
-    schema = None
-
     def execute(self, context):
         """执行 run 并报告结果, 失败时取消本次操作"""
         try:
             message = self.run(context)
         except Exception as error:
-            # 领域错误与参数错误是可预期的, 其余异常打印堆栈便于排查
-            if not isinstance(error, (DomainError, InvalidParameterError)):
+            # 领域错误是可预期的, 其余异常打印堆栈便于排查
+            if not isinstance(error, DomainError):
                 traceback.print_exc()
             self.report({"ERROR"}, failure_text(self, error))
             return {"CANCELLED"}

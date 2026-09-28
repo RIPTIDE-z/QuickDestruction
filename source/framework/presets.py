@@ -4,7 +4,6 @@
 删除与打开目录; 预设存放在扩展用户目录的 presets/<tool_id> 下, 升级扩展时不会被清掉
 """
 
-import shutil
 from pathlib import Path
 from typing import ClassVar
 
@@ -15,6 +14,7 @@ from bpy.types import Menu, Operator
 from ..common.translate import tr, tr_report
 from . import preset_files
 from .constants import CONTEXT
+from .contract import scene_settings
 from .ui import ToolOperator
 
 # 布局上下文里记录目标工具标识的成员名, 预设菜单绘制时据此找回目标工具
@@ -33,24 +33,6 @@ def name_property():
 def preset_directory(tool_id, create=False):
     """工具的预设目录, 位于扩展用户目录下"""
     return Path(bpy.utils.extension_path_user(PACKAGE, path=f"presets/{tool_id}", create=create))
-
-
-def migrate_legacy_presets(tool_ids):
-    """把旧版放在用户脚本目录的预设复制到扩展用户目录, 只在新目录还不存在时执行一次"""
-    for tool_id in tool_ids:
-        try:
-            directory = preset_directory(tool_id)
-            legacy = Path(
-                bpy.utils.user_resource("SCRIPTS", path=f"quick_destruction/presets/{tool_id}")
-            )
-            if directory.exists() or not legacy.is_dir():
-                continue
-            directory.mkdir(parents=True)
-            for path in legacy.glob("*.json"):
-                shutil.copy2(path, directory / path.name)
-        except (OSError, ValueError) as error:
-            # 迁移失败只告警, 旧目录保持原样, 不影响扩展启用
-            print(f"QuickDestruction: preset migration skipped for {tool_id}: {error}")
 
 
 def _remember(context, owner, name):
@@ -75,7 +57,7 @@ class PresetOperator(ToolOperator):
         """目标工具在当前场景的参数组"""
         if self.schema is None:
             raise preset_files.PresetError("The preset target is unavailable")
-        return getattr(context.scene.qd_settings, self.tool_id)
+        return scene_settings(context, self.tool_id)
 
     def filepath(self):
         """本次操作的预设文件"""
@@ -137,7 +119,8 @@ class QD_OT_preset_load(PresetOperator, Operator):
     bl_label = "Load Preset"
     bl_description = "Load a JSON preset into the parameters currently shown here"
     bl_translation_context = CONTEXT
-    bl_options: ClassVar[set[str]] = {"INTERNAL"}
+    # UNDO 让载入进入撤销栈, Ctrl+Z 可以回到载入前的参数
+    bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
     __annotations__ = {"name": _name_property()}
 
     def run(self, context):
@@ -204,7 +187,7 @@ class QD_MT_presets(Menu):
         if tool_id not in SCHEMAS:
             layout.label(text="The preset target is unavailable", text_ctxt=CONTEXT, icon="ERROR")
             return
-        owner = getattr(context.scene.qd_settings, tool_id)
+        owner = scene_settings(context, tool_id)
         row = layout.row()
         row.operator_context = "INVOKE_DEFAULT"
         save = row.operator(

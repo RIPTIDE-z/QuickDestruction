@@ -6,7 +6,7 @@
     3. 断面收尾: Interior 顶点组, 锐边, 隐藏面清理与断面材质索引
     4. 命名: 多源输出不重名, 名字与组集合名带源物体名, 超长中文源名也不会撞名
     5. 失败处理: 注入异常后本次新建的数据全部回收, 源物体状态还原
-    6. 输入边界: 碎块硬上限, 未知参数, 链接库网格都会被拒绝
+    6. 输入边界: 碎块硬上限与未知参数被拒绝, 链接库网格只在标记断面时被拒绝
     7. 重设原点: 碎块原点等于切割时顶点的平均位置, 世界几何不动
 测试过程:
     每个场景先清空数据, 建立源物体与子物体种子, 经 MeshFracture.api.generate_fragments 切割,
@@ -29,9 +29,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from source.common.errors import InvalidParameterError  # noqa: E402
-from source.MeshFracture.api import generate_fragments  # noqa: E402
-from source.MeshFracture.core import mesh_ops, pipeline  # noqa: E402
-from source.MeshFracture.errors import MeshFractureError  # noqa: E402
+from source.tools.MeshFracture.api import generate_fragments  # noqa: E402
+from source.tools.MeshFracture.core import mesh_ops, pipeline  # noqa: E402
+from source.tools.MeshFracture.errors import MeshFractureError  # noqa: E402
 
 FAILURES = []
 # 子物体顶点做种子, 关闭噪波与内缩, 其余按场景覆盖
@@ -82,6 +82,11 @@ def seeds(parent, count, spread, seed):
     return obj
 
 
+def cut(sources, config, collection=""):
+    """经阶段 API 切割; 输出集合名默认为空, 即当前集合"""
+    return generate_fragments(bpy.context, sources, {**config, "collection_name": collection})
+
+
 def volume(obj):
     """物体在世界空间的网格体积"""
     bm = bmesh.new()
@@ -115,19 +120,19 @@ def case_volume():
         reset()
         source = cube("Src", half)
         seeds(source, 30, 0.9 * half, 11)
-        ratio = volume_ratio(generate_fragments(bpy.context, [source], BASE, None), 8 * half**3)
+        ratio = volume_ratio(cut([source], BASE), 8 * half**3)
         check(f"体积守恒 半边长 {half:g}", abs(ratio - 1) < VOLUME_TOLERANCE, f"{ratio:.6f}")
     reset()
     source = cube("Src")
     seeds(source, 30, 0.9, 12)
     config = {**BASE, "cell_scale": (0.2, 0.5, 1.0), "recursion": 0}
-    ratio = volume_ratio(generate_fragments(bpy.context, [source], config, None), 8.0)
+    ratio = volume_ratio(cut([source], config), 8.0)
     check("非等轴权重体积守恒", abs(ratio - 1) < VOLUME_TOLERANCE, f"{ratio:.6f}")
     reset()
     source = cube("Src")
     seeds(source, 12, 0.9, 8)
     config = {**BASE, "recursion": 2, "recursion_source_limit": 4, "recursion_clamp": 0}
-    result = generate_fragments(bpy.context, [source], config, "Out")
+    result = cut([source], config, "Out")
     ratio = volume_ratio(result, 8.0)
     check(
         "两轮递归体积守恒",
@@ -144,7 +149,7 @@ def case_torus():
     expected = volume(source)
     seeds(source, 16, 1.2, 9)
     config = {**BASE, "recursion": 1, "recursion_source_limit": 4, "use_island_split": True}
-    result = generate_fragments(bpy.context, [source], config, "Out")
+    result = cut([source], config, "Out")
     ratio = volume_ratio(result, expected)
     check(
         "圆环孤岛体积守恒",
@@ -161,7 +166,7 @@ def case_reproducible():
         source = cube("Src")
         seeds(source, 20, 0.9, 3)
         config = {**BASE, "source_noise": 0.4, "recursion": 1, "recursion_chance": 0.5}
-        prints.append(fingerprint(generate_fragments(bpy.context, [source], config, "Out")))
+        prints.append(fingerprint(cut([source], config, "Out")))
     check("两次切割几何一致", prints[0] == prints[1], f"{len(prints[0])} 块")
 
 
@@ -180,7 +185,7 @@ def case_interior():
         "use_sharp_edges_apply": False,
         "material_index": 1,
     }
-    shards = generate_fragments(bpy.context, [source], config, None).shards
+    shards = cut([source], config).shards
     grouped = all(shard.vertex_groups.get("Interior") for shard in shards)
     sharp = sum(edge.use_edge_sharp for shard in shards for edge in shard.data.edges)
     hidden = sum(face.hide for shard in shards for face in shard.data.polygons)
@@ -196,7 +201,7 @@ def case_naming():
     reset()
     long_name = "非常长的中文源物体名字用来检查字节截断"
     sources = [cube("A"), cube("B", location=(5.0, 0.0, 0.0)), cube(long_name, location=(10, 0, 0))]
-    result = generate_fragments(bpy.context, sources, {"recursion": 1}, "Shards")
+    result = cut(sources, {"recursion": 1}, "Shards")
     names = [shard.name for shard in result.shards]
     groups = [coll.name for coll in bpy.data.collections if "_L1_G" in coll.name]
     check("多源碎块没有重名后缀", not any("." in name for name in names), str(names[:3]))
@@ -205,6 +210,12 @@ def case_naming():
         all(name.startswith(("cell_A_", "cell_B_", "cell_非常")) for name in names),
     )
     check("组集合没有重名后缀", groups and not any("." in name for name in groups), str(groups[:3]))
+    output = bpy.data.collections["Shards"]
+    inside = {output, *output.children}
+    check(
+        "碎块都落在 collection_name 指定的集合里",
+        all(s.users_collection[0] in inside for s in result.shards),
+    )
     marks = {shard["_qd_source"] for shard in result.shards}
     check("来源标记记录完整源名", marks == {"A", "B", long_name}, str(marks))
 
@@ -227,7 +238,7 @@ def case_rollback():
     mesh_ops.finish_interior = boom
     try:
         config = {**BASE, "recursion": 1, "recursion_source_limit": 4, "use_debug_redraw": True}
-        generate_fragments(bpy.context, [source], config, "RollbackOut")
+        cut([source], config, "RollbackOut")
         check("注入的异常被抛出", False)
     except RuntimeError:
         after = {kind: set(getattr(bpy.data, kind).keys()) for kind in before}
@@ -248,26 +259,27 @@ def expect_error(label, error_type, call):
 
 
 def case_limits():
-    """碎块硬上限, 未知参数与链接库网格都被拒绝"""
+    """碎块硬上限与未知参数被拒绝; 链接库网格只在需要改写隐藏标记时被拒绝"""
     reset()
     source = cube("Src")
     seeds(source, 12, 0.9, 7)
-    originals = pipeline.SHARD_LIMIT, mesh_ops.SHARD_LIMIT
-    pipeline.SHARD_LIMIT = mesh_ops.SHARD_LIMIT = 20
+    # 上限只由流程编排层负责, 临时调小这一处即可
+    original = pipeline.SHARD_LIMIT
+    pipeline.SHARD_LIMIT = 20
     try:
         config = {**BASE, "recursion": 3, "recursion_clamp": 0}
         expect_error(
             "超过硬上限时报错",
             MeshFractureError,
-            lambda: generate_fragments(bpy.context, [source], config, "Out"),
+            lambda: cut([source], config, "Out"),
         )
         check("超限后没有遗留碎块", not [obj for obj in bpy.data.objects if obj.get("_qd_source")])
     finally:
-        pipeline.SHARD_LIMIT, mesh_ops.SHARD_LIMIT = originals
+        pipeline.SHARD_LIMIT = original
     expect_error(
         "未知参数被拒绝",
         InvalidParameterError,
-        lambda: generate_fragments(bpy.context, [source], {"recursio": 3}, None),
+        lambda: cut([source], {"recursio": 3}),
     )
     with tempfile.TemporaryDirectory() as directory:
         path = str(Path(directory) / "library.blend")
@@ -277,10 +289,14 @@ def case_limits():
         linked = bpy.data.objects.new("UsesLinked", target.meshes[0])
         bpy.context.collection.objects.link(linked)
         expect_error(
-            "链接库网格被拒绝",
+            "标记断面时链接库网格被拒绝",
             MeshFractureError,
-            lambda: generate_fragments(bpy.context, [linked], BASE, None),
+            lambda: cut([linked], BASE),
         )
+        # 不标记断面时布尔只读取源网格, 链接库网格也能切割
+        plain = {"recursion": 0, "use_sharp_edges": False, "use_interior_vgroup": False}
+        shards = cut([linked], plain).shards
+        check("不标记断面时链接库网格可以切割", len(shards) > 0, f"{len(shards)} 块")
 
 
 def case_recenter():
@@ -290,7 +306,7 @@ def case_recenter():
     seeds(source, 12, 0.9, 4)
     # 保留布尔修改器时没有面合并与断面收尾, 胞体网格就是重设原点时的顶点
     config = {**BASE, "recursion": 0, "use_debug_bool": True}
-    moved = generate_fragments(bpy.context, [source], config, None).shards
+    moved = cut([source], config).shards
     offsets = []
     for shard in moved:
         flat = [0.0] * (len(shard.data.vertices) * 3)
@@ -298,7 +314,7 @@ def case_recenter():
         offsets.extend(abs(sum(flat[axis::3])) / len(shard.data.vertices) for axis in range(3))
     check("原点位于顶点平均位置", max(offsets) < 1e-6, f"{max(offsets):.2e}")
     world = fingerprint_bounds(moved)
-    kept = generate_fragments(bpy.context, [source], {**config, "use_recenter": False}, None)
+    kept = cut([source], {**config, "use_recenter": False})
     check("重设原点不移动世界几何", close(world, fingerprint_bounds(kept.shards)))
 
 

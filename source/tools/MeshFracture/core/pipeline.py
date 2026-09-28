@@ -5,11 +5,14 @@ from time import perf_counter
 import bpy
 from mathutils import Vector
 
-from ...common.created_data import CreatedData
+from ....common.created_data import CreatedData
 from ..constants import SHARD_LIMIT
 from ..errors import MeshFractureError
 from . import boolean, mesh_ops
 from .naming import NamingPlan
+
+# 超出碎块硬上限时的消息
+LIMIT_MESSAGE = "More than {limit} shards would be generated; lower the seed limits or recursion"
 
 
 def _check_sources(context, sources, settings):
@@ -18,10 +21,12 @@ def _check_sources(context, sources, settings):
         raise MeshFractureError("Select editable mesh objects in Object Mode")
     index = settings["material_index"]
     for obj in sources:
-        if obj.data.library is not None:
-            # 切割期间要临时改写源网格的面隐藏标记, 链接库里的网格不可写
+        if obj.data.library is not None and mesh_ops.uses_interior(settings):
+            # 标记断面时要临时改写源网格的面隐藏标记, 链接库里的网格不可写
             raise MeshFractureError(
-                'Mesh data of "{name}" is linked from a library and cannot be cut', name=obj.name
+                'Mesh data of "{name}" is linked from a library; '
+                "turn off Sharp Edges and Interior VGroup to cut it",
+                name=obj.name,
             )
         if not obj.data.polygons:
             raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
@@ -43,17 +48,13 @@ def _visible_collection(context, collection):
     return visit(context.view_layer.layer_collection)
 
 
-def _output_collection(context, output, tracker):
-    """解析输出集合: 集合对象原样使用, 集合名先查找再新建, None 或空名用当前集合"""
-    collection = output
-    if output is None or output == "":
-        collection = context.collection
-    elif isinstance(output, str):
-        collection = bpy.data.collections.get(output)
-        if collection is None:
-            collection = tracker.track("collections", bpy.data.collections.new(output))
-            context.collection.children.link(collection)
-            context.view_layer.update()
+def _output_collection(context, name, tracker):
+    """解析输出集合: 空名用当前集合, 否则按名查找, 找不到时在当前集合下新建"""
+    collection = bpy.data.collections.get(name) if name else context.collection
+    if collection is None:
+        collection = tracker.track("collections", bpy.data.collections.new(name))
+        context.collection.children.link(collection)
+        context.view_layer.update()
     if collection.library or not _visible_collection(context, collection):
         raise MeshFractureError(
             "Output collection must be editable and visible in the current view layer"
@@ -62,30 +63,37 @@ def _output_collection(context, output, tracker):
 
 
 def _check_limit(count):
-    """本次生成的碎块总数超过硬上限时报错, 由 run 回收已经生成的数据"""
+    """碎块数超过硬上限时报错, 由 run 回收已经生成的数据"""
     if count > SHARD_LIMIT:
-        raise MeshFractureError(mesh_ops.LIMIT_MESSAGE, limit=SHARD_LIMIT)
+        raise MeshFractureError(LIMIT_MESSAGE, limit=SHARD_LIMIT)
 
 
 def _cut(context, obj, settings, batch, rng):
     """对单个物体执行一次切割, 返回生成的碎块; 源物体的显示方式与面隐藏状态无论成败都还原"""
     old_display = obj.display_type
-    old_hidden = [face.hide for face in obj.data.polygons]
+    # 只有首次切割且需要标记断面时才会清掉源网格的面隐藏标记, 其余情况不写源网格
+    old_hidden = None
+    if batch.level == 0 and mesh_ops.uses_interior(settings):
+        old_hidden = [face.hide for face in obj.data.polygons]
     try:
         if settings["use_debug_redraw"]:
             # 线框显示方便观察切割进度, 结果不受影响
             obj.display_type = "WIRE"
         # 求值快照每次切割只取一次, 胞体构造与布尔求交共用
         snapshot = boolean.inspect_source(obj, context.evaluated_depsgraph_get())
-        cells = mesh_ops.build_cells(context, obj, snapshot, settings, batch, rng)
+        points = mesh_ops.seed_points(context, obj, settings, batch.level, rng)
+        # 种子点数就已超限时, 在耗时的布尔求交之前报错
+        _check_limit(len(points))
+        cells = mesh_ops.build_cells(context, obj, snapshot, points, settings, batch, rng)
         cells = mesh_ops.intersect_cells(context, obj, snapshot, cells, settings, batch)
         if settings["use_recenter"]:
             mesh_ops.recenter(cells)
         return cells
     finally:
         obj.display_type = old_display
-        obj.data.polygons.foreach_set("hide", old_hidden)
-        obj.data.update()
+        if old_hidden is not None:
+            obj.data.polygons.foreach_set("hide", old_hidden)
+            obj.data.update()
 
 
 def _select_recursion(cells, settings, cursor, rng):
@@ -126,7 +134,7 @@ def _finish(cells, settings, naming):
         mesh_ops.dissolve_final_shards(cells)
     naming.prune()
     naming.apply_names(cells)
-    if cells and not debug and (settings["use_interior_vgroup"] or settings["use_sharp_edges"]):
+    if cells and not debug and mesh_ops.uses_interior(settings):
         mesh_ops.finish_interior(cells, settings)
 
 
@@ -164,7 +172,7 @@ def main_object(context, collection, obj, settings, rng, tracker, done):
     return cells
 
 
-def run(context, sources, settings, output_collection, rng):
+def run(context, sources, settings, rng):
     """按名称排序显式源物体并逐个切割, 返回碎块, 来源映射与耗时; 失败时回收本次新建数据"""
     # 固定多源处理顺序, 选择顺序不会改变随机流的分配
     sources = sorted((obj for obj in sources if obj.type == "MESH"), key=lambda obj: obj.name_full)
@@ -174,7 +182,7 @@ def run(context, sources, settings, output_collection, rng):
     started = perf_counter()
     context.window_manager.progress_begin(0, len(sources))
     try:
-        collection = _output_collection(context, output_collection, tracker)
+        collection = _output_collection(context, settings["collection_name"], tracker)
         cells = []
         source_to_shards = {}
         for index, obj in enumerate(sources):

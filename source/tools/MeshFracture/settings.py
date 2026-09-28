@@ -1,6 +1,6 @@
 """参数规格 - PROPERTY_SPECS 是本工具参数的唯一来源, 同时驱动 RNA 定义, 界面文案, 校验范围与预设字段"""
 
-from ..common.schema import Schema
+from ...common.schema import Schema
 from .constants import CELL_SCALE_MIN, CONTEXT, SHARD_LIMIT
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)

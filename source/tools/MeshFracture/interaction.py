@@ -4,11 +4,11 @@ from typing import ClassVar
 
 from bpy.types import Operator, Panel
 
-from ..common.blender_context import restore_selection
-from ..common.translate import tr_report
-from ..framework.contract import scene_settings
-from ..framework.presets import draw_presets
-from ..framework.ui import ParamGroup, ToolOperator, ToolPanel, draw_parameters
+from ...common.blender_context import restore_selection
+from ...common.translate import tr_report
+from ...framework.contract import scene_settings
+from ...framework.presets import draw_presets
+from ...framework.ui import ParamGroup, ToolOperator, ToolPanel, draw_parameters
 from .api import generate_fragments
 from .constants import CONTEXT, TOOL_ID
 from .settings import SCHEMA
@@ -101,15 +101,11 @@ class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
     bl_translation_context = CONTEXT
     # UNDO 让整次生成进入撤销栈; INTERNAL 只由侧栏按钮调用, 不进入算子搜索, 也没有重做面板
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
-    # 参数规格: 参数错误报告里用它翻译参数名
-    schema = SCHEMA
 
     def run(self, context):
         """读取场景参数调用阶段 API, 成功后选中本次生成的碎块"""
         data = SCHEMA.read(scene_settings(context, TOOL_ID))
-        result = generate_fragments(
-            context, context.selected_editable_objects, data, data["collection_name"]
-        )
+        result = generate_fragments(context, context.selected_editable_objects, data)
         restore_selection(context, result.shards, result.shards[0])
         return tr_report(
             CONTEXT,

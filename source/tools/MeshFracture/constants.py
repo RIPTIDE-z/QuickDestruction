@@ -1,6 +1,6 @@
 """领域常量 - 工具身份与翻译上下文, 胞体权重下限, 碎块硬上限, 焊接与抖动比例, 内部顶点组名"""
 
-from ..framework.contract import tool_context
+from ...framework.contract import tool_context
 
 # 工具身份: 场景字段名, 预设目录与翻译上下文都由它派生
 TOOL_ID = "mesh_fracture"

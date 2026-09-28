@@ -9,11 +9,10 @@ import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
-from ...common.blender_context import mesh_edit, restore_selection
-from ...common.errors import require_finite
+from ....common.blender_context import mesh_edit, select_only
+from ....common.errors import require_finite
 from ..constants import (
     INTERIOR_VGROUP_NAME,
-    SHARD_LIMIT,
     WELD_SCALE_RATIO,
     WELD_TO_JITTER_RATIO,
 )
@@ -24,8 +23,11 @@ from .sampling import points_from_object, random_unit_vector
 
 # 孤岛拆分时认领结果用的自定义属性名, 拆分结束即删除
 SPLIT_TOKEN = "_qd_split_owner"
-# 超出碎块硬上限时的消息, 种子数检查与流程编排共用
-LIMIT_MESSAGE = "More than {limit} shards would be generated; lower the seed limits or recursion"
+
+
+def uses_interior(settings):
+    """是否需要区分内部断面: 内部顶点组与锐边都要按面隐藏标记判定断面"""
+    return settings["use_interior_vgroup"] or settings["use_sharp_edges"]
 
 
 def _redraw():
@@ -43,18 +45,23 @@ def remove_generated_object(obj):
         bpy.data.meshes.remove(mesh)
 
 
-def _seed_points(context, obj, source, limit, rng):
-    """采样种子点: 取来源, 为空则回退自身顶点, 按上限随机截断, 再精确去重"""
+def seed_points(context, obj, settings, level, rng):
+    """采样种子点: 取来源, 为空则回退自身顶点, 按本层上限随机截断, 精确去重并检查有限性"""
     depsgraph = context.evaluated_depsgraph_get()
-    points = points_from_object(context, depsgraph, obj, source)
+    points = points_from_object(context, depsgraph, obj, settings["source"])
     if not points:
         points = points_from_object(context, depsgraph, obj, {"VERT_OWN"})
+    # 递归层换用递归种子上限
+    limit = settings["recursion_source_limit"] if level else settings["source_limit"]
     if limit and limit < len(points):
         # 先打乱再截断, 得到随机子集而不是前 N 个
         rng.shuffle(points)
         points = points[:limit]
     # 精确去重: 按小数位取整会丢掉小尺寸物体的真实点
-    return list({tuple(point): point for point in points}.values())
+    points = list({tuple(point): point for point in points}.values())
+    # 快照只检查源物体的顶点, 这里检查粒子, 子物体与注解等来源的种子点
+    require_finite((points,), MeshFractureError, NON_FINITE_MESSAGE)
+    return points
 
 
 def _scatter_points(points, scale, source_noise, rng):
@@ -134,24 +141,16 @@ def _sync_slot_links(source_object, cell):
         target_slot.material = source_slot.material
 
 
-def build_cells(context, obj, snapshot, settings, batch, rng):
-    """采样种子点并建凸胞体物体; 随机流按截断洗牌, 噪波, 顶点抖动的次序消费"""
-    limit = settings["recursion_source_limit"] if batch.level else settings["source_limit"]
-    points = _seed_points(context, obj, settings["source"], limit, rng)
+def build_cells(context, obj, snapshot, points, settings, batch, rng):
+    """由种子点建凸胞体物体; 随机流在采样之后按噪波, 顶点抖动的次序消费"""
     if not points:
         return []
-    if len(points) > SHARD_LIMIT:
-        raise MeshFractureError(LIMIT_MESSAGE, limit=SHARD_LIMIT)
-    # 快照已检查过源顶点, 这里检查粒子, 子物体与注解等来源的种子点
-    require_finite((points,), MeshFractureError, NON_FINITE_MESSAGE)
     points = _scatter_points(points, snapshot.diagonal, settings["source_noise"], rng)
     weld_dist = snapshot.diagonal * WELD_SCALE_RATIO
     jitter_half = weld_dist / WELD_TO_JITTER_RATIO
     if settings["use_debug_points"]:
         _create_debug_points(points, batch)
-    cells = points_as_bmesh_cells(
-        points, settings["cell_scale"], settings["margin"], (snapshot.minimum, snapshot.maximum)
-    )
+    cells = points_as_bmesh_cells(points, settings["cell_scale"], settings["margin"], snapshot)
     objects = []
     for center, cell_points in cells:
         mesh = _convex_cell_mesh(cell_points, weld_dist, jitter_half, settings, batch, rng)
@@ -171,7 +170,7 @@ def build_cells(context, obj, snapshot, settings, batch, rng):
 
 
 def recenter(cells):
-    """把每个碎块的原点移到顶点平均位置, 世界空间几何不动; 与 origin_set 的 MEDIAN 定义相同"""
+    """把每个碎块的原点移到顶点平均位置, 即 Blender 重设原点的 MEDIAN 方式, 世界空间几何不动"""
     for cell in cells:
         mesh = cell.data
         count = len(mesh.vertices)
@@ -198,7 +197,7 @@ def _add_intersection(cell, obj, snapshot, hide_faces):
 def _bake_intersection(cell, modifier, snapshot, depsgraph, tracker):
     """取布尔求值结果替换胞体网格并移除修改器, 返回新网格"""
     with boolean.validated_evaluation(cell, modifier, snapshot, depsgraph) as evaluated:
-        # 直接复制依赖图里已求值的网格, 不再重新求值修改器栈
+        # 直接复制依赖图里已求值的网格, 避免按全部数据层重新求值修改器栈
         mesh = tracker.track("meshes", bpy.data.meshes.new_from_object(evaluated))
     old_mesh = cell.data
     cell.data = mesh
@@ -264,7 +263,7 @@ def _island_sort_key(obj):
 def _split_islands(context, cells, batch):
     """按不连通块拆分并认领结果, 按几何排序后返回; separate 的产出顺序不定, 排序保证可复现"""
     # separate 在物体模式下作用于选中的物体, 因此只选中本批碎块
-    restore_selection(context, cells, cells[0])
+    select_only(context, cells, cells[0])
     # 物体副本会连自定义属性一起复制, 用一次性令牌认领本次拆分的结果
     token = uuid.uuid4().hex
     for cell in cells:
@@ -292,7 +291,7 @@ def intersect_cells(context, obj, snapshot, cells, settings, batch):
     # 焊接距离与胞体阶段共用同一份快照尺度
     weld_dist = snapshot.diagonal * WELD_SCALE_RATIO
     debug = settings["use_debug_bool"]
-    use_hide = settings["use_interior_vgroup"] or settings["use_sharp_edges"]
+    use_hide = uses_interior(settings)
     if use_hide and batch.level == 0:
         # 首次切割先清掉源物体原有的面隐藏标记, 内部断面判定要从干净的起点开始
         obj.data.polygons.foreach_set("hide", [False] * len(obj.data.polygons))

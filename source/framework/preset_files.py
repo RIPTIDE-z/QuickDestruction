@@ -9,7 +9,7 @@ from pathlib import Path
 from ..common.errors import DomainError
 from .constants import CONTEXT
 
-# 信封格式版本; 结构变化时递增, 旧版本文件会被明确拒绝
+# 信封格式版本; 结构变化时递增, 版本不符的文件会被明确拒绝
 FORMAT_VERSION = 1
 # 信封必须恰好是这三个键
 ENVELOPE_KEYS = frozenset({"format_version", "tool_id", "values"})

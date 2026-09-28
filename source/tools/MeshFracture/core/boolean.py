@@ -7,7 +7,7 @@ from math import isfinite
 import bmesh
 from mathutils import Vector
 
-from ...common.errors import require_finite
+from ....common.errors import require_finite
 from ..errors import NON_FINITE_MESSAGE, IntersectionBoundsError, MeshFractureError
 
 

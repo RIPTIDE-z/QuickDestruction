@@ -1,50 +1,41 @@
-> 此工具代码使用 AI 辅助编写，可能有很多错误，不能100%保证稳定性
+# QuickDestruction
 
-- 若要进行代码开发工作，请阅读 [开发文档](doc/Developer.md)
+> 此工具代码使用 AI 辅助编写，可能有很多错误，不能 100% 保证稳定性。
 
-# MeshFracture - 网格破碎
+用于 Blender 4.2 及以上版本的破坏动画工具集。所有工具都以独立面板的形式，出现在 3D 视图侧栏的 **QuickDestruction** 标签页里（中文界面显示为"快速破坏"）。
 
-本工具为破坏动画流程生成预切割碎块，含有以下功能：
-
-- [x] `MeshFracture` 参考并派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)
-    - 在种子点上构建 3D Voronoi 图，把每个胞体做成凸多面体，再与原物体做**布尔求交**，得到贴合原表面的碎块，用于破坏动画预切割
-- [ ] `PhysicalSettings` 物理设置：占位面板（默认收起），只有一行用途提示，参数与逻辑待实现
+- [x] **MeshFracture／网格破碎**：在种子点上构建 3D Voronoi 胞体，再与原物体做布尔求交，生成贴合原表面的预切割碎块。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
+- [ ] **PhysicalSettings／物理设置**：占位面板，参数与逻辑待实现。
 - [ ] 刚体设定和自定义外力
 - [ ] 破坏动画生成
 - [ ] 自动绑定以及动画烘焙
 
-
-## 构建
-
-在本目录运行：
-
-```text
-<path_to_blender> -c extension build --source-dir=./source
-```
-
 ## 安装
 
-直接双击 `install.bat`
+在仓库根目录打包，然后安装：
 
 ```bat
-install.bat              :: 自动定位 zip 与 Blender 配置版本并安装
-install.bat 5.2          :: 指定 Blender 配置版本目录
-install.bat 5.2 -Force   :: 覆盖已安装版本时不询问
-install.bat /nopause     :: 结束后不等待按键，可用于自动化测试
+<Blender 可执行文件> -c extension build --source-dir=./source
+install.bat            :: 自动选择已配置的最高 Blender 版本
+install.bat 5.2        :: 安装到指定版本
+install.bat 5.2 -Force :: 覆盖已有安装时不询问
 ```
 
-安装器优先搜索脚本所在目录，再搜索父目录；每个目录按修改时间从新到旧选择首个 QuickDestruction ZIP。脚本目录中已有合格包时，不会被父目录的包替换。
-
-检测到已有安装时会询问是否覆盖，**默认是覆盖**：直接回车或输入 `y` 即替换，其他非空输入取消。更新后需重启 Blender 以加载新代码。
+安装后需要重启 Blender。
 
 ## 使用
 
-入口只有一个：侧栏面板（常驻）。
+1. 在物体模式下选中要切割的网格。
+2. 按 **N** 打开侧栏，切到 **QuickDestruction** 标签页。
+3. 在 **MeshFracture** 面板里调整参数，点击 **Generate Fragments**。
 
-1. 3D 视图按 **N** → **QuickDestruction** 标签页（中文界面显示为“快速破坏”）→ **MeshFracture／网格破碎** 面板，点击 **Generate Fragments** 生成碎块
+源物体始终保留，按 **Ctrl+Z** 可以撤销整次生成。参数可以保存为预设。
 
-标签页里的每个工具是一块独立折叠的面板，可以直接收起不用的工具；后续新增的工具会作为同级面板出现在同一标签页下。
+## 文档
 
-生成动作支持撤销：按 **Ctrl+Z** 回退整次生成，源物体始终保留。算子只从面板按钮调用，直接使用侧栏上的参数，不进算子搜索，也没有「调整上一步操作」面板。默认开启一轮递归，因此最终碎块数不等于初始种子数。
-
-更多使用、参数和算法说明见 [MeshFracture](doc/MeshFracture.md)。模块与接口见 [Architecture](doc/Architecture.md)，翻译维护见 [Translations](doc/Translations.md)。
+| 文档 | 内容 |
+| --- | --- |
+| [MeshFracture](doc/MeshFracture.md) | 参数、命名、输出与使用边界 |
+| [Architecture](doc/Architecture.md) | 框架分层、工具契约、预设与阶段 API |
+| [Translations](doc/Translations.md) | 语言文件与翻译检查 |
+| [Developer](doc/Developer.md) | 开发环境、代码检查、测试、打包与安装 |

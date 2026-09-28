@@ -52,13 +52,13 @@ def _cell_vertices(center, points, base_planes, scale, margin, epsilon):
     return vertices
 
 
-def points_as_bmesh_cells(points, scale, margin, bounds):
+def points_as_bmesh_cells(points, scale, margin, snapshot):
     """为每个种子点求出胞体, 返回 [(种子点, 顶点列表), ...]; 切不出胞体的种子点被丢弃
 
-    points 已去重, bounds 是源物体的世界包围盒 (最小角点, 最大角点)
+    points 已去重, snapshot 提供源物体的世界包围盒与尺度
     """
-    lo = [value - BOUNDS_MARGIN for value in bounds[0]]
-    hi = [value + BOUNDS_MARGIN for value in bounds[1]]
+    lo = [value - BOUNDS_MARGIN for value in snapshot.minimum]
+    hi = [value + BOUNDS_MARGIN for value in snapshot.maximum]
     # 半空间用四分量向量表示: 前三维是法线, w 是常数项, 法线与坐标点积加 w 不大于 0 为内侧
     base_planes = [
         Vector((1, 0, 0, -hi[0])),
@@ -71,7 +71,7 @@ def points_as_bmesh_cells(points, scale, margin, bounds):
     # 三轴权重相等时不改变平面构造, 走等轴快路径
     weights = None if scale[0] == scale[1] == scale[2] else tuple(scale)
     # 相交容差是绝对长度, 小物体上会误删细小的胞体, 因此随尺度缩小, 但不超过默认值
-    epsilon = EPSILON_ISECT * min(1.0, (Vector(bounds[1]) - Vector(bounds[0])).length)
+    epsilon = EPSILON_ISECT * min(1.0, snapshot.diagonal)
     cells = []
     for center in points:
         vertices = _cell_vertices(center, points, base_planes, weights, margin, epsilon)

@@ -16,7 +16,7 @@ import pytest
 
 from source.common.errors import InvalidParameterError
 from source.common.schema import Schema
-from source.MeshFracture.settings import SCHEMA
+from source.tools.MeshFracture.settings import SCHEMA
 
 LOG = logging.getLogger(__name__)
 
@@ -119,6 +119,7 @@ def test_write_roundtrip_and_rollback():
         """写 label 时抛错的参数组, 模拟 RNA 赋值失败"""
 
         def __setattr__(self, name, value):
+            """写 label 为 boom 时抛错, 其余赋值照常进行"""
             if name == "label" and value == "boom":
                 raise ValueError("rejected")
             super().__setattr__(name, value)
@@ -130,10 +131,15 @@ def test_write_roundtrip_and_rollback():
     assert failing.count == 1
 
 
-def test_label_falls_back_to_key():
-    """未知字段的参数名退回字段名"""
-    assert SCHEMA_UNDER_TEST.label("count") == "Count"
-    assert SCHEMA_UNDER_TEST.label("missing") == "missing"
+def test_invalid_parameter_carries_label():
+    """参数错误带英文参数名与它的翻译上下文, 未知字段的参数名退回字段名"""
+    error = SCHEMA_UNDER_TEST.invalid("count")
+    assert (error.field, error.values, error.terms) == (
+        "count",
+        {"name": "Count"},
+        {"name": "test"},
+    )
+    assert SCHEMA_UNDER_TEST.invalid("missing").values == {"name": "missing"}
 
 
 def test_mesh_fracture_defaults_are_valid():

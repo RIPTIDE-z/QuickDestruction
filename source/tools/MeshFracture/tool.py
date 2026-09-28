@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from ..framework.contract import ToolSpec
+from ...framework.contract import ToolSpec
 from .constants import TOOL_ID
 from .interaction import QD_MESH_FRACTURE_OT_generate, QD_MESH_FRACTURE_PT_main
 from .settings import SCHEMA

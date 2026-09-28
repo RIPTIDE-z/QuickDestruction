@@ -31,8 +31,6 @@ class ToolSpec:
     schema: Schema | None = None
     # 为真时参数组附带预设名字段, 并获得通用预设界面
     presets: bool = False
-    # Blender 应用挂钩: (bpy.app.handlers 中的列表名, 回调) 序列
-    handlers: tuple = ()
 
     @property
     def context(self):

@@ -57,7 +57,7 @@
     "MeshFracture": "网格破碎",
     "Generate Fragments": "生成碎块",
     "More than {limit} shards would be generated; lower the seed limits or recursion": "将生成超过 {limit} 个碎块；请降低种子点上限或递归设置",
-    "Mesh data of \"{name}\" is linked from a library and cannot be cut": "物体“{name}”的网格数据链接自外部库，无法切割"
+    "Mesh data of \"{name}\" is linked from a library; turn off Sharp Edges and Interior VGroup to cut it": "物体“{name}”的网格数据链接自外部库；关闭“锐边”与“内部顶点组”后才能切割"
   },
   "tooltips": {
     "Combine selected seed sources. Child means direct child objects. If no points are found, use the source mesh vertices.": "合并所选来源的种子点；子物体仅指直接子物体。未找到点时回退到源网格自身顶点。",

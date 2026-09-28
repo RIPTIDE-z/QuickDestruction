@@ -19,10 +19,8 @@ def mesh_edit(mesh=None):
         bm.free()
 
 
-def restore_selection(context, selection, active):
-    """恢复指定选择集与活动物体 - 跳过视图层中的空条目"""
-    # 先刷新视图层, 让刚创建或删除的物体在选择集里已经生效
-    context.view_layer.update()
+def select_only(context, selection, active):
+    """只选中指定物体并设置活动物体 - 跳过视图层中的空条目"""
     for obj in context.view_layer.objects:
         # 物体可能已被删除而残留空条目, 需要跳过
         if obj is not None and obj.select_get():
@@ -30,6 +28,12 @@ def restore_selection(context, selection, active):
     for obj in selection:
         obj.select_set(True)
     context.view_layer.objects.active = active
+
+
+def restore_selection(context, selection, active):
+    """刷新视图层后恢复选择集, 让刚创建或删除的物体在选择集里已经生效"""
+    context.view_layer.update()
+    select_only(context, selection, active)
 
 
 @contextmanager

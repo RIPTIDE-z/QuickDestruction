@@ -5,8 +5,8 @@ from typing import ClassVar
 
 from bpy.types import Panel
 
-from ..framework.contract import ToolSpec, tool_context
-from ..framework.ui import ToolPanel
+from ...framework.contract import ToolSpec, tool_context
+from ...framework.ui import ToolPanel
 
 # 工具身份: 场景字段名, 预设目录与翻译上下文都由它派生
 TOOL_ID = "physical_settings"

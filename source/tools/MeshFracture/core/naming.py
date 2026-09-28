@@ -4,11 +4,12 @@ from dataclasses import dataclass
 
 import bpy
 
-from ...common import shards
+from ....common import shards
 
 # 切割期临时名的前缀, 最终名字由 apply_names 统一分配
 TEMP_NAME_PREFIX = "QDTMP_"
-# 名字里源物体名的 UTF-8 字节上限: 保证碎块网格名不超过 Blender 4.2 的 63 字节名字上限
+# 名字里源物体名最多占的 UTF-8 字节数: 默认前缀与序号下, 碎块网格名不超过 Blender 4.2 的 63 字节上限
+# 前缀过长时 Blender 仍会截断名字, 截断后撞名由 Blender 加后缀区分
 SOURCE_NAME_BYTES = 32
 
 
