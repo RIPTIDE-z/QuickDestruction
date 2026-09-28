@@ -4,7 +4,7 @@
 
 用于 Blender 4.2 及以上版本的破坏动画工具集。所有工具都以独立面板的形式，出现在 3D 视图侧栏的 **QuickDestruction** 标签页里（中文界面显示为"快速破坏"）。
 
-- [x] **MeshFracture／网格破碎**：在种子点上构建 3D Voronoi 胞体，再与原物体做布尔求交，生成贴合原表面的预切割碎块。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
+- [x] **MeshFracture／网格破碎**：在种子上构建 3D Voronoi 胞体，再与原物体做布尔求交，生成贴合原表面的预切割碎块。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
 - [ ] **PhysicalSettings／物理设置**：占位面板，参数与逻辑待实现。
 - [ ] 刚体设定和自定义外力
 - [ ] 破坏动画生成

@@ -1,4 +1,4 @@
-"""命名计划 - 按切割路径命名与分组, 切割期先用临时名, 收纳保留的上级碎块, 全部切割结束后统一命名
+"""命名计划 - 按切割路径命名与分组, 切割期先用临时名, 收纳保留的父碎块, 全部切割结束后统一命名
 
 路径是从源物体到碎块的逐层序号, 例如 (3, 2) 表示首次切割的第 3 块再细分出的第 2 块
 碎块名由前缀, 源物体名与路径组成, 例如 cell_Cube_003_002, 去掉最后一段就是父碎块的名字
@@ -12,7 +12,7 @@ from ....common import shards
 
 # 切割期临时名的前缀, 最终名字由 apply_names 统一分配
 TEMP_NAME_PREFIX = "QDTMP_"
-# 保留的上级碎块所在集合名的后缀: <源物体>_Parents 下按层分为 <源物体>_Parents_L1 等
+# 保留的父碎块所在集合名的后缀: <源物体>_Parents 下按层分为 <源物体>_Parents_L1 等
 PARENTS_SUFFIX = "_Parents"
 # 名字里源物体名最多占的 UTF-8 字节数: 默认前缀与序号下, 五层以内的碎块网格名不超过 Blender 4.2 的 63 字节上限
 # 超出时 Blender 会截断名字, 截断后撞名由 Blender 加后缀区分
@@ -53,7 +53,7 @@ class ShardBatch:
 
 
 class NamingPlan:
-    """一个源物体的命名与分组状态 - 每次切割的产物按被切物体分组, 保留的上级碎块按层收纳"""
+    """一个源物体的命名与分组状态 - 每次切割的产物按被切物体分组, 保留的父碎块按层收纳"""
 
     def __init__(self, source_name, collection, settings, tracker):
         """记录源物体名, 输出集合与命名参数"""
@@ -61,7 +61,7 @@ class NamingPlan:
         self.source_name = source_name
         # 名字里用的源物体名, 按 UTF-8 字节截短, 不截断多字节字符
         self.label = source_name.encode("utf-8")[:SOURCE_NAME_BYTES].decode("utf-8", "ignore")
-        # 输出集合, 组集合与上级碎块集合都建在它下面
+        # 输出集合, 组集合与父碎块集合都建在它下面
         self.collection = collection
         # 碎块名前缀, 只用于碎块名
         self.prefix = settings["shard_prefix"]
@@ -75,9 +75,9 @@ class NamingPlan:
         self.temp_counter = 0
         # 建过的组集合, 收尾时清理被搬空的
         self.created_collections = []
-        # 已被细分但保留下来的上级碎块, 与碎块一起统一命名
+        # 已被细分但保留下来的父碎块, 与碎块一起统一命名
         self.parents = []
-        # 上级碎块的总集合与各层集合, 第一次保留上级碎块时才建立
+        # 父碎块的总集合与各层集合, 第一次保留父碎块时才建立
         self.parents_root = None
         self.parent_levels = {}
 
@@ -120,7 +120,7 @@ class NamingPlan:
             bpy.data.collections.remove(batch.collection)
 
     def _parent_collection(self, level):
-        """第 level 层上级碎块的集合, 按需建立总集合与层集合"""
+        """第 level 层父碎块的集合, 按需建立总集合与层集合"""
         if self.parents_root is None:
             self.parents_root = self._new_collection(
                 f"{self.label}{PARENTS_SUFFIX}", self.collection
@@ -131,7 +131,7 @@ class NamingPlan:
         return self.parent_levels[level]
 
     def keep_parent(self, parent):
-        """把已被细分的碎块移进它所在层的上级碎块集合并加上标记, 此后它不再参与递归"""
+        """把已被细分的碎块移进它所在层的父碎块集合并加上标记, 此后它不再参与递归"""
         holder = self._parent_collection(parent[shards.LEVEL_MARK])
         # 先链接再解除原集合, 物体始终至少属于一个集合
         holder.objects.link(parent)

@@ -26,7 +26,7 @@ SPLIT_TOKEN = "_qd_split_owner"
 
 
 def uses_interior(settings):
-    """是否需要区分内部断面: 内部顶点组与锐边都要按面隐藏标记判定断面"""
+    """是否需要区分内部断面: 断面顶点组与锐边都要按面隐藏标记判定断面"""
     return settings["use_interior_vgroup"] or settings["use_sharp_edges"]
 
 
@@ -65,7 +65,7 @@ def seed_points(context, obj, settings, first, rng):
 
 
 def _scatter_points(points, scale, source_noise, rng):
-    """噪波: 每个种子点沿随机方向位移, 半径在 0 到上限之间均匀取值; 强度为 0 时不消耗随机流"""
+    """种子扰动: 每个种子点沿随机方向位移, 半径在 0 到上限之间均匀取值; 强度为 0 时不消耗随机流"""
     if not source_noise:
         return points
     return [
@@ -142,7 +142,7 @@ def _sync_slot_links(source_object, cell):
 
 
 def build_cells(context, obj, snapshot, points, settings, batch, rng):
-    """由种子点建凸胞体物体; 随机流在采样之后按噪波, 顶点抖动的次序消费"""
+    """由种子点建凸胞体物体; 随机流在采样之后按种子扰动, 顶点抖动的次序消费"""
     if not points:
         return []
     points = _scatter_points(points, snapshot.diagonal, settings["source_noise"], rng)
@@ -321,7 +321,7 @@ def intersect_cells(context, obj, snapshot, cells, settings, batch):
 
 
 def _mark_interior_group(cell, bm):
-    """只属于内部断面的顶点计入内部顶点组, 与外表面共享的边界顶点不计入"""
+    """只属于内部断面的顶点计入断面顶点组, 与外表面共享的边界顶点不计入"""
     exterior = {vert for face in bm.faces if not face.hide for vert in face.verts}
     group = cell.vertex_groups.get(INTERIOR_VGROUP_NAME)
     if group is None:

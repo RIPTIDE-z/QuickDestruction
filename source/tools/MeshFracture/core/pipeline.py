@@ -12,7 +12,9 @@ from . import boolean, mesh_ops
 from .naming import NamingPlan
 
 # 超出碎块硬上限时的消息
-LIMIT_MESSAGE = "More than {limit} shards would be generated; lower the seed limits or recursion"
+LIMIT_MESSAGE = (
+    "More than {limit} shards would be generated; lower Max Pieces, Max per Shard or Rounds"
+)
 
 
 def _check_sources(context, sources, settings):
@@ -98,7 +100,7 @@ def _cut(context, obj, settings, batch, rng):
 
 
 def _select_recursion(cells, settings, cursor, rng):
-    """按比例与选择方式挑出本轮参与递归的碎块, 数量向下取整"""
+    """按每轮细分比例与优先细分方式挑出本轮参与递归的碎块, 数量向下取整"""
     fraction = settings["recursion_chance"]
     selected = list(cells)
     if fraction == 1:
@@ -129,7 +131,7 @@ def _select_recursion(cells, settings, cursor, rng):
 
 
 def _finish(cells, settings, naming):
-    """全部切割结束后的收尾: 合并共面面, 清理空集合, 统一命名与断面标记; 保留的上级碎块一并处理"""
+    """全部切割结束后的收尾: 合并共面面, 清理空集合, 统一命名与断面标记; 保留的父碎块一并处理"""
     debug = settings["use_debug_bool"]
     objects = cells + naming.parents
     if objects and not debug:
@@ -143,7 +145,7 @@ def _finish(cells, settings, naming):
 def main_object(context, collection, obj, settings, rng, tracker, done):
     """对单个源物体做首次切割并按需递归, 最后统一收尾, 返回最终碎块
 
-    done 是之前的源已经生成的碎块数; 被细分的父块总是离开碎块列表, 删除或移进上级碎块集合
+    done 是之前的源已经生成的碎块数; 被细分的父块总是离开碎块列表, 删除或移进父碎块集合
     """
     naming = NamingPlan(obj.name, collection, settings, tracker)
     cells = _cut(context, obj, settings, naming.first_batch(), rng)
@@ -171,11 +173,11 @@ def main_object(context, collection, obj, settings, rng, tracker, done):
             _check_limit(done + len(cells))
             # 父块已被子块取代, 不再参与之后的递归与阈值计数
             cells.remove(parent)
-            if settings["use_remove_original"]:
+            if settings["use_keep_parents"]:
+                naming.keep_parent(parent)
+            else:
                 # 删除被替换的父块, 避免父子几何重叠
                 mesh_ops.remove_generated_object(parent)
-            else:
-                naming.keep_parent(parent)
     _finish(cells, settings, naming)
     return cells
 

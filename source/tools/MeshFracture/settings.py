@@ -9,7 +9,7 @@ PROPERTY_SPECS = {
     "source": (
         "EnumProperty",
         {
-            "name": "Source",
+            "name": "Seed Source",
             "items": (
                 (
                     "VERT_OWN",
@@ -31,8 +31,9 @@ PROPERTY_SPECS = {
                 (
                     "PARTICLE_CHILD",
                     "Child Particles",
-                    "Use particle systems on direct child objects, not child particles of the "
-                    "source particle system.",
+                    "Use current positions of all particles, including unborn and dead ones, from "
+                    "all particle systems on direct child objects; child particles are not "
+                    "included.",
                 ),
                 (
                     "PENCIL",
@@ -50,9 +51,11 @@ PROPERTY_SPECS = {
     "source_limit": (
         "IntProperty",
         {
-            "name": "Seed Limit",
-            "description": "Maximum sampled seed points before deduplication; 0 keeps all "
-            "points. Does not add points or guarantee a shard count.",
+            "name": "Max Pieces",
+            "description": "Maximum pieces of the first cut: at most this many seeds are picked "
+            "at random from the sampled points, before deduplication, and each seed yields at "
+            "most one piece; island splitting can add pieces. 0 uses all points. Does not add "
+            "points. Recursive cuts use Max per Shard.",
             "min": 0,
             "max": 5000,
             "default": 100,
@@ -61,9 +64,10 @@ PROPERTY_SPECS = {
     "source_noise": (
         "FloatProperty",
         {
-            "name": "Noise",
-            "description": "Random seed displacement, from 0 to this fraction of half the "
-            "world-space bounding-box diagonal. 0 disables displacement.",
+            "name": "Seed Jitter",
+            "description": "Move each seed in a random direction by up to this fraction of half "
+            "the world-space bounding-box diagonal of the object being cut, so recursive cuts "
+            "jitter relative to the parent shard. 0 disables jitter.",
             "min": 0.0,
             "max": 1.0,
             "default": 0.5,
@@ -74,9 +78,9 @@ PROPERTY_SPECS = {
         "IntProperty",
         {
             "name": "Random Seed",
-            "description": "Seed for sampling, noise, recursive selection and numerical jitter. "
-            "The same inputs and seed reproduce the cut within the same Blender "
-            "version. Change this value for a different pattern; 0 is a fixed seed.",
+            "description": "Random seed for seed sampling, seed jitter, recursive selection and "
+            "cell vertex jitter. The same inputs and seed reproduce the cut within the same "
+            "Blender version. Change this value for a different pattern; 0 is a fixed seed.",
             "min": 0,
             "max": 2147483647,
             "default": 0,
@@ -98,9 +102,10 @@ PROPERTY_SPECS = {
     "recursion": (
         "IntProperty",
         {
-            "name": "Recursion",
-            "description": "Additional shatter rounds after the first cut. 0 disables recursion; "
-            "growth also depends on the fraction and stopping threshold.",
+            "name": "Rounds",
+            "description": "Subdivision rounds after the first cut; the first cut is level 1 and "
+            "each round adds a level. 0 disables recursion. Growth also depends on the split "
+            "fraction and the stop value.",
             "min": 0,
             "max": 5000,
             "default": 1,
@@ -109,11 +114,12 @@ PROPERTY_SPECS = {
     "recursion_source_limit": (
         "IntProperty",
         {
-            "name": "Seeds per Shard",
-            "description": "Maximum seed points sampled for each recursively cut shard, before "
-            "deduplication; 0 keeps all available points. Parent shards have no particles or "
-            "children, so unless Annotation Pencil is selected their seeds are their own "
-            "vertices and values above the vertex count have no further effect.",
+            "name": "Max per Shard",
+            "description": "Maximum pieces each shard is cut into during recursion: at most this "
+            "many seeds are picked at random from the shard, before deduplication; island "
+            "splitting can add pieces. 0 uses all available points. Parent shards have no "
+            "particles or children, so unless Annotation Pencil is selected their seeds are "
+            "their own vertices and values above the vertex count have no further effect.",
             "min": 0,
             "max": 5000,
             "default": 8,
@@ -122,10 +128,10 @@ PROPERTY_SPECS = {
     "recursion_clamp": (
         "IntProperty",
         {
-            "name": "Stop Threshold",
-            "description": "Stop further recursion when the current shard count per source "
-            "object reaches this threshold. One cut or island split may exceed "
-            "it. 0 disables the threshold; the first cut is not limited. Generation stops "
+            "name": "Stop Splitting At",
+            "description": "Stop further subdivision when the current shard count per source "
+            "object reaches this value. One cut or island split may exceed it. 0 disables "
+            "it; the first cut is not limited. Generation stops "
             f"with an error beyond {SHARD_LIMIT} shards in total.",
             "min": 0,
             "max": 10000,
@@ -135,10 +141,9 @@ PROPERTY_SPECS = {
     "recursion_chance": (
         "FloatProperty",
         {
-            "name": "Fraction",
-            "description": "Fraction of current shards selected each round, rounded down. 0 "
-            "selects none; 1 selects all. The selection mode chooses which "
-            "shards.",
+            "name": "Split Fraction",
+            "description": "Fraction of current shards subdivided each round, rounded down. 0 "
+            "selects none; 1 selects all. Prefer chooses which shards.",
             "min": 0.0,
             "max": 1.0,
             "default": 1.0,
@@ -147,7 +152,7 @@ PROPERTY_SPECS = {
     "recursion_chance_select": (
         "EnumProperty",
         {
-            "name": "Recurse Over",
+            "name": "Prefer",
             "items": (
                 ("RANDOM", "Random", "Randomly choose the required fraction of shards."),
                 (
@@ -172,9 +177,8 @@ PROPERTY_SPECS = {
                 ),
             ),
             "default": "RANDOM",
-            "description": "Choose which shards participate when the recursion "
-            "fraction is below 1. Size uses the world-space "
-            "bounding-box diagonal; cursor distance uses object "
+            "description": "Which shards to subdivide first when the split fraction is below 1. "
+            "Size uses the world-space bounding-box diagonal; cursor distance uses object "
             "origins.",
         },
     ),
@@ -210,8 +214,8 @@ PROPERTY_SPECS = {
         {
             "name": "Cut Inset",
             "description": "Inset each seed-dividing plane by this world-space length in Blender "
-            "units. Opposing faces have about twice this gap; large values can erase "
-            "cells.",
+            "units, at every cut including recursive cuts. Opposing faces have about twice "
+            "this gap; large values can erase cells.",
             "min": 0.0,
             "max": 1.0,
             "default": 0.001,
@@ -224,9 +228,8 @@ PROPERTY_SPECS = {
         "IntProperty",
         {
             "name": "Interior Slot",
-            "description": "Zero-based material slot index for interior faces; 0 selects the first "
-            "slot. Shards copy the source material slots and UV/color layers; interior UVs "
-            "are not unwrapped.",
+            "description": "Zero-based material slot index for interior faces, including those "
+            "of recursive cuts; 0 selects the first slot.",
             "default": 0,
             "min": 0,
         },
@@ -248,15 +251,15 @@ PROPERTY_SPECS = {
             "default": True,
         },
     ),
-    "use_remove_original": (
+    "use_keep_parents": (
         "BoolProperty",
         {
-            "name": "Remove Parents",
-            "description": "Delete generated parent shards after successful recursive "
-            "replacement. When off, cut parents move into the level collections "
-            "<source>_Parents_L<level> inside <source>_Parents, are not cut again and are not "
-            "part of the result. The originally selected source objects are always kept.",
-            "default": True,
+            "name": "Keep Parents",
+            "description": "Keep shards that were subdivided instead of deleting them. They move "
+            "into the level collections <source>_Parents_L<level> inside <source>_Parents, are "
+            "not cut again and are not part of the result. The originally selected source "
+            "objects are always kept.",
+            "default": False,
         },
     ),
     "collection_name": (
@@ -282,7 +285,7 @@ PROPERTY_SPECS = {
     "use_shard_collections": (
         "BoolProperty",
         {
-            "name": "Group Shards",
+            "name": "Group by Parent",
             "description": "Put the shards of every cut into a collection named after the "
             "object that was cut, inside the output collection: the source object for the "
             "first cut, the parent shard for recursive cuts. When off, every shard is linked "
@@ -306,7 +309,7 @@ PROPERTY_SPECS = {
         {
             "name": "Seed Points",
             "description": "Create a DebugPoints object for every cut, including recursive "
-            "cuts, showing its seed points after noise. It is diagnostic geometry, not a shard.",
+            "cuts, showing its seeds after jitter. It is diagnostic geometry, not a shard.",
             "default": False,
         },
     ),
@@ -323,8 +326,8 @@ PROPERTY_SPECS = {
     "use_debug_bool": (
         "BoolProperty",
         {
-            "name": "Unapplied Boolean",
-            "description": "Keep enabled Boolean modifiers on convex base meshes; evaluated geometry still shows the intersection. Skip recursion, island splitting and interior finishing.",
+            "name": "Keep Boolean Modifier",
+            "description": "Keep enabled Boolean modifiers on convex base meshes; evaluated geometry still shows the intersection. Skip recursion, island splitting, coplanar face merging and interior finishing.",
             "default": False,
         },
     ),

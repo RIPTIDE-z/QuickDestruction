@@ -12,8 +12,8 @@
 ```json
 {
   "locale": "zh_HANS",
-  "interface": {"Seed Limit": "种子点上限"},
-  "tooltips": {"Maximum sampled seed points before deduplication; ...": "去重前最多保留的种子点数……"}
+  "interface": {"Max Pieces": "首次切分上限"},
+  "tooltips": {"Maximum pieces of the first cut: ...": "首次切割最多切成的块数……"}
 }
 ```
 

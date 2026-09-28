@@ -8,7 +8,7 @@
     5. 失败处理: 注入异常后本次新建的数据全部回收, 源物体状态还原
     6. 输入边界: 碎块硬上限与未知参数被拒绝, 链接库网格只在标记断面时被拒绝
     7. 重设原点: 碎块原点等于切割时顶点的平均位置, 世界几何不动
-    8. 保留上级碎块: 2 到 5 轮递归下父块只被切一次, 按层移进 Src_Parents_L<层>, 名字与集合能从路径对应到父级,
+    8. 保留父碎块: 2 到 5 轮递归下父块只被切一次, 按层移进 Src_Parents_L<层>, 名字与集合能从路径对应到父级,
        最终碎块与删除父块时一致
 测试过程:
     每个场景先清空数据, 建立源物体与子物体种子, 经 MeshFracture.api.generate_fragments 切割,
@@ -37,7 +37,7 @@ from source.tools.MeshFracture.core import mesh_ops, pipeline  # noqa: E402
 from source.tools.MeshFracture.errors import MeshFractureError  # noqa: E402
 
 FAILURES = []
-# 子物体顶点做种子, 关闭噪波与内缩, 其余按场景覆盖
+# 子物体顶点做种子, 关闭种子扰动与内缩, 其余按场景覆盖
 BASE = {"source": {"VERT_CHILD"}, "source_limit": 0, "source_noise": 0.0, "margin": 0.0}
 # 体积比允许的偏差: 凸包阶段的抖动与焊接带来约 1e-5 的误差
 VOLUME_TOLERANCE = 1e-4
@@ -219,7 +219,7 @@ def keep_parents_run(rounds, remove):
         "recursion": rounds,
         "recursion_source_limit": 2,
         "recursion_clamp": 0,
-        "use_remove_original": remove,
+        "use_keep_parents": not remove,
     }
     return cut([source], config, "Out")
 
@@ -230,7 +230,7 @@ def expected_name(obj):
 
 
 def check_parents(rounds, result, parents):
-    """上级碎块按层收纳且已收尾, 不在结果里; 名字与集合都能从路径对应到父级"""
+    """父碎块按层收纳且已收尾, 不在结果里; 名字与集合都能从路径对应到父级"""
     leaves = set(result.shards)
     everything = (*leaves, *parents)
     root = bpy.data.collections.get("Src_Parents")
@@ -250,8 +250,8 @@ def check_parents(rounds, result, parents):
         == (expected_name(obj).rsplit("_", 1)[0] if obj["_qd_level"] > 1 else "Src")
         for obj in leaves
     )
-    check(f"{rounds} 轮 上级碎块不在结果里", not leaves & set(parents))
-    check(f"{rounds} 轮 上级碎块按层放在 Src_Parents_L<层>", placed)
+    check(f"{rounds} 轮 父碎块不在结果里", not leaves & set(parents))
+    check(f"{rounds} 轮 父碎块按层放在 Src_Parents_L<层>", placed)
     check(
         f"{rounds} 轮 每个父块都有子块, 每个子块的父块都被保留",
         kept == referenced,
@@ -259,7 +259,7 @@ def check_parents(rounds, result, parents):
     )
     check(f"{rounds} 轮 碎块在以父级命名的组集合里", grouped)
     check(
-        f"{rounds} 轮 上级碎块已收尾",
+        f"{rounds} 轮 父碎块已收尾",
         not any(face.hide for obj in parents for face in obj.data.polygons),
     )
     names = [obj.name for obj in everything]
@@ -269,13 +269,13 @@ def check_parents(rounds, result, parents):
         str(sorted(names)[:3]),
     )
     check(
-        f"{rounds} 轮 碎块契约不含上级碎块",
+        f"{rounds} 轮 碎块契约不含父碎块",
         set(shard_contract.shards_of(bpy.data.objects, "Src")) == leaves,
     )
 
 
 def case_keep_parents():
-    """关闭移除上级碎块: 父块只切一次并移进上级碎块集合, 最终碎块与删除父块时一致"""
+    """开启保留父碎块: 父块只切一次并按层移进父碎块集合, 最终碎块与删除父块时一致"""
     for rounds in (2, 3, 4, 5):
         removed = fingerprint(keep_parents_run(rounds, True))
         result = keep_parents_run(rounds, False)
@@ -283,7 +283,7 @@ def case_keep_parents():
         levels = sorted({shard[shard_contract.LEVEL_MARK] for shard in result.shards})
         ratio = volume_ratio(result, 8.0)
         print(
-            f"   {rounds} 轮: {len(result.shards)} 块碎块, {len(parents)} 个上级碎块, 层号 {levels}"
+            f"   {rounds} 轮: {len(result.shards)} 块碎块, {len(parents)} 个父碎块, 层号 {levels}"
         )
         check(f"{rounds} 轮 碎块体积守恒", abs(ratio - 1) < VOLUME_TOLERANCE, f"{ratio:.6f}")
         check(f"{rounds} 轮 碎块与删除父块时一致", fingerprint(result) == removed)

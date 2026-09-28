@@ -6,7 +6,7 @@ SOURCE_MARK = "_qd_source"
 LEVEL_MARK = "_qd_level"
 # 从源物体到碎块的逐层序号, 去掉最后一项就是父碎块的路径
 PATH_MARK = "_qd_path"
-# 已被细分但保留下来的上级碎块, 与子块几何重叠, 不算作碎块
+# 已被细分但保留下来的父碎块, 与子块几何重叠, 不算作碎块
 PARENT_MARK = "_qd_parent"
 
 
@@ -18,7 +18,7 @@ def mark(shard, source_name, path):
 
 
 def mark_parent(shard):
-    """把已被细分的碎块标记为上级碎块, 它保留来源, 层级与路径"""
+    """把已被细分的碎块标记为父碎块, 它保留来源, 层级与路径"""
     shard[PARENT_MARK] = True
 
 
@@ -28,7 +28,7 @@ def parent_path(shard):
 
 
 def shards_of(objects, source_name):
-    """筛选出某个源物体生成的全部碎块, 不含保留下来的上级碎块"""
+    """筛选出某个源物体生成的全部碎块, 不含保留下来的父碎块"""
     return [
         obj
         for obj in objects

@@ -25,7 +25,7 @@ GROUPS = (
             "recursion_clamp",
             "recursion_chance",
             "recursion_chance_select",
-            "use_remove_original",
+            "use_keep_parents",
         ),
     ),
     ParamGroup("Cell Shape", ("cell_scale",), closed=True),
@@ -52,7 +52,7 @@ RECURSION_DEPENDENT = frozenset(
         "recursion_source_limit",
         "recursion_clamp",
         "recursion_chance",
-        "use_remove_original",
+        "use_keep_parents",
         "use_shard_collections",
     }
 )
@@ -64,7 +64,7 @@ def _param_active(owner, key):
         return not owner.use_debug_bool
     recursion_enabled = owner.recursion > 0 and not owner.use_debug_bool
     if key == "recursion_chance_select":
-        # 选择方式仅在比例严格介于 0 与 1 时才参与
+        # 优先细分仅在每轮细分比例严格介于 0 与 1 时才参与
         return recursion_enabled and 0 < owner.recursion_chance < 1
     if key in RECURSION_DEPENDENT:
         return recursion_enabled
@@ -114,9 +114,9 @@ def _source_row(column, heading):
 
 
 def _draw_source(layout, owner):
-    """来源: 标题一行, 自身与子物体各一行顶点与粒子按钮, 注解铅笔与物体无关, 单独一行显示全称"""
+    """来源: 标题一行, 自身与子物体各一行顶点与粒子按钮, 注解铅笔与物体无关, 归在特殊一行显示全称"""
     column = layout.column(align=True)
-    column.label(text="Source", text_ctxt=CONTEXT)
+    column.label(text="Seed Source", text_ctxt=CONTEXT)
     verts, particles = tr(CONTEXT, "Verts"), tr(CONTEXT, "Particles")
     own = _source_row(column, tr(CONTEXT, "Own"))
     own.prop_enum(owner, "source", "VERT_OWN", text=verts, translate=False)
@@ -124,7 +124,7 @@ def _draw_source(layout, owner):
     children = _source_row(column, tr(CONTEXT, "Children"))
     children.prop_enum(owner, "source", "VERT_CHILD", text=verts, translate=False)
     children.prop_enum(owner, "source", "PARTICLE_CHILD", text=particles, translate=False)
-    annotation = _source_row(column, "")
+    annotation = _source_row(column, tr(CONTEXT, "Special"))
     annotation.prop_enum(owner, "source", "PENCIL", text="Annotation Pencil", text_ctxt=CONTEXT)
 
 
