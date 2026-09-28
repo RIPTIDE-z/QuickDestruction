@@ -208,7 +208,7 @@ PROPERTY_SPECS = {
     "margin": (
         "FloatProperty",
         {
-            "name": "Margin",
+            "name": "Cut Inset",
             "description": "Inset each seed-dividing plane by this world-space length in Blender "
             "units. Opposing faces have about twice this gap; large values can erase "
             "cells.",
@@ -253,9 +253,9 @@ PROPERTY_SPECS = {
         {
             "name": "Remove Parents",
             "description": "Delete generated parent shards after successful recursive "
-            "replacement. When off, cut parents move into the <source>_Parents collection, "
-            "are not cut again and are not part of the result. The originally selected "
-            "source objects are always kept.",
+            "replacement. When off, cut parents move into the level collections "
+            "<source>_Parents_L<level> inside <source>_Parents, are not cut again and are not "
+            "part of the result. The originally selected source objects are always kept.",
             "default": True,
         },
     ),
@@ -263,7 +263,9 @@ PROPERTY_SPECS = {
         "StringProperty",
         {
             "name": "Collection",
-            "description": "Output collection name. Empty uses the current collection. A named collection must be editable and visible in this view layer; create it only if no collection has that name. All shards are placed here or in its group collections.",
+            "description": "Output collection name. Empty uses the current collection. A named "
+            "collection must be editable and visible in this view layer; create it only if no "
+            "collection has that name. All shards are placed here or in its child collections.",
             "default": "cell_collection",
         },
     ),
@@ -271,9 +273,9 @@ PROPERTY_SPECS = {
         "StringProperty",
         {
             "name": "Shard Prefix",
-            "description": "Prefix of shard names, followed by the source object name, for "
-            "example cell_Cube_001, or cell_Cube_L1G1_001 with grouping. It is never "
-            "used for collection names.",
+            "description": "Prefix of shard names, followed by the source object name and one "
+            "index per cut level: cell_Cube_003 is the third shard of the first cut and "
+            "cell_Cube_003_002 is the second shard cut from it.",
             "default": "cell",
         },
     ),
@@ -281,10 +283,10 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Group Shards",
-            "description": "Put the shards of each recursively cut shard into its own "
-            "collection named <source>_L<level>_G<group>, inside the output "
-            "collection. When off, every shard is linked directly into "
-            "the output collection.",
+            "description": "Put the shards of every cut into a collection named after the "
+            "object that was cut, inside the output collection: the source object for the "
+            "first cut, the parent shard for recursive cuts. When off, every shard is linked "
+            "directly into the output collection.",
             "default": True,
         },
     ),
@@ -292,9 +294,8 @@ PROPERTY_SPECS = {
         "IntProperty",
         {
             "name": "Index Digits",
-            "description": "Minimum digit width of the shard sequence number, padded with zeros. "
-            "Longer numbers are not cut. Does not pad level/group numbers or guarantee "
-            "global creation-order sorting.",
+            "description": "Minimum digit width of each index in shard names, padded with "
+            "zeros. Longer numbers are not cut.",
             "min": 0,
             "max": 8,
             "default": 3,

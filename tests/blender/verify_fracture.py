@@ -4,11 +4,12 @@
     1. 体积守恒: 不同尺度, 非等轴权重, 两轮递归, 凹体加孤岛拆分后碎块体积之和等于源体积
     2. 可复现: 同一输入两次切割的几何完全一致
     3. 断面收尾: Interior 顶点组, 锐边, 隐藏面清理与断面材质索引, 标记锐边后碎块仍然封闭
-    4. 命名: 多源输出不重名, 名字与组集合名带源物体名, 超长中文源名也不会撞名
+    4. 命名: 多源输出不重名, 名字由源物体名与逐层序号组成, 组集合以被切物体命名, 超长中文源名也不会撞名
     5. 失败处理: 注入异常后本次新建的数据全部回收, 源物体状态还原
     6. 输入边界: 碎块硬上限与未知参数被拒绝, 链接库网格只在标记断面时被拒绝
     7. 重设原点: 碎块原点等于切割时顶点的平均位置, 世界几何不动
-    8. 保留上级碎块: 2 到 5 轮递归下父块只被切一次, 移进上级碎块集合, 最终碎块与删除父块时一致
+    8. 保留上级碎块: 2 到 5 轮递归下父块只被切一次, 按层移进 Src_Parents_L<层>, 名字与集合能从路径对应到父级,
+       最终碎块与删除父块时一致
 测试过程:
     每个场景先清空数据, 建立源物体与子物体种子, 经 MeshFracture.api.generate_fragments 切割,
     不注册插件界面; 每条判据输出 [PASS] 或 [FAIL]
@@ -223,27 +224,50 @@ def keep_parents_run(rounds, remove):
     return cut([source], config, "Out")
 
 
+def expected_name(obj):
+    """按路径推出的名字: 前缀, 源物体名, 每层三位序号"""
+    return "_".join(("cell", "Src", *(f"{index:03d}" for index in obj[shard_contract.PATH_MARK])))
+
+
 def check_parents(rounds, result, parents):
-    """上级碎块只在上级碎块集合里, 已收尾, 不在结果里, 每个父块恰好对应一个组"""
+    """上级碎块按层收纳且已收尾, 不在结果里; 名字与集合都能从路径对应到父级"""
     leaves = set(result.shards)
-    groups = {
-        (obj[shard_contract.LEVEL_MARK], obj[shard_contract.GROUP_MARK])
-        for obj in (*leaves, *parents)
-        if obj[shard_contract.LEVEL_MARK] > 0
-    }
-    holder = bpy.data.collections.get("Src_Parents")
-    check(f"{rounds} 轮 上级碎块不在结果里", not leaves & set(parents))
-    check(f"{rounds} 轮 每个父块对应一个组", len(parents) == len(groups), f"{len(parents)} 个父块")
-    check(
-        f"{rounds} 轮 上级碎块只在 Src_Parents 集合",
-        holder is not None and all(obj.users_collection == (holder,) for obj in parents),
+    everything = (*leaves, *parents)
+    root = bpy.data.collections.get("Src_Parents")
+    placed = (
+        all(
+            obj.users_collection == (bpy.data.collections.get(f"Src_Parents_L{obj['_qd_level']}"),)
+            and obj.users_collection[0].name in root.children
+            for obj in parents
+        )
+        if root
+        else False
     )
+    kept = {tuple(obj[shard_contract.PATH_MARK]) for obj in parents}
+    referenced = {shard_contract.parent_path(obj) for obj in everything} - {()}
+    grouped = all(
+        obj.users_collection[0].name
+        == (expected_name(obj).rsplit("_", 1)[0] if obj["_qd_level"] > 1 else "Src")
+        for obj in leaves
+    )
+    check(f"{rounds} 轮 上级碎块不在结果里", not leaves & set(parents))
+    check(f"{rounds} 轮 上级碎块按层放在 Src_Parents_L<层>", placed)
+    check(
+        f"{rounds} 轮 每个父块都有子块, 每个子块的父块都被保留",
+        kept == referenced,
+        f"{len(kept)} 个父块",
+    )
+    check(f"{rounds} 轮 碎块在以父级命名的组集合里", grouped)
     check(
         f"{rounds} 轮 上级碎块已收尾",
         not any(face.hide for obj in parents for face in obj.data.polygons),
     )
-    names = [obj.name for obj in (*leaves, *parents)]
-    check(f"{rounds} 轮 名字不重复", not any("." in name for name in names), str(names[:3]))
+    names = [obj.name for obj in everything]
+    check(
+        f"{rounds} 轮 名字由路径决定且不重复",
+        all(obj.name == expected_name(obj) for obj in everything),
+        str(sorted(names)[:3]),
+    )
     check(
         f"{rounds} 轮 碎块契约不含上级碎块",
         set(shard_contract.shards_of(bpy.data.objects, "Src")) == leaves,
@@ -263,22 +287,26 @@ def case_keep_parents():
         )
         check(f"{rounds} 轮 碎块体积守恒", abs(ratio - 1) < VOLUME_TOLERANCE, f"{ratio:.6f}")
         check(f"{rounds} 轮 碎块与删除父块时一致", fingerprint(result) == removed)
-        check(f"{rounds} 轮 递归到第 {rounds} 层", levels[-1] == rounds, str(levels))
+        # 首次切割是第 1 层, 每轮递归加一层
+        check(f"{rounds} 轮 递归到第 {rounds + 1} 层", levels[-1] == rounds + 1, str(levels))
         check_parents(rounds, result, parents)
 
 
 def case_naming():
-    """多源与超长中文源名不重名, 名字与组集合名带源物体名"""
+    """多源与超长中文源名不重名, 名字与组集合名带源物体名与路径"""
     reset()
     long_name = "非常长的中文源物体名字用来检查字节截断"
     sources = [cube("A"), cube("B", location=(5.0, 0.0, 0.0)), cube(long_name, location=(10, 0, 0))]
     result = cut(sources, {"recursion": 1}, "Shards")
     names = [shard.name for shard in result.shards]
-    groups = [coll.name for coll in bpy.data.collections if "_L1_G" in coll.name]
+    groups = [coll.name for coll in bpy.data.collections if coll.name != "Shards"]
     check("多源碎块没有重名后缀", not any("." in name for name in names), str(names[:3]))
     check(
-        "碎块名带源物体名",
-        all(name.startswith(("cell_A_", "cell_B_", "cell_非常")) for name in names),
+        "碎块名带源物体名与两层序号",
+        all(
+            name.startswith(("cell_A_", "cell_B_", "cell_非常")) and name.count("_") >= 3
+            for name in names
+        ),
     )
     check("组集合没有重名后缀", groups and not any("." in name for name in groups), str(groups[:3]))
     output = bpy.data.collections["Shards"]

@@ -5,22 +5,22 @@ from typing import ClassVar
 from bpy.types import Operator, Panel
 
 from ...common.blender_context import restore_selection
-from ...common.translate import tr_report
+from ...common.translate import tr, tr_report
 from ...framework.contract import scene_settings
 from ...framework.operators import ToolOperator
-from ...framework.ui import ParamGroup, ToolPanel, draw_fields, parameter_panels
+from ...framework.ui import CheckGrid, ParamGroup, ToolPanel, draw_fields, parameter_panels
 from .api import generate_fragments
 from .constants import CONTEXT, TOOL_ID
 from .settings import SCHEMA
 
-# 主面板上的常用参数, 一行一个, 始终可见
-CORE_FIELDS = ("source", "source_limit", "source_noise", "recursion", "margin")
-# 其余参数按用途分进子面板; 不常调的默认收起
+# 主面板上每次破碎都会调整的参数, 画在来源之下; 随机种子是换一种结果最常用的入口
+CORE_FIELDS = ("source_limit", "source_noise", "random_seed", "margin")
+# 其余参数按用途分组: 递归默认展开, 胞体形状默认收起, 输出与调试画成底部的弹出按钮
 GROUPS = (
-    ParamGroup("Pattern", ("random_seed", "cell_scale"), closed=True),
     ParamGroup(
         "Recursive Shatter",
         (
+            "recursion",
             "recursion_source_limit",
             "recursion_clamp",
             "recursion_chance",
@@ -28,17 +28,21 @@ GROUPS = (
             "use_remove_original",
         ),
     ),
+    ParamGroup("Cell Shape", ("cell_scale",), closed=True),
     ParamGroup(
-        "Interior Faces",
-        ("use_smooth_faces", "use_sharp_edges", "material_index", "use_interior_vgroup"),
+        "Interior & Shards",
+        (
+            "material_index",
+            CheckGrid(("use_smooth_faces", "use_sharp_edges", "use_interior_vgroup")),
+            CheckGrid(("use_island_split", "use_recenter")),
+        ),
     ),
-    ParamGroup("Shard Objects", ("use_island_split", "use_recenter")),
     ParamGroup(
         "Output",
-        ("collection_name", "shard_prefix", "use_shard_collections", "shard_index_padding"),
-        closed=True,
+        ("collection_name", "shard_prefix", "shard_index_padding", "use_shard_collections"),
+        popover=True,
     ),
-    ParamGroup("Debug", ("use_debug_redraw", "use_debug_points", "use_debug_bool"), closed=True),
+    ParamGroup("Debug", ("use_debug_redraw", "use_debug_points", "use_debug_bool"), popover=True),
 )
 # 保留布尔修改器时, 收尾与递归阶段都不执行
 DEBUG_INACTIVE = frozenset({"use_sharp_edges", "use_interior_vgroup", "use_island_split"})
@@ -99,6 +103,31 @@ class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
         )
 
 
+def _source_row(column, heading):
+    """来源的一行: 左侧行标签与下方字段的标签列对齐, 返回右侧放按钮的行"""
+    # 0.4 与 Blender 分列布局的标签宽度一致
+    split = column.split(factor=0.4, align=True)
+    label = split.row()
+    label.alignment = "RIGHT"
+    label.label(text=heading, translate=False)
+    return split.row(align=True)
+
+
+def _draw_source(layout, owner):
+    """来源: 标题一行, 自身与子物体各一行顶点与粒子按钮, 注解铅笔与物体无关, 单独一行显示全称"""
+    column = layout.column(align=True)
+    column.label(text="Source", text_ctxt=CONTEXT)
+    verts, particles = tr(CONTEXT, "Verts"), tr(CONTEXT, "Particles")
+    own = _source_row(column, tr(CONTEXT, "Own"))
+    own.prop_enum(owner, "source", "VERT_OWN", text=verts, translate=False)
+    own.prop_enum(owner, "source", "PARTICLE_OWN", text=particles, translate=False)
+    children = _source_row(column, tr(CONTEXT, "Children"))
+    children.prop_enum(owner, "source", "VERT_CHILD", text=verts, translate=False)
+    children.prop_enum(owner, "source", "PARTICLE_CHILD", text=particles, translate=False)
+    annotation = _source_row(column, "")
+    annotation.prop_enum(owner, "source", "PENCIL", text="Annotation Pencil", text_ctxt=CONTEXT)
+
+
 class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
     """网格破碎的侧栏主面板 - 生成按钮与常用参数, 预设入口在标题栏, 其余参数在子面板"""
 
@@ -108,7 +137,7 @@ class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
     tool_id = TOOL_ID
 
     def draw(self, context):
-        """生成按钮放在最上面, 打开面板就能看到; 其下是常用参数"""
+        """生成按钮放在最上面, 打开面板就能看到; 其下是来源与常用参数"""
         layout = self.layout
         ready = _can_apply(context)
         button = layout.column()
@@ -121,8 +150,11 @@ class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
                 text="Select editable mesh objects in Object Mode", text_ctxt=CONTEXT, icon="INFO"
             )
         owner = scene_settings(context, TOOL_ID)
+        _draw_source(layout, owner)
         draw_fields(layout, owner, SCHEMA, CORE_FIELDS, _param_active)
 
 
-# 参数子面板, 挂在主面板下, 按分组顺序排列
-SUBPANELS = parameter_panels(QD_MESH_FRACTURE_PT_main, SCHEMA, CORE_FIELDS, GROUPS, _param_active)
+# 参数子面板与弹出面板: 子面板挂在主面板下按分组顺序排列, 弹出按钮并排在最底部
+SUBPANELS = parameter_panels(
+    QD_MESH_FRACTURE_PT_main, SCHEMA, ("source", *CORE_FIELDS), GROUPS, _param_active
+)

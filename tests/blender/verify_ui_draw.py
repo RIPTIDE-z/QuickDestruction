@@ -7,12 +7,12 @@
 测试过程:
     1. 注册插件, 把各工具的面板放进出厂设置下侧栏默认显示的 Item 页, 交给 Blender 自己绘制
     2. 另注册一个驱动面板, 在它的 draw 里用真实 layout 与真实绘制上下文逐个驱动绘制入口:
-       工具面板与子面板, 子面板标题开关, 标题栏预设入口, 预设菜单; 转发型 layout 代理记录每次控件调用
+       工具面板, 子面板与弹出面板, 子面板标题开关, 标题栏预设入口, 预设菜单; 转发型 layout 代理记录每次控件调用
     3. 自检: 在同一上下文里写 ID 数据必须被拒绝, 否则说明驱动上下文并不受限, 整个结论不成立
     入口全部由 registration.TOOLS 推导, 新增工具会自动纳入
 判据:
     - 工具的顶层面板没有父面板, 子面板挂在本工具的面板下; 自身或上级默认收起的面板没有被绘制,
-      其余都被绘制且不抛异常
+      其余侧栏面板都被绘制且不抛异常; 弹出面板只在点开时绘制, 由驱动面板驱动
     - 每个驱动入口不抛异常并至少产生一个控件, 包括子面板内容与标题开关
     - 顶层面板提供本工具的算子入口; 标题栏预设入口经布局上下文写入工具标识; 预设菜单请求到全部预设算子
 运行方式 (仓库根目录, 不能加 -b):
@@ -41,7 +41,7 @@ PRESET_ROOT = REPO_ROOT / "tmp" / "output_tmp" / "ui_draw_preset"
 # 出厂设置下 3D 视图侧栏默认显示的分类
 CATEGORY = "Item"
 # 真正往界面里放东西的调用; row, box, column 这类容器不计入控件数
-WIDGET_CALLS = frozenset({"label", "operator", "menu", "prop", "prop_enum"})
+WIDGET_CALLS = frozenset({"label", "operator", "menu", "prop", "prop_enum", "popover"})
 
 # 不成立的判据
 FAILURES = []
@@ -127,6 +127,11 @@ def tool_panels(tool):
     return [cls for cls in tool.classes if issubclass(cls, bpy.types.Panel)]
 
 
+def is_popover(cls):
+    """弹出面板不在侧栏里, 只由按钮弹出"""
+    return cls.bl_region_type != "UI"
+
+
 def parent_of(cls):
     """子面板的父面板名, 顶层面板返回空串"""
     return cls.__dict__.get("bl_parent_id", "")
@@ -137,12 +142,12 @@ def tool_entries(tool, context):
     own = [cls.bl_idname for cls in tool.classes if issubclass(cls, bpy.types.Operator)]
     entries = []
     for cls in tool_panels(tool):
-        # 顶层面板必须提供本工具的算子入口, 子面板只放参数
+        # 顶层面板必须提供本工具的算子入口, 子面板与弹出面板只放参数
         entries.append(
             Entry(
                 f"{tool.tool_id}/{cls.__name__}",
                 lambda layout, ctx, draw=ORIGINAL_DRAWS[cls]: draw(as_self(layout), ctx),
-                () if parent_of(cls) else own,
+                () if parent_of(cls) or is_popover(cls) else own,
                 any_operator=True,
             )
         )
@@ -155,7 +160,7 @@ def tool_entries(tool, context):
             )
     if not tool.presets:
         return entries
-    main = next(cls for cls in tool_panels(tool) if not parent_of(cls))
+    main = next(cls for cls in tool_panels(tool) if not parent_of(cls) and not is_popover(cls))
     menu_context = SimpleNamespace(**{presets.TOOL_MEMBER: tool.tool_id}, scene=context.scene)
     preset_ids = [cls.bl_idname for cls in presets.CLASSES if issubclass(cls, bpy.types.Operator)]
     entries.append(
@@ -236,7 +241,8 @@ def start():
     """注册插件与驱动面板, 换掉预设目录并放一个预设, 然后重绘"""
     for tool in registration.TOOLS:
         for cls in tool_panels(tool):
-            cls.bl_category = CATEGORY
+            if not is_popover(cls):
+                cls.bl_category = CATEGORY
             ORIGINAL_DRAWS[cls] = cls.draw
             cls.draw = recorded_draw(cls)
     registration.register()
@@ -272,9 +278,9 @@ def folded(cls, panels):
 
 
 def check_sidebar():
-    """Blender 自己绘制的面板: 顶层面板没有父面板, 子面板挂在本工具面板下, 收起的不绘制, 其余绘制且不抛异常"""
+    """Blender 自己绘制的侧栏面板: 顶层面板没有父面板, 子面板挂在本工具面板下, 收起的不绘制, 其余绘制且不抛异常"""
     for tool in registration.TOOLS:
-        panels = tool_panels(tool)
+        panels = [cls for cls in tool_panels(tool) if not is_popover(cls)]
         names = {cls.__name__ for cls in panels}
         for cls in panels:
             name = cls.__name__

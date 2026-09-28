@@ -45,14 +45,14 @@ def remove_generated_object(obj):
         bpy.data.meshes.remove(mesh)
 
 
-def seed_points(context, obj, settings, level, rng):
+def seed_points(context, obj, settings, first, rng):
     """采样种子点: 取来源, 为空则回退自身顶点, 按本层上限随机截断, 精确去重并检查有限性"""
     depsgraph = context.evaluated_depsgraph_get()
     points = points_from_object(context, depsgraph, obj, settings["source"])
     if not points:
         points = points_from_object(context, depsgraph, obj, {"VERT_OWN"})
-    # 递归层换用递归种子上限
-    limit = settings["recursion_source_limit"] if level else settings["source_limit"]
+    # 递归细分换用递归种子上限
+    limit = settings["source_limit"] if first else settings["recursion_source_limit"]
     if limit and limit < len(points):
         # 先打乱再截断, 得到随机子集而不是前 N 个
         rng.shuffle(points)
@@ -290,7 +290,7 @@ def intersect_cells(context, obj, snapshot, cells, settings, batch):
     weld_dist = snapshot.diagonal * WELD_SCALE_RATIO
     debug = settings["use_debug_bool"]
     use_hide = uses_interior(settings)
-    if use_hide and batch.level == 0:
+    if use_hide and batch.first:
         # 首次切割先清掉源物体原有的面隐藏标记, 内部断面判定要从干净的起点开始
         obj.data.polygons.foreach_set("hide", [False] * len(obj.data.polygons))
         obj.data.update()

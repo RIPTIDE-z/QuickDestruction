@@ -69,11 +69,11 @@ def _check_limit(count):
 
 
 def _cut(context, obj, settings, batch, rng):
-    """对单个物体执行一次切割, 返回生成的碎块; 源物体的显示方式与面隐藏状态无论成败都还原"""
+    """对单个物体执行一次切割, 返回按路径编号的碎块; 源物体的显示方式与面隐藏状态无论成败都还原"""
     old_display = obj.display_type
     # 只有首次切割且需要标记断面时才会清掉源网格的面隐藏标记, 其余情况不写源网格
     old_hidden = None
-    if batch.level == 0 and mesh_ops.uses_interior(settings):
+    if batch.first and mesh_ops.uses_interior(settings):
         old_hidden = [face.hide for face in obj.data.polygons]
     try:
         if settings["use_debug_redraw"]:
@@ -81,13 +81,14 @@ def _cut(context, obj, settings, batch, rng):
             obj.display_type = "WIRE"
         # 求值快照每次切割只取一次, 胞体构造与布尔求交共用
         snapshot = boolean.inspect_source(obj, context.evaluated_depsgraph_get())
-        points = mesh_ops.seed_points(context, obj, settings, batch.level, rng)
+        points = mesh_ops.seed_points(context, obj, settings, batch.first, rng)
         # 种子点数就已超限时, 在耗时的布尔求交之前报错
         _check_limit(len(points))
         cells = mesh_ops.build_cells(context, obj, snapshot, points, settings, batch, rng)
         cells = mesh_ops.intersect_cells(context, obj, snapshot, cells, settings, batch)
         if settings["use_recenter"]:
             mesh_ops.recenter(cells)
+        batch.number(cells)
         return cells
     finally:
         obj.display_type = old_display
@@ -150,7 +151,7 @@ def main_object(context, collection, obj, settings, rng, tracker, done):
     threshold = settings["recursion_clamp"]
     # 保留布尔修改器时递归会让引用失效, 直接跳过
     rounds = 0 if settings["use_debug_bool"] else settings["recursion"]
-    for level in range(1, rounds + 1):
+    for _round in range(rounds):
         if not cells or (threshold and len(cells) >= threshold):
             break
         candidates = _select_recursion(cells, settings, context.scene.cursor.location, rng)
@@ -160,10 +161,10 @@ def main_object(context, collection, obj, settings, rng, tracker, done):
             # 每个父块细分前再判断一次阈值; 单次细分或孤岛拆分仍可能超出
             if threshold and len(cells) >= threshold:
                 break
-            batch = naming.next_batch(level)
+            batch = naming.next_batch(parent)
             children = _cut(context, parent, settings, batch, rng)
             if not children:
-                # 细分没有产出时保留父块, 退回刚分配的组
+                # 细分没有产出时保留父块, 删除刚建的空组集合
                 naming.drop(batch)
                 continue
             cells.extend(children)
