@@ -1,1 +1,1 @@
-"""MeshFracture 业务包 - 导入时不装配界面, 注册声明见 tool.py"""
+"""MeshFracture 工具包 - 导入时不依赖 Blender, 注册声明见 tool.py"""

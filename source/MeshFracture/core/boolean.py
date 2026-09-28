@@ -1,24 +1,22 @@
-"""布尔边界策略 - 诊断输入网格并选择求解器, 检查求交结果是否越界, 不修改源几何"""
+"""布尔边界策略 - 求值快照与求解器配置, 检查求交结果是否越界, 不修改源几何"""
 
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite
 
 import bmesh
+from mathutils import Vector
 
-from ...common import measure
 from ...common.errors import require_finite
 from ..errors import NON_FINITE_MESSAGE, IntersectionBoundsError, MeshFractureError
 
 
 @dataclass(frozen=True)
 class BooleanSource:
-    """一次切割的求值源快照,只保存数值,不持有临时求值网格"""
+    """一次切割的求值源快照, 只保存数值, 不持有临时求值网格"""
 
     # 源物体名, 只用于错误消息
     name: str
-    # 世界空间顶点坐标; 胞体构造的包围盒与尺度都取自这一份
-    vertices: tuple
     # 世界空间包围盒的最小与最大角点
     minimum: tuple
     maximum: tuple
@@ -30,13 +28,13 @@ class BooleanSource:
     use_hole_tolerant: bool
 
 
-def inspect_source(obj, depsgraph):
-    """求值一次源物体并量出本批胞体共用的全部数值
+def bounds_diagonal(minimum, maximum):
+    """包围盒的体对角线长度, 交给 mathutils 计算, 与 Blender 的浮点精度一致"""
+    return Vector(tuple(maximum[i] - minimum[i] for i in range(3))).length
 
-    覆盖修改器产生或修复的开放拓扑; 世界空间顶点与包围盒只在这里算一次,
-    胞体构造与布尔校验都复用它, 不再对同一源重复求值与测量
-    """
-    # 临时求值网格只在本次调用内存在, 量完所需数值立即释放
+
+def inspect_source(obj, depsgraph):
+    """求值一次源物体, 量出本次切割共用的包围盒, 尺度, 容差与求解策略"""
     evaluated = obj.evaluated_get(depsgraph)
     try:
         mesh = evaluated.to_mesh()
@@ -44,29 +42,29 @@ def inspect_source(obj, depsgraph):
             raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
         vertices = tuple(evaluated.matrix_world @ vertex.co for vertex in mesh.vertices)
         require_finite((vertices,), MeshFractureError, NON_FINITE_MESSAGE)
-        minimum, maximum = measure.bounds(vertices)
+        minimum = tuple(min(point[i] for point in vertices) for i in range(3))
+        maximum = tuple(max(point[i] for point in vertices) for i in range(3))
         bm = bmesh.new()
         try:
             bm.from_mesh(mesh)
-            # 开边/多面共边及仅顶点相接的非流形输入都采用容错判定
-            # 这不是自相交检测,也不把开放网格视为已修复的封闭实体
+            # 开边, 多面共边与仅顶点相接的非流形输入都采用容错求解; 这不是自相交检测
             needs_tolerance = any(not edge.is_manifold for edge in bm.edges) or any(
                 not vertex.is_manifold for vertex in bm.verts
             )
         finally:
             bm.free()
     finally:
+        # 临时求值网格只在本次调用内存在
         evaluated.to_mesh_clear()
-    # minimum/maximum 是同一个 range(3) 生成的两个三元组, 长度必然一致
-    diagonal = measure.diagonal(minimum, maximum)
+    diagonal = bounds_diagonal(minimum, maximum)
     magnitude = max(abs(value) for point in (minimum, maximum) for value in point)
-    # 相对尺度容差,加上世界坐标 float32 精度余量;不拿艺术间隙或焊接距离当容差
+    # 相对尺度容差, 加上世界坐标 float32 精度余量
     tolerance = max(diagonal * 1e-5, magnitude * 2**-21, 1e-9)
-    return BooleanSource(obj.name, vertices, minimum, maximum, diagonal, tolerance, needs_tolerance)
+    return BooleanSource(obj.name, minimum, maximum, diagonal, tolerance, needs_tolerance)
 
 
 def configure_intersection(modifier, source):
-    """显式选 Exact,只有开放/非流形输入启用 Hole Tolerant"""
+    """显式选 Exact 求交, 只有开放或非流形输入启用 Hole Tolerant"""
     modifier.operation = "INTERSECT"
     modifier.solver = "EXACT"
     modifier.use_self = False
@@ -74,11 +72,7 @@ def configure_intersection(modifier, source):
 
 
 def validate_intersection(mesh, matrix_world, source):
-    """交集不得明显超出源 AABB;这是必要条件,不是凹形体内包含证明
-
-    只检查,不裁顶点或自动修补;失败由上层回滚本次生成数据
-    调试模式也必须传入求值网格,不能把合法的凸胞体基础网格当作结果
-    """
+    """交集不得明显超出源包围盒; 这是必要条件, 不证明凹形体内包含"""
     if not mesh.polygons:
         return
     for vertex in mesh.vertices:
@@ -101,25 +95,22 @@ def validate_intersection(mesh, matrix_world, source):
 
 @contextmanager
 def validated_evaluation(cell, modifier, source, depsgraph):
-    """验证临时求值几何 - 越界时仅启用一次自交处理并重算同一对操作数
-
-    成功后交给调用者烘焙或保留修改器
-    每次求值都释放临时网格 - 无效候选不会进入 Blender 数据库
-    """
+    """校验临时求值结果, 越界时开启一次自交处理重算同一对操作数, 成功后交给调用方使用"""
     for attempt in range(2):
         evaluated = cell.evaluated_get(depsgraph)
         try:
             mesh = evaluated.to_mesh()
             validate_intersection(mesh, evaluated.matrix_world, source)
         except IntersectionBoundsError:
-            # 非有限值和程序错误不重试 - 已开启自交处理时也不能重复尝试
+            # 已经重试过或已开启自交处理时不再尝试; 非有限值与程序错误不重试
             if attempt or modifier.use_self:
                 raise
         else:
             yield evaluated
             return
         finally:
+            # 每次求值都释放临时网格, 无效候选不会进入 Blender 数据库
             evaluated.to_mesh_clear()
-        # 不改种子或容差 - 只换求解路径并刷新依赖图
+        # 不改种子或容差, 只换求解路径并刷新依赖图
         modifier.use_self = True
         depsgraph.update()

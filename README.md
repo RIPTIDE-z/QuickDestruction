@@ -8,7 +8,7 @@
 
 - [x] `MeshFracture` 参考并派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)
     - 在种子点上构建 3D Voronoi 图，把每个胞体做成凸多面体，再与原物体做**布尔求交**，得到贴合原表面的碎块，用于破坏动画预切割
-- [ ] `PhysicalSettings` 物理设置：占位面板，只有一行用途提示，参数与逻辑待实现
+- [ ] `PhysicalSettings` 物理设置：占位面板（默认收起），只有一行用途提示，参数与逻辑待实现
 - [ ] 刚体设定和自定义外力
 - [ ] 破坏动画生成
 - [ ] 自动绑定以及动画烘焙
@@ -41,10 +41,10 @@ install.bat /nopause     :: 结束后不等待按键，可用于自动化测试
 
 入口只有一个：侧栏面板（常驻）。
 
-1. 3D 视图按 **N** → **QuickDestruction** 标签页 → **MeshFracture／网格破碎** 面板，点击 **Generate Fragments** 生成碎块
+1. 3D 视图按 **N** → **QuickDestruction** 标签页（中文界面显示为“快速破坏”）→ **MeshFracture／网格破碎** 面板，点击 **Generate Fragments** 生成碎块
 
 标签页里的每个工具是一块独立折叠的面板，可以直接收起不用的工具；后续新增的工具会作为同级面板出现在同一标签页下。
 
-生成动作支持撤销：按 **Ctrl+Z** 回退整次生成，源物体始终保留。算子只从面板按钮调用，不进算子搜索，也没有「调整上一步操作」面板。切割成功后会把面板上的参数同步回侧栏；若几何已经生成但同步失败，会保留切割结果并报告警告。默认开启一轮递归，因此最终碎块数不等于初始种子数。
+生成动作支持撤销：按 **Ctrl+Z** 回退整次生成，源物体始终保留。算子只从面板按钮调用，直接使用侧栏上的参数，不进算子搜索，也没有「调整上一步操作」面板。默认开启一轮递归，因此最终碎块数不等于初始种子数。
 
-更多使用、参数和算法说明见 [MeshFracture](doc/MeshFracture.md)。模块与接口见 [Architecture](doc/Architecture.md)。
+更多使用、参数和算法说明见 [MeshFracture](doc/MeshFracture.md)。模块与接口见 [Architecture](doc/Architecture.md)，翻译维护见 [Translations](doc/Translations.md)。

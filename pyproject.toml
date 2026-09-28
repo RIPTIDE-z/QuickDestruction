@@ -38,4 +38,18 @@ select = [
     "ARG",  # 未使用的参数
     "RUF",  # Ruff 专有规则
     "FURB", # 现代化代码重构
+    "C90",  # 圈复杂度
+    "PLR0913", # 参数过多
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 8
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests/unit"]
+log_cli = true
+log_cli_level = "INFO"

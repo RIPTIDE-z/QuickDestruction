@@ -1,0 +1,10 @@
+{
+  "locale": "zh_HANS",
+  "interface": {
+    "Physical Settings": "物理设置",
+    "Physics settings for destruction animation": "用于破碎动画的物理设置"
+  },
+  "tooltips": {
+    "Physics settings for destruction animation (not implemented yet)": "用于破碎动画的物理设置（尚未实现）"
+  }
+}

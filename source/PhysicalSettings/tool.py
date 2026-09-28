@@ -1,23 +1,37 @@
-"""工具声明 - 占位工具: 只有一块说明面板, 参数与逻辑待实现"""
+"""物理设置 - 占位工具: 只有一块默认收起的说明面板, 参数与逻辑待实现"""
 
-from ..tool_contract import ToolSpec
-from .constants import CONTEXT, TOOL_ID
-from .interaction import panel
+from pathlib import Path
+from typing import ClassVar
+
+from bpy.types import Panel
+
+from ..framework.contract import ToolSpec, tool_context
+from ..framework.ui import ToolPanel
+
+# 工具身份: 场景字段名, 预设目录与翻译上下文都由它派生
+TOOL_ID = "physical_settings"
+# 本工具的翻译上下文
+CONTEXT = tool_context(TOOL_ID)
 
 
-def classes():
-    """返回本工具要注册的算子与面板类, 元组顺序就是注册顺序"""
-    # 还没有算子: 只有侧栏面板, 因此面板里也没有算子入口
-    return (panel.PHYSICAL_SETTINGS_PT_settings,)
+class QD_PHYSICAL_SETTINGS_PT_main(ToolPanel, Panel):
+    """物理设置的侧栏面板, 暂时只显示用途说明"""
+
+    bl_label = "Physical Settings"
+    bl_description = "Physics settings for destruction animation (not implemented yet)"
+    bl_translation_context = CONTEXT
+    # 次要工具默认收起
+    bl_options: ClassVar[set[str]] = {"DEFAULT_CLOSED"}
+
+    def draw(self, _context):
+        """绘制占位说明"""
+        self.layout.label(
+            text="Physics settings for destruction animation", text_ctxt=CONTEXT, icon="INFO"
+        )
 
 
 TOOL = ToolSpec(
     tool_id=TOOL_ID,
-    translation_module="PhysicalSettings",
-    translation_context=CONTEXT,
-    # 尚未实现参数, 空规格表示这个工具不参与场景持久化
-    property_specs={},
-    classes=classes,
-    # 次要工具: 面板默认收起, 由注册层把 DEFAULT_CLOSED 落到面板类上
-    default_closed=True,
+    locales=Path(__file__).with_name("locales"),
+    classes=(QD_PHYSICAL_SETTINGS_PT_main,),
 )

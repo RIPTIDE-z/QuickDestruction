@@ -1,0 +1,40 @@
+{
+  "locale": "zh_HANS",
+  "interface": {
+    "QuickDestruction": "快速破坏",
+    "Presets": "预设",
+    "Preset": "预设",
+    "Name": "名称",
+    "Overwrite": "覆盖",
+    "Save Preset": "保存预设",
+    "Save Preset...": "保存预设…",
+    "Load Preset": "加载预设",
+    "Remove Preset": "删除预设",
+    "Open Preset Directory": "打开预设目录",
+    "No presets yet": "尚无预设",
+    "The preset target is unavailable": "预设目标不可用",
+    "Preset directory could not be read: {detail}": "无法读取预设目录：{detail}",
+    "Preset name is empty": "预设名称为空",
+    "This preset name is reserved by Windows": "此预设名称为 Windows 保留名称",
+    "Preset name is too long": "预设名称过长",
+    "Preset already exists; enable Overwrite to replace it": "预设已存在，请勾选“覆盖”后替换",
+    "Preset format is invalid": "预设格式无效",
+    "Unsupported preset format version": "不支持的预设格式版本",
+    "Preset belongs to another tool": "此预设属于其他工具",
+    "Preset file is too large": "预设文件过大",
+    "Saved preset \"{name}\"": "已保存预设“{name}”",
+    "Removed preset \"{name}\"": "已删除预设“{name}”",
+    "Loaded {count} parameters": "已加载 {count} 项参数",
+    "Invalid parameter: {name}": "无效参数：{name}",
+    "{operation} failed: {detail}": "{operation}失败：{detail}"
+  },
+  "tooltips": {
+    "Name of the preset": "预设名称",
+    "Replace the existing preset with this name": "替换同名的现有预设",
+    "Save the parameters currently shown in this panel as a JSON preset": "把当前面板显示的参数保存为 JSON 预设",
+    "Load a JSON preset into the parameters currently shown here": "把 JSON 预设加载到当前界面显示的参数中",
+    "Permanently delete this JSON preset after confirmation": "确认后永久删除此 JSON 预设",
+    "Open the preset folder of this tool": "打开本工具的预设文件夹",
+    "Save, load or remove presets of this tool": "保存、加载或删除本工具的预设"
+  }
+}

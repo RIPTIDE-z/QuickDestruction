@@ -1,25 +1,23 @@
-"""领域常量 - 工具 ID 与翻译上下文, 胞体尺度下限, 默认随机种子与焊接和抖动比例"""
+"""领域常量 - 工具身份与翻译上下文, 胞体权重下限, 碎块硬上限, 焊接与抖动比例, 内部顶点组名"""
 
-from ..constants import UI_CONTEXT
+from ..framework.contract import tool_context
 
+# 工具身份: 场景字段名, 预设目录与翻译上下文都由它派生
 TOOL_ID = "mesh_fracture"
-# QDSettings 上的字段名; 由 TOOL_ID 派生, 因此工具改名只需要改上面一行
-SETTINGS_ATTR = TOOL_ID
-# 翻译上下文沿用扩展域; 工具 ID 独立用于预设归属
-CONTEXT = UI_CONTEXT
+# 本工具的翻译上下文
+CONTEXT = tool_context(TOOL_ID)
 
 # cell_scale 每个分量的下限, 避免退化成零权重的切割平面
 CELL_SCALE_MIN = 0.001
 
-# 未提供随机流时使用的默认种子; 0 也表示固定种子, 不是"每次随机"
-RANDOM_SEED_DEFAULT = 0
+# 一次生成的碎块总数硬上限: 递归与种子数都可以设为不限, 而执行是阻塞的, 超出时报错并回滚
+SHARD_LIMIT = 10000
 
-# 尺度相关容差与下游可读取的内部顶点组标识
 # 焊接距离 = 源物体世界包围盒对角线乘以该比例
 WELD_SCALE_RATIO = 1.0e-4
 
-# 胞体顶点抖动半幅 = 焊接距离 / 该比例
+# 胞体顶点抖动半幅 = 焊接距离除以该比例
 WELD_TO_JITTER_RATIO = 5.0
 
-# 内部断面顶点组的名字, 下游脚本按这个名字读取权重
-INTERIOR_VGROUP_NAME = "内部"
+# 内部断面顶点组名: 属于数据标识, 下游脚本与导出器按它读取, 因此用 ASCII 且不随界面语言变化
+INTERIOR_VGROUP_NAME = "Interior"

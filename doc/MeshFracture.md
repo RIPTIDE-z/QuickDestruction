@@ -2,7 +2,7 @@
 
 预切割流程：点源采样 → 有界胞体 → 凸包 → Exact 布尔求交 → 递归与断面收尾。
 
-源物体始终保留。工具位于 3D 视图 **QuickDestruction** 标签页的 **MeshFracture／网格破碎** 面板，点击 **Generate Fragments／生成碎块** 执行。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
+源物体始终保留。工具位于 3D 视图侧栏 **QuickDestruction** 标签页（中文界面显示为“快速破坏”）的 **MeshFracture／网格破碎** 面板，点击 **Generate Fragments／生成碎块** 执行。算法派生自 [object_fracture_cell](https://projects.blender.org/extensions/object_fracture_cell)。
 
 ## 点源与数量
 
@@ -37,6 +37,7 @@
 | 移除上级碎块 | `use_remove_original` | 开 | 成功细分后删除生成的父块, 不删除最初源物体 |
 
 阈值不限制首次切割, 一次细分或孤岛拆分可能超出阈值
+一次生成的碎块总数超过 10000 时报错并撤销本次生成, 防止种子数或递归不设上限时长时间卡死
 上限达到实际点源数量后不再增加采样, 回退到自身顶点时由父碎块顶点数决定
 
 | 选择值 | 排序依据 |
@@ -57,10 +58,10 @@
 | 拆分锐边 | `use_sharp_edges_apply` | 开 | 锐边开启时实际拆开所有锐边, 包括继承的锐边 |
 | 匹配数据 | `use_data_match` | 开 | 复制材质槽并建立 UV / 颜色层, 外表面由布尔插值传递 |
 | 材质索引 | `material_index` | 0 / ≥0 | 断面材质槽, 从 0 开始, 匹配数据开启时有效 |
-| 内部顶点组 | `use_interior_vgroup` | 关 | 创建 `内部` 组, 仅断面独占顶点赋权重 1 |
+| 内部顶点组 | `use_interior_vgroup` | 关 | 创建 `Interior` 组, 仅断面独占顶点赋权重 1 |
 | 内缩量 | `margin` | 0.001 / 0–1 | 分割平面向内偏移的世界空间长度 |
 | 拆分孤岛 | `use_island_split` | 开 | 不连通结果拆为独立物体, 不保证凸性 |
-| 重设原点 | `use_recenter` | 开 | `ORIGIN_GEOMETRY / MEDIAN`, 移动原点而不移动世界几何 |
+| 重设原点 | `use_recenter` | 开 | 原点移到顶点平均位置 (即 MEDIAN), 世界几何不动 |
 
 距离均以 Blender 单位计算, RNA 显示可随场景单位换算
 
@@ -81,24 +82,26 @@
 | 参数 | 字段 | 默认 / 范围 | 含义 |
 | --- | --- | --- | --- |
 | 集合 | `collection_name` | `cell_collection` | 空值用当前集合, 否则查找或新建可编辑且可见的集合 |
-| 碎块前缀 | `shard_prefix` | `cell` | 只影响碎块名 |
-| 碎块分组 | `use_shard_collections` | 开 | 递归每个父块的子块进入 `Ln_Gm` 集合 |
+| 碎块前缀 | `shard_prefix` | `cell` | 只影响碎块名, 后接源物体名 |
+| 碎块分组 | `use_shard_collections` | 开 | 递归每个父块的子块进入 `<源>_Ln_Gm` 集合 |
 | 序号位数 | `shard_index_padding` | 3 / 0–8 | 序号最小补零宽度, 不影响层号和组号 |
-| 实时显示进度 | `use_debug_redraw` | 开 | 切割期间刷新视口, 后台模式无效 |
+| 实时显示进度 | `use_debug_redraw` | 关 | 每个胞体刷新一次视口, 会让切割慢数倍, 后台模式无效 |
 | 显示种子点 | `use_debug_points` | 关 | 创建 `DebugPoints`, 不计入返回的碎块 |
 | 保留布尔修改器 | `use_debug_bool` | 关 | 保留求交修改器, 跳过递归、孤岛拆分和内部收尾 |
 
-首次切割平铺在输出集合, 如 `cell_001`
-递归组 `L1_G1` 中命名为 `cell_L1G1_001`, 关闭分组后整批连续编号
-重名由 Blender 添加后缀, 名称不是稳定身份标识
+名字由前缀, 源物体名, 层组标记与序号组成, 多个源输出到同一集合也不会重名
+首次切割平铺在输出集合, 如 `cell_Cube_001`; 递归组集合 `Cube_L1_G1` 中命名为 `cell_Cube_L1G1_001`, 关闭分组后整批连续编号
+源物体名在名字里最多占 32 字节, 碎块上的 `_qd_source` 标记记录完整源名
+对同一源重复切割时旧碎块仍在, 新碎块名由 Blender 添加后缀; 名称不是稳定身份标识, 下游脚本应按 `_qd_source`, `_qd_level`, `_qd_group` 标记筛选
 
 ## 复现、预设与输入边界
 
 - 相同 Blender 版本、源名称、几何、修改器、点源、帧、相关游标位置和参数可复现几何
 - 多源按 `name_full` 排序并共享局部 RNG, 增删或重命名源物体可能改变后续随机分配
 - 预设缺字段保留界面当前值；阶段 API 配置缺 `random_seed` 时使用 0
-- 预设位于 `quick_destruction/presets/mesh_fracture/`，包含 `format_version`、`tool_id: "mesh_fracture"` 和 `values`
-- 载入前校验工具身份、格式版本和字段；未知字段不会被静默忽略
+- 预设位于扩展用户目录的 `presets/mesh_fracture/`，包含 `format_version`、`tool_id: "mesh_fracture"` 和 `values`；旧版本放在用户脚本目录的预设会在首次启用时复制过来
+- 载入前校验工具身份、格式版本和字段；未知字段不会被静默忽略，阶段 API 同样拒绝未知参数
+- 源网格来自链接库时拒绝切割；切割期间会临时清除源网格的面隐藏标记并在结束时还原，共享同一网格的其他物体在切割期间也会看到这一变化
 - 布尔策略检查实际求值网格, 开放或非流形输入启用 Hole Tolerant
 - 非有限或明显超出源包围盒的结果拒绝并回收本次新建数据, 不修复源几何
 - 孔洞容错和包围盒检查不保证凹形体内包含或水密

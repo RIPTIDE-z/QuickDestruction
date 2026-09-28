@@ -1,16 +1,10 @@
-"""参数唯一来源 - PROPERTY_SPECS 描述 27 个字段, 并提供场景访问, 校验, 序列化与预设归属"""
+"""参数规格 - PROPERTY_SPECS 是本工具参数的唯一来源, 同时驱动 RNA 定义, 界面文案, 校验范围与预设字段"""
 
-from pathlib import Path
-
-from ..common import rna, schema
-from ..common.errors import describe_error as describe_domain_error
-from ..tool_contract import PresetSpec
-from .constants import CELL_SCALE_MIN, CONTEXT, RANDOM_SEED_DEFAULT, SETTINGS_ATTR, TOOL_ID
+from ..common.schema import Schema
+from .constants import CELL_SCALE_MIN, CONTEXT, SHARD_LIMIT
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
-# name 与 description 是英文原文, 也是翻译文件里稳定字段路径的来源;
-# min / max / items / default 等关键字原样交给 bpy.props, 因此这里同时是
-# RNA 定义, 界面提示, 校验范围与预设字段表四个用途的唯一来源
+# name 与 description 是英文原文, 也是语言文件里的键; 其余关键字原样交给 bpy.props
 PROPERTY_SPECS = {
     "source": (
         "EnumProperty",
@@ -85,7 +79,7 @@ PROPERTY_SPECS = {
             "version. Change this value for a different pattern; 0 is a fixed seed.",
             "min": 0,
             "max": 2147483647,
-            "default": RANDOM_SEED_DEFAULT,
+            "default": 0,
         },
     ),
     "cell_scale": (
@@ -129,7 +123,8 @@ PROPERTY_SPECS = {
             "name": "Shard Stop Threshold",
             "description": "Stop further recursion when the current shard count per source "
             "object reaches this threshold. One cut or island split may exceed "
-            "it. 0 disables the threshold; the first cut is not limited.",
+            "it. 0 disables the threshold; the first cut is not limited. Generation stops "
+            f"with an error beyond {SHARD_LIMIT} shards in total.",
             "min": 0,
             "max": 10000,
             "default": 250,
@@ -256,7 +251,7 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Interior VGroup",
-            "description": "Create the vertex group 内部 for interior-only vertices before splitting sharp edges. Boundary vertices shared with exterior faces are excluded; split copies are not reclassified.",
+            "description": "Create the vertex group Interior for interior-only vertices before splitting sharp edges. Boundary vertices shared with exterior faces are excluded; split copies are not reclassified.",
             "default": False,
         },
     ),
@@ -290,9 +285,9 @@ PROPERTY_SPECS = {
         "StringProperty",
         {
             "name": "Shard Prefix",
-            "description": "Prefix used for shard names, for example cell_001 without grouping "
-            "or cell_L1G1_001 with grouping. It is never used for collection "
-            "names.",
+            "description": "Prefix of shard names, followed by the source object name, for "
+            "example cell_Cube_001, or cell_Cube_L1G1_001 with grouping. It is never "
+            "used for collection names.",
             "default": "cell",
         },
     ),
@@ -301,7 +296,7 @@ PROPERTY_SPECS = {
         {
             "name": "Group Shards",
             "description": "Put the shards of each recursively cut shard into its own "
-            "collection named L<level>_G<group>, inside the output "
+            "collection named <source>_L<level>_G<group>, inside the output "
             "collection. When off, every shard is linked directly into "
             "the output collection.",
             "default": True,
@@ -333,9 +328,9 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Show Progress Realtime",
-            "description": "Refresh the viewport during cutting. Can slow large cuts; has no "
-            "effect in background mode.",
-            "default": True,
+            "description": "Refresh the viewport after every cell to show progress. Makes "
+            "cutting several times slower; has no effect in background mode.",
+            "default": False,
         },
     ),
     "use_debug_bool": (
@@ -349,57 +344,5 @@ PROPERTY_SPECS = {
 }
 
 
-# 预设归属: 通用预设层据它定位目录, 校验参数并写回
-# 首级 quick_destruction 是扩展 ID, 以 blender_manifest.toml 的 id 为准
-PRESET = PresetSpec(
-    key=TOOL_ID,
-    subdir=Path("quick_destruction") / "presets" / TOOL_ID,
-    specs=PROPERTY_SPECS,
-)
-
-
-def scene_settings(context):
-    """取本工具在当前场景的参数组
-
-    字段名来自 SETTINGS_ATTR, 是交互层访问场景参数的唯一入口:
-    工具改名时只需改常量, 各处调用不必跟着改
-    """
-    return getattr(context.scene.qd_settings, SETTINGS_ATTR)
-
-
-def describe_error(error):
-    """把字段错误映射为参数标签, 保留领域错误的消息键"""
-    # 标签来自本工具的规格, 转换逻辑由通用层提供
-    return describe_domain_error(error, PROPERTY_SPECS)
-
-
-def property_definitions():
-    """为算子或持久化参数组生成一套新的属性定义"""
-    # 生成算子与场景属性组调用同一个函数, 因此两边字段不会分叉
-    return rna.property_definitions(PROPERTY_SPECS, CONTEXT)
-
-
-def settings_to_dict(owner):
-    """读取预切割字段并转换为可序列化字典"""
-    return schema.settings_to_dict(owner, PROPERTY_SPECS)
-
-
-def validated_values(data):
-    """校验已提供的字段 - 缺字段保留由调用者决定"""
-    return schema.validated_values(data, PROPERTY_SPECS)
-
-
-def frozen_values(data):
-    """校验后转成不可变配置, 供阶段 API 冻结本次运行的参数"""
-    return schema.frozen_values(data, PROPERTY_SPECS)
-
-
-def dict_to_settings(owner, data):
-    """整体校验后写回字段 - 赋值失败恢复旧值"""
-    return schema.dict_to_settings(owner, data, PROPERTY_SPECS)
-
-
-def operator_keywords(owner):
-    """生成可传入 Blender 算子的关键字参数"""
-    # 侧栏按钮用它把当前界面值写入即将执行的算子实例
-    return schema.operator_keywords(owner, PROPERTY_SPECS)
+# 绑定翻译上下文的参数规格: 生成参数组, 读取, 校验与写回都经由它
+SCHEMA = Schema(PROPERTY_SPECS, CONTEXT)

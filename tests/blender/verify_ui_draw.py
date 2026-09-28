@@ -5,7 +5,7 @@
     "Python script error in <回调>", 界面上表现为面板只剩标题, 内容为空;
     其中一类成因是绘制期写了 ID 数据:
         AttributeError: Writing to ID classes in this context is not allowed
-    这类缺陷在 -b 后台模式与函数级单测里都不会暴露, 必须真实绘制才会出现。
+    这类缺陷在 -b 后台模式与函数级单测里都不会暴露, 必须真实绘制才会出现
 
 测试过程:
     1. 探测侧栏当前激活的分类 - 启动配置不同, 激活的页也不同
@@ -23,9 +23,9 @@
     - 控件数不低于该入口的期望值 (捕捉"静默提前返回"的空面板)
     - 声明了算子的工具, 它的侧栏面板必须提供其中某个算子的入口 (仓库约定: 面板是入口)
     - 只声明面板的工具没有算子可入口, 该条不适用, 只核对控件数
-    - 带预设的工具在绘制期必须设置会话令牌
+    - 带预设的工具在绘制期必须经布局上下文写入工具标识
     - 框架预设菜单必须请求到全部通用预设算子
-    - 面板的折叠状态与 ToolSpec 声明一致, 且默认收起的面板确实没有被 Blender 绘制
+    - bl_options 含 DEFAULT_CLOSED 的面板没有被 Blender 绘制, 其余面板都被绘制
       (实测: 收起的面板在正常绘制时不会调用 draw, 内容检查由驱动面板覆盖)
 
 运行方式 (仓库根目录, 不能加 -b, 需要真实界面):
@@ -106,7 +106,7 @@ class Entry:
     tool: object = None
     # 期望被请求到的算子 ID; 非空时逐个核对
     operator_ids: frozenset = frozenset()
-    # 是否要求绘制期设置会话令牌 (带预设的工具)
+    # 是否要求绘制期写入工具标识 (带预设的工具)
     needs_token: bool = False
     # 非空表示期望抛出包含该片段的异常, 用于自检
     must_raise: str = ""
@@ -258,21 +258,21 @@ def panel_layout():
     return lambda layout: SimpleNamespace(layout=layout)
 
 
-def menu_context(context, token):
-    """菜单 draw 需要带令牌的上下文; 令牌走布局上下文成员"""
-    from source import preset_ui
+def menu_context(context, tool_id):
+    """菜单 draw 需要带工具标识的上下文; 工具标识走布局上下文成员"""
+    from source.framework import presets
 
-    return SimpleNamespace(**{preset_ui.SESSION_MEMBER: token}, scene=context.scene)
+    return SimpleNamespace(**{presets.TOOL_MEMBER: tool_id}, scene=context.scene)
 
 
 def tool_settings(tool):
     """取工具在场景里的参数组"""
-    return getattr(bpy.context.scene.qd_settings, tool.settings_attr)
+    return getattr(bpy.context.scene.qd_settings, tool.tool_id)
 
 
-def isolated_directory(preset, create=False):
-    """替代 preset_ui.preset_directory, 把预设目录指向仓库内的隔离目录"""
-    target = PRESET_ROOT / preset.key
+def isolated_directory(tool_id, create=False):
+    """替代 presets.preset_directory, 把预设目录指向仓库内的隔离目录"""
+    target = PRESET_ROOT / tool_id
     if create:
         target.mkdir(parents=True, exist_ok=True)
     return target
@@ -280,43 +280,41 @@ def isolated_directory(preset, create=False):
 
 def prepare_presets(tools):
     """换掉预设目录并放一个预设, 让菜单的列表分支也能被覆盖"""
-    from source import preset_ui
+    from source.framework import preset_files, presets
 
-    original = preset_ui.preset_directory
-    preset_ui.preset_directory = isolated_directory
+    original = presets.preset_directory
+    presets.preset_directory = isolated_directory
     if PRESET_ROOT.exists():
         shutil.rmtree(PRESET_ROOT, ignore_errors=True)
-    listed = next((tool for tool in tools if tool.preset is not None), None)
+    listed = next((tool for tool in tools if tool.presets), None)
     if listed is not None:
         # 空字典合法: 缺字段允许, 载入时保留界面现值
-        preset_ui.save_preset(listed.preset, "listed", {}, overwrite=True)
+        directory = isolated_directory(listed.tool_id, create=True)
+        envelope = preset_files.encode(listed.tool_id, {})
+        preset_files.save_preset(directory, "listed", envelope, overwrite=True)
         print(f"隔离预设目录已就绪: {PRESET_ROOT}", flush=True)
     return original
 
 
 def restore_presets(original):
     """还原预设目录并清掉隔离目录"""
-    from source import preset_ui
+    from source.framework import presets
 
-    preset_ui.preset_directory = original
+    presets.preset_directory = original
     shutil.rmtree(PRESET_ROOT, ignore_errors=True)
 
 
 def tool_operator_ids(tool):
     """列出工具声明的算子 ID"""
-    return frozenset(
-        cls.bl_idname
-        for cls in tool.classes()
-        if isinstance(cls, type) and issubclass(cls, bpy.types.Operator)
-    )
+    return frozenset(cls.bl_idname for cls in tool.classes if issubclass(cls, bpy.types.Operator))
 
 
 def class_entries(tool, base, kind):
     """把工具声明的某一类交互类转成入口"""
     as_self = panel_layout()
     entries = []
-    for cls in tool.classes():
-        if not (isinstance(cls, type) and issubclass(cls, base)):
+    for cls in tool.classes:
+        if not issubclass(cls, base):
             continue
         entries.append(
             Entry(
@@ -334,16 +332,15 @@ def class_entries(tool, base, kind):
 
 def preset_entries(tool):
     """带预设的工具要驱动它的预设入口"""
-    from source import preset_ui
+    from source.framework import presets
 
-    if tool.preset is None:
+    if not tool.presets:
         return []
-    preset = tool.preset
     owner = tool_settings(tool)
     return [
         Entry(
-            name=f"{tool.tool_id}/preset_row/{preset.key}",
-            call=lambda layout, _context: preset_ui.draw_presets(layout, preset, owner),
+            name=f"{tool.tool_id}/preset_row",
+            call=lambda layout, _context: presets.draw_presets(layout, tool.tool_id, owner),
             needs_token=True,
         )
     ]
@@ -351,23 +348,19 @@ def preset_entries(tool):
 
 def framework_entries(tools):
     """框架自己的绘制入口: 预设菜单"""
-    from source import preset_ui
+    from source.framework import presets
 
-    with_preset = next((tool for tool in tools if tool.preset is not None), None)
+    with_preset = next((tool for tool in tools if tool.presets), None)
     if with_preset is None:
         return []
-    preset = with_preset.preset
-    owner = tool_settings(with_preset)
     preset_ids = frozenset(
-        cls.bl_idname
-        for cls in preset_ui.CLASSES
-        if isinstance(cls, type) and issubclass(cls, bpy.types.Operator)
+        cls.bl_idname for cls in presets.CLASSES if issubclass(cls, bpy.types.Operator)
     )
 
     def preset_menu(layout, context):
-        """菜单绘制需要一个带令牌的上下文, 令牌来自绘制方"""
-        token = preset_ui.panel_session(preset, owner)
-        preset_ui.QD_MT_presets.draw(SimpleNamespace(layout=layout), menu_context(context, token))
+        """菜单绘制需要一个带工具标识的上下文, 标识来自绘制方"""
+        menu = SimpleNamespace(layout=layout)
+        presets.QD_MT_presets.draw(menu, menu_context(context, with_preset.tool_id))
 
     return [
         Entry(
@@ -381,7 +374,7 @@ def framework_entries(tools):
 def id_write_probe(tools):
     """自检用: 在绘制期写 ID 数据, 必须被 Blender 拒绝"""
     # 必须挑一个带场景参数组的工具: 没有参数组的工具没有可写的 ID 数据
-    owner = next(tool_settings(tool) for tool in tools if tool.settings_class is not None)
+    owner = next(tool_settings(tool) for tool in tools if tool.schema is not None)
 
     def call(_layout, _context):
         """写一个场景参数组的字段; 绘制回调里不允许这样做"""
@@ -435,13 +428,13 @@ def make_driver_draw(entries):
 def verify():
     """装配与内容阶段: 注册插件, 让 Blender 画面板, 再驱动全部入口"""
     print("\n== 2. 装配检查: 由 Blender 绘制侧栏面板 ==", flush=True)
-    from source import tool_registry
+    from source import registration
 
     global TOOLS_SNAPSHOT
-    tools = tool_registry.ordered_tools()
+    tools = registration.TOOLS
     TOOLS_SNAPSHOT = tools
     category = PROBE_DREW[0] if PROBE_DREW else "Item"
-    panels = [cls for tool in tools for cls in tool.classes() if issubclass(cls, bpy.types.Panel)]
+    panels = [cls for tool in tools for cls in tool.classes if issubclass(cls, bpy.types.Panel)]
     # 顶层面板之间是并列关系: 由 Blender 自己的面板顺序决定, 不依赖任何父面板
     check(
         "工具面板都是顶层面板",
@@ -471,7 +464,7 @@ def verify():
         all(
             hasattr(bpy.types, cls.__name__)
             for tool in tools
-            for cls in tool.classes()
+            for cls in tool.classes
             if issubclass(cls, bpy.types.Panel)
         ),
     )
@@ -554,18 +547,17 @@ def check_entry(result):
             f"缺 {sorted(entry.operator_ids - operators)}",
         )
     if entry.needs_token:
-        from source import preset_ui
+        from source.framework import presets
 
         check(
-            f"{entry.name} 绘制期设置了会话令牌",
-            preset_ui.SESSION_MEMBER in written_tokens(calls),
+            f"{entry.name} 绘制期写入了工具标识",
+            presets.TOOL_MEMBER in written_tokens(calls),
             f"写入 {sorted(written_tokens(calls))}",
         )
 
 
-def finish():
-    """汇总结果: 定时器里无法给 Blender 传退出码, 失败时直接以非零状态结束进程"""
-    print("\n== 4. 结果 ==", flush=True)
+def check_sidebar():
+    """核对 Blender 自己绘制的面板: 不抛异常, 默认收起的面板没被绘制, 其余面板都被绘制"""
     drawn = {name for name, _error, _detail in SIDEBAR_RESULTS}
     for name, error, detail in SIDEBAR_RESULTS:
         check(
@@ -573,23 +565,22 @@ def finish():
         )
         if detail:
             print(detail, flush=True)
-    # 默认收起的面板不会被 Blender 调用 draw, 展开的必须被调用
     for tool in TOOLS_SNAPSHOT:
-        for cls in tool.classes():
-            if not (isinstance(cls, type) and issubclass(cls, bpy.types.Panel)):
+        for cls in tool.classes:
+            if not issubclass(cls, bpy.types.Panel):
                 continue
-            options = set(getattr(cls, "bl_options", ()) or ())
-            closed = "DEFAULT_CLOSED" in options
-            check(
-                f"{cls.__name__} 折叠状态与 ToolSpec 声明一致",
-                closed == tool.default_closed,
-                f"面板 {sorted(options)} 声明 default_closed={tool.default_closed}",
-            )
+            closed = "DEFAULT_CLOSED" in set(getattr(cls, "bl_options", ()) or ())
             check(
                 f"{cls.__name__} 的绘制情况与折叠状态一致",
                 (cls.__name__ in drawn) == (not closed),
                 f"被绘制 {cls.__name__ in drawn}, 默认收起 {closed}",
             )
+
+
+def finish():
+    """汇总结果: 定时器里无法给 Blender 传退出码, 失败时直接以非零状态结束进程"""
+    print("\n== 4. 结果 ==", flush=True)
+    check_sidebar()
     for result in DRIVE_RESULTS:
         check_entry(result)
     if not DRIVE_RESULTS:

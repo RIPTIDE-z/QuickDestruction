@@ -1,14 +1,18 @@
-"""领域异常 - MeshFractureError 以及源几何非有限坐标共用的消息键"""
+"""领域异常 - MeshFractureError 的消息按本工具的翻译上下文翻译"""
 
 from ..common.errors import DomainError
+from .constants import CONTEXT
 
-# 源几何含非有限坐标时的消息键; 胞体构造与布尔诊断共用同一条
+# 源几何含非有限坐标时的消息, 求值快照与种子采样两处共用
 NON_FINITE_MESSAGE = "Source geometry contains non-finite coordinates"
 
 
 class MeshFractureError(DomainError):
-    """message 保存消息键 - values 保存翻译后填入的参数"""
+    """网格破碎的可预期错误"""
+
+    # 消息所属的翻译上下文
+    context = CONTEXT
 
 
 class IntersectionBoundsError(MeshFractureError):
-    """布尔交集超出操作数边界 - 允许使用保守求解路径重试"""
+    """布尔交集超出源物体包围盒 - 允许开启自交处理后重试一次"""
