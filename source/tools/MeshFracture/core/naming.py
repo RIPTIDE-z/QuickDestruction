@@ -62,9 +62,9 @@ class NamingPlan:
         # 名字里用的源物体名, 按 UTF-8 字节截短, 不截断多字节字符
         self.label = source_name.encode("utf-8")[:SOURCE_NAME_BYTES].decode("utf-8", "ignore")
         # 碎块名前缀, 只用于碎块名
-        self.prefix = settings["shard_prefix"]
+        self.prefix = settings.shard_prefix
         # 路径里每段序号的最小位数
-        self.padding = settings["shard_index_padding"]
+        self.padding = settings.shard_index_padding
         # 本次运行的回收账本
         self.tracker = tracker
         # 切割期临时名计数器

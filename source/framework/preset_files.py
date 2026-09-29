@@ -76,10 +76,27 @@ def list_presets(directory):
 
 
 def read_preset(path):
-    """按大小上限读取并解析 JSON, 只当数据解析, 字段由调用方校验"""
-    if path.stat().st_size > MAX_SIZE:
-        raise PresetError("Preset file is too large")
-    return json.loads(path.read_text(encoding="utf-8"))
+    """按大小上限读取并解析 JSON, 只当数据解析, 字段由调用方校验
+
+    文件缺失或读不出来, 编码或 JSON 不合法都转成 PresetError, 报告不会露出系统与解析器的原始消息
+    """
+    try:
+        if path.stat().st_size > MAX_SIZE:
+            raise PresetError("Preset file is too large")
+        return json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise PresetError("Preset file could not be read") from error
+    except ValueError as error:
+        # JSON 语法错误与非 UTF-8 编码分别是 ValueError 的子类 JSONDecodeError 与 UnicodeDecodeError
+        raise PresetError("Preset format is invalid") from error
+
+
+def remove_preset(path):
+    """删除预设文件; 文件已不存在或无法删除时转成 PresetError"""
+    try:
+        path.unlink()
+    except OSError as error:
+        raise PresetError("Preset file could not be removed") from error
 
 
 def encode(tool_id, data):

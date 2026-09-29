@@ -7,7 +7,7 @@ source/
   __init__.py        扩展入口, 调用时才导入装配模块
   registration.py    工具清单 TOOLS, 生成参数组, 注册前校验, 合并翻译, 事务式注册与回滚
   framework/         工具可以依赖的框架层: 工具契约, 通用预设, 面板与算子基类, 参数绘制
-  common/            与本插件无关的公共机制: 参数规格, 领域异常, 翻译, 创建账本, 碎块契约
+  common/            与本插件无关的公共机制: 参数规格, 领域异常, 翻译, 创建账本, 选择集与求值网格, 碎块契约
   tools/<Tool>/      业务工具, 一个工具一个包
 ```
 
@@ -121,13 +121,18 @@ TOOL = ToolSpec(
 | 位置 | 职责 |
 | --- | --- |
 | `tool.py` | `ToolSpec` 声明 |
-| `settings.py` | 参数规格 `PROPERTY_SPECS` 与 `SCHEMA` |
+| `settings.py` | 参数规格 `PROPERTY_SPECS`、`SCHEMA`，以及参数的语义与生效条件：`bakes_booleans`、`splits_islands`、`finishes_interior`、`recursion_rounds`、`first_cut_limit` 与 `ACTIVE_WHEN`，流水线与界面置灰读同一批函数 |
 | `interaction.py` | 主面板 `QD_MESH_FRACTURE_PT_main`、分组表与切割种子来源的自绘函数（由此生成参数子面板）、生成算子 `qd_mesh_fracture.generate` |
 | `api.py` | 阶段 API、切割前体检与结果对象 |
 | `core/pipeline.py` | 编排：前置检查、首次切割、按轮执行递归、收尾、碎块硬上限、失败回滚 |
-| `core/recursion.py` | 递归规划：按细分比例挑候选，碎块总数上限放不下整轮时按细分优先级分配块数 |
-| `core/diagnosis.py` | 源网格体检：不封闭（非流形边）与自相交（BVH 重叠面对，排除共享顶点的相邻面） |
-| `core/` 其余模块 | 种子采样、胞体构造、布尔策略、网格操作、命名 |
+| `core/recursion.py` | 递归规划：按细分比例挑候选，估算每块最多切成几块 |
+| `core/allocation.py` | 碎块总数上限放不下整轮时，把剩余块数分给各候选；只有数值运算，不依赖 Blender，可以脱离 Blender 测试 |
+| `core/diagnosis.py` | 源网格体检：不封闭（用 `boolean.is_not_closed`，与布尔是否启用 Hole Tolerant 是同一个判定）与自相交（BVH 重叠面对，排除共享顶点的相邻面） |
+| `core/sampling.py` | 种子采样：候选点、按上限随机截取、种子扰动 |
+| `core/cell_objects.py`、`cells.py` | 胞体：`cells` 由平面求交得到每个种子的凸体顶点，`cell_objects` 把它们建成带材质槽与数据层的物体 |
+| `core/boolean.py`、`intersect.py` | 布尔：求值快照与越界校验，给胞体加求交修改器并取结果 |
+| `core/cleanup.py`、`islands.py` | 求交结果的焊接、清理与压平，最终碎块的共面面合并，孤岛拆分 |
+| `core/interior.py`、`shard_objects.py`、`naming.py` | 断面收尾，生成物体的基本操作（重绘、回收、重设原点），按路径命名与集合 |
 
 **关键设计**：
 
@@ -141,7 +146,7 @@ TOOL = ToolSpec(
     - 精确布尔要求操作数的每个面都是平面；
     - 面合并会产生不共面的 n-gon，让下一轮布尔留下未裁剪的残片。
 
-  所以面合并只在全部切割结束后，对最终碎块做一次（`mesh_ops.dissolve_final_shards`）。
+  所以面合并只在全部切割结束后，对最终碎块做一次（`cleanup.dissolve_final_shards`）。
 
 ### 阶段 API
 

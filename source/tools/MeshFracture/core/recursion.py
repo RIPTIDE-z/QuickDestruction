@@ -6,7 +6,7 @@
 
 from mathutils import Vector
 
-from . import mesh_ops
+from . import allocation, sampling
 
 
 def _diagonal_squared(obj):
@@ -33,60 +33,30 @@ def ordered(objects, mode, cursor, rng):
 
 def candidates(cells, settings, cursor, rng):
     """按每轮细分比例挑出本轮候选, 数量向下取整; 全选时保持原顺序且不消耗随机流"""
-    fraction = settings["recursion_chance"]
+    fraction = settings.recursion_chance
     if fraction == 1:
         return list(cells)
-    chosen = ordered(cells, settings["recursion_chance_select"], cursor, rng)
+    chosen = ordered(cells, settings.recursion_chance_select, cursor, rng)
     return chosen[: int(fraction * len(chosen))]
 
 
 def _pieces_cap(context, parent, settings):
     """细分 parent 最多得到的块数: 每块切割上限与可用点数取小, 去重与空交集只会更少"""
-    count = len(mesh_ops.sample_points(context, parent, settings))
-    limit = settings["recursion_source_limit"]
-    return min(limit, count) if limit else count
-
-
-def _even(parents, caps, budget):
-    """平均细分: 按顺序轮流给每块多分一块, 直到用完预算或各块都到达上限"""
-    extra = dict.fromkeys(parents, 0)
-    while budget:
-        grown = False
-        for parent in parents:
-            if budget and extra[parent] < caps[parent] - 1:
-                extra[parent] += 1
-                budget -= 1
-                grown = True
-        if not grown:
-            break
-    return [(parent, extra[parent] + 1) for parent in parents if extra[parent]]
-
-
-def _in_order(parents, caps, budget):
-    """按优先级依次切满, 预算只剩一部分时最后一块只切到剩余的块数"""
-    plan = []
-    for parent in parents:
-        if budget <= 0:
-            break
-        extra = min(caps[parent] - 1, budget)
-        if extra > 0:
-            plan.append((parent, extra + 1))
-            budget -= extra
-    return plan
+    count = len(sampling.sample_points(context, parent, settings))
+    return min(settings.recursion_source_limit, count)
 
 
 def plan_round(context, cells, settings, cursor, rng, budget):
     """规划一轮细分, 返回 [(父块, 种子上限), ...]; budget 是本轮还能新增的块数, None 表示不限"""
     chosen = candidates(cells, settings, cursor, rng)
-    limit = settings["recursion_source_limit"]
+    limit = settings.recursion_source_limit
     if budget is None:
         return [(parent, limit) for parent in chosen]
     caps = {parent: _pieces_cap(context, parent, settings) for parent in chosen}
-    if sum(cap - 1 for cap in caps.values()) <= budget:
+    if allocation.fits(caps, budget):
         return [(parent, limit) for parent in chosen]
-    mode = settings["recursion_chance_select"]
+    mode = settings.recursion_chance_select
     # 比例小于 1 时候选已按优先级排好, 不再重排
-    parents = chosen if settings["recursion_chance"] < 1 else ordered(chosen, mode, cursor, rng)
-    if mode == "EVEN":
-        return _even(parents, caps, budget)
-    return _in_order(parents, caps, budget)
+    parents = chosen if settings.recursion_chance < 1 else ordered(chosen, mode, cursor, rng)
+    split = allocation.even_split if mode == "EVEN" else allocation.in_order
+    return split(parents, caps, budget)

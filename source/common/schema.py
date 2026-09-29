@@ -74,6 +74,27 @@ def _valid(kind, options, value):
     return _in_range(value, kind, options)
 
 
+class Values:
+    """一次操作用的只读参数值 - 字段按属性读取, 与参数组的读法一致, 拼错字段名会立刻抛 AttributeError"""
+
+    __slots__ = ("_data",)
+
+    def __init__(self, data):
+        """保存已经校验过的 RNA 形态的值"""
+        object.__setattr__(self, "_data", dict(data))
+
+    def __getattr__(self, name):
+        """按字段名取值, 未知字段抛 AttributeError"""
+        try:
+            return self._data[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __setattr__(self, name, value):
+        """只读: 一次操作中途改参数会让各阶段看到不一致的值"""
+        raise AttributeError(f"Values is read-only: {name}")
+
+
 class Schema:
     """一份参数规格及其翻译上下文 - 工具的参数组, 预设与阶段 API 都经由它读写参数"""
 
@@ -125,6 +146,10 @@ class Schema:
                 raise self.invalid(key)
             values[key] = _to_rna(data[key], kind, options)
         return values
+
+    def resolve(self, data):
+        """缺失字段取默认值, 整体校验后得到只读的参数值; 未知字段直接拒绝"""
+        return Values(self.validate({**self.defaults(), **data}))
 
     def write(self, owner, data):
         """校验后整体写入参数组, 任一字段赋值失败时恢复全部原值, 返回写入的字段数"""

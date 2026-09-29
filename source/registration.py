@@ -28,7 +28,7 @@ def _settings_classes():
             continue
         annotations = tool.schema.definitions()
         if tool.presets:
-            annotations["preset_name"] = presets.name_property()
+            annotations["preset_name"] = presets.current_preset_property()
         groups[tool.tool_id] = type(
             f"QD_PG_{tool.tool_id}", (PropertyGroup,), {"__annotations__": annotations}
         )
@@ -43,10 +43,12 @@ def _idname(cls):
 
 def _check_prefix(cls, class_prefix, operator_prefix):
     """类名与算子 ID 必须带规定的前缀, 减少与其他插件撞车"""
-    if not cls.__name__.startswith(class_prefix) or (
-        issubclass(cls, Operator) and not _idname(cls).startswith(operator_prefix)
-    ):
+    if not cls.__name__.startswith(class_prefix):
         raise ValueError(f"Class {cls.__name__} must use the {class_prefix} prefix")
+    if issubclass(cls, Operator) and not _idname(cls).startswith(operator_prefix):
+        raise ValueError(
+            f"Operator {_idname(cls)} of class {cls.__name__} must use the {operator_prefix} prefix"
+        )
 
 
 def _check(framework_classes):

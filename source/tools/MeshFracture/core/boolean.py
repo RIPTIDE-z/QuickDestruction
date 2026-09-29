@@ -4,10 +4,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isfinite
 
-import bmesh
 from mathutils import Vector
 
+from ....common.blender_context import evaluated_mesh, mesh_edit
 from ....common.errors import require_finite
+from ..constants import WELD_SCALE_RATIO
 from ..errors import NON_FINITE_MESSAGE, IntersectionBoundsError, MeshFractureError
 
 
@@ -27,6 +28,18 @@ class BooleanSource:
     # 输入含非流形时启用 Hole Tolerant 求解
     use_hole_tolerant: bool
 
+    @property
+    def weld_distance(self):
+        """焊接距离: 胞体阶段与求交阶段共用同一份快照尺度"""
+        return self.diagonal * WELD_SCALE_RATIO
+
+
+def is_not_closed(bm):
+    """网格不封闭: 有开放边, 多面共边, 或仅顶点处相接的非流形; 布尔求解策略与用户提示共用这一个判定"""
+    return any(not edge.is_manifold for edge in bm.edges) or any(
+        not vert.is_manifold for vert in bm.verts
+    )
+
 
 def bounds_diagonal(minimum, maximum):
     """包围盒的体对角线长度, 交给 mathutils 计算, 与 Blender 的浮点精度一致"""
@@ -35,27 +48,16 @@ def bounds_diagonal(minimum, maximum):
 
 def inspect_source(obj, depsgraph):
     """求值一次源物体, 量出本次切割共用的包围盒, 尺度, 容差与求解策略"""
-    evaluated = obj.evaluated_get(depsgraph)
-    try:
-        mesh = evaluated.to_mesh()
+    with evaluated_mesh(obj, depsgraph) as (evaluated, mesh):
         if mesh is None or not mesh.vertices or not mesh.polygons:
             raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
         vertices = tuple(evaluated.matrix_world @ vertex.co for vertex in mesh.vertices)
         require_finite((vertices,), MeshFractureError, NON_FINITE_MESSAGE)
         minimum = tuple(min(point[i] for point in vertices) for i in range(3))
         maximum = tuple(max(point[i] for point in vertices) for i in range(3))
-        bm = bmesh.new()
-        try:
-            bm.from_mesh(mesh)
-            # 开边, 多面共边与仅顶点相接的非流形输入都采用容错求解; 这不是自相交检测
-            needs_tolerance = any(not edge.is_manifold for edge in bm.edges) or any(
-                not vertex.is_manifold for vertex in bm.verts
-            )
-        finally:
-            bm.free()
-    finally:
-        # 临时求值网格只在本次调用内存在
-        evaluated.to_mesh_clear()
+        # 开边, 多面共边与仅顶点相接的非流形输入都采用容错求解; 这不是自相交检测
+        with mesh_edit(mesh) as bm:
+            needs_tolerance = is_not_closed(bm)
     diagonal = bounds_diagonal(minimum, maximum)
     magnitude = max(abs(value) for point in (minimum, maximum) for value in point)
     # 相对尺度容差, 加上世界坐标 float32 精度余量

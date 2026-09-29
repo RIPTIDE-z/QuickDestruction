@@ -19,6 +19,23 @@ def mesh_edit(mesh=None):
         bm.free()
 
 
+@contextmanager
+def evaluated_mesh(obj, depsgraph):
+    """求值后的临时网格, 离开作用域立即释放; 得到 (求值物体, 网格), 没有几何的物体网格为 None"""
+    evaluated = obj.evaluated_get(depsgraph)
+    try:
+        yield evaluated, evaluated.to_mesh()
+    finally:
+        evaluated.to_mesh_clear()
+
+
+def vertex_coordinates(mesh):
+    """网格全部顶点坐标的平铺列表 [x0, y0, z0, x1, ...], 比逐个顶点读取快得多"""
+    flat = [0.0] * (len(mesh.vertices) * 3)
+    mesh.vertices.foreach_get("co", flat)
+    return flat
+
+
 def select_only(context, selection, active):
     """只选中指定物体并设置活动物体 - 只遍历已选中的物体, 不随场景物体总数变慢"""
     # 先复制成列表: 取消选择会改变正在遍历的选中集合; 物体可能已被删除而残留空条目, 需要跳过

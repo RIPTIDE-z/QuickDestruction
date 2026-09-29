@@ -1,5 +1,6 @@
 """界面约定 - 工具面板基类, 标题栏预设入口, 参数绘制, 以及按分组表生成参数子面板与弹出面板"""
 
+import re
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -11,6 +12,8 @@ from .contract import scene_settings
 
 # 弹出面板的宽度, 单位是界面网格
 POPOVER_WIDTH = 12
+# 自绘字段的标签列占整行的比例, 与 Blender 分列布局的标签列宽度一致, 自绘字段才能与其他字段对齐
+LABEL_FACTOR = 0.4
 
 
 class ToolPanel:
@@ -69,14 +72,18 @@ def _draw_checks(layout, owner, keys, active):
         cell.prop(owner, key)
 
 
-def _draw_vector(layout, owner, schema, key):
-    """向量字段: 标签在左, 各分量在右侧并排一行; 分列布局会把分量竖排, 因此手动分列"""
-    # 0.4 与 Blender 分列布局的标签宽度一致
-    split = layout.split(factor=0.4, align=True)
+def label_row(layout, text, *, text_ctxt="", translate=True):
+    """自绘字段的一行: 左侧是右对齐的标签列, 返回右侧放控件的行"""
+    split = layout.split(factor=LABEL_FACTOR, align=True)
     label = split.row()
     label.alignment = "RIGHT"
-    label.label(text=schema.specs[key][1]["name"], text_ctxt=schema.context)
-    row = split.row(align=True)
+    label.label(text=text, text_ctxt=text_ctxt, translate=translate)
+    return split.row(align=True)
+
+
+def _draw_vector(layout, owner, schema, key):
+    """向量字段: 标签在左, 各分量在右侧并排一行; 分列布局会把分量竖排, 因此手动分列"""
+    row = label_row(layout, schema.specs[key][1]["name"], text_ctxt=schema.context)
     row.use_property_split = False
     row.prop(owner, key, text="")
 
@@ -151,12 +158,25 @@ def _popover_row_draw(context_name, popovers):
     return draw
 
 
-def _panel_name(parent, title):
-    """由父面板与标题派生稳定的类名, Blender 按它记住折叠状态"""
-    return f"{parent.__name__}_{title.lower().replace(' ', '_')}"
+def _panel_names(parent, groups):
+    """由父面板与标题派生稳定的类名, Blender 按它记住折叠状态; 返回 (各分组的类名, 底部子面板的类名)
+
+    只保留小写 ASCII 字母与数字, 其余连续字符折成一个下划线; 标题里没有可用字符时用分组序号
+    类名有重复时直接报错, 底部子面板固定叫 popovers, 分组标题不能与它同名
+    """
+    slugs = [
+        re.sub(r"[^0-9a-z]+", "_", group.title.lower()).strip("_") or f"group{index}"
+        for index, group in enumerate(groups)
+    ]
+    names = [f"{parent.__name__}_{slug}" for slug in slugs]
+    footer = f"{parent.__name__}_popovers"
+    duplicates = sorted({name for name in [*names, footer] if [*names, footer].count(name) > 1})
+    if duplicates:
+        raise ValueError(f"Group titles produce the same panel class name: {duplicates}")
+    return names, footer
 
 
-def _popover_panel(parent, schema, group, active):
+def _popover_panel(parent, schema, group, active, name):
     """生成弹出面板类: 不进侧栏, 只由底部按钮弹出"""
     namespace = {
         "bl_space_type": "VIEW_3D",
@@ -166,7 +186,7 @@ def _popover_panel(parent, schema, group, active):
         "bl_ui_units_x": POPOVER_WIDTH,
         "draw": _group_draw(parent.tool_id, schema, group, active),
     }
-    return type(_panel_name(parent, group.title), (Panel,), namespace)
+    return type(name, (Panel,), namespace)
 
 
 def parameter_panels(parent, schema, core, groups, active):
@@ -185,11 +205,12 @@ def parameter_panels(parent, schema, core, groups, active):
         repeated = sorted({key for key in placed if placed.count(key) > 1})
         extra = sorted(set(placed) - set(schema.specs))
         raise ValueError(f"Parameter layout mismatch: {missing=} {repeated=} {extra=}")
+    names, footer_name = _panel_names(parent, groups)
     panels = []
     popovers = []
-    for group in groups:
+    for group, name in zip(groups, names, strict=True):
         if group.popover:
-            popovers.append(_popover_panel(parent, schema, group, active))
+            popovers.append(_popover_panel(parent, schema, group, active, name))
             continue
         namespace = {
             "bl_label": group.title,
@@ -200,7 +221,7 @@ def parameter_panels(parent, schema, core, groups, active):
         }
         if group.toggle:
             namespace["draw_header"] = _toggle_draw(parent.tool_id, group.toggle)
-        panels.append(type(_panel_name(parent, group.title), (ToolPanel, Panel), namespace))
+        panels.append(type(name, (ToolPanel, Panel), namespace))
     if popovers:
         footer = {
             "bl_label": "",
@@ -208,5 +229,5 @@ def parameter_panels(parent, schema, core, groups, active):
             "bl_options": {"HIDE_HEADER"},
             "draw": _popover_row_draw(schema.context, popovers),
         }
-        panels.append(type(f"{parent.__name__}_popovers", (ToolPanel, Panel), footer))
+        panels.append(type(footer_name, (ToolPanel, Panel), footer))
     return (*popovers, *panels)

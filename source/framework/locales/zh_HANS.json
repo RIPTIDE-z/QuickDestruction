@@ -22,6 +22,8 @@
     "Unsupported preset format version": "不支持的预设格式版本",
     "Preset belongs to another tool": "此预设属于其他工具",
     "Preset file is too large": "预设文件过大",
+    "Preset file could not be read": "无法读取预设文件",
+    "Preset file could not be removed": "无法删除预设文件",
     "Saved preset \"{name}\"": "已保存预设“{name}”",
     "Removed preset \"{name}\"": "已删除预设“{name}”",
     "Loaded {count} parameters": "已加载 {count} 项参数",

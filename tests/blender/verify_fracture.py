@@ -37,7 +37,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from source.common import shards as shard_contract  # noqa: E402
 from source.common.errors import InvalidParameterError  # noqa: E402
 from source.tools.MeshFracture.api import generate_fragments  # noqa: E402
-from source.tools.MeshFracture.core import mesh_ops, pipeline  # noqa: E402
+from source.tools.MeshFracture.core import interior, pipeline  # noqa: E402
 from source.tools.MeshFracture.errors import MeshFractureError  # noqa: E402
 
 FAILURES = []
@@ -418,13 +418,13 @@ def case_rollback():
     before = {
         kind: set(getattr(bpy.data, kind).keys()) for kind in ("objects", "meshes", "collections")
     }
-    original = mesh_ops.finish_interior
+    original = interior.finish_interior
 
     def boom(*_args):
         """模拟收尾阶段的意外错误"""
         raise RuntimeError("injected failure")
 
-    mesh_ops.finish_interior = boom
+    interior.finish_interior = boom
     try:
         config = {**BASE, "recursion": 1, "recursion_source_limit": 4, "use_debug_redraw": True}
         cut([source], config, "RollbackOut")
@@ -435,7 +435,7 @@ def case_rollback():
         check("源物体面隐藏状态还原", source.data.polygons[0].hide)
         check("源物体显示方式还原", source.display_type == "TEXTURED")
     finally:
-        mesh_ops.finish_interior = original
+        interior.finish_interior = original
 
 
 def expect_error(label, error_type, call):

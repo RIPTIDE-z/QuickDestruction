@@ -25,8 +25,8 @@ SCHEMAS = {}
 PACKAGE = __package__.rpartition(".")[0]
 
 
-def name_property():
-    """场景参数组上的预设名字段: 只记录界面显示的名称, 不属于预设参数"""
+def current_preset_property():
+    """场景参数组上的当前预设名字段: 只记录界面显示的最近使用的预设名, 不属于预设参数"""
     return StringProperty(name="Preset", translation_context=CONTEXT)
 
 
@@ -64,8 +64,8 @@ class PresetOperator(ToolOperator):
         return preset_files.preset_filepath(preset_directory(self.tool_id), self.name)
 
 
-def _name_property():
-    """本次操作的预设名; 每次调用都新建一份属性定义"""
+def _operator_name_property():
+    """预设算子的名称属性: 本次操作要保存, 载入或删除的预设名; 每次调用都新建一份属性定义"""
     return StringProperty(
         name="Name",
         description="Name of the preset",
@@ -84,7 +84,7 @@ class QD_OT_preset_save(PresetOperator, Operator):
     # INTERNAL 只由预设菜单与保存按钮调用, 不进入算子搜索
     bl_options: ClassVar[set[str]] = {"INTERNAL"}
     __annotations__ = {
-        "name": _name_property(),
+        "name": _operator_name_property(),
         "overwrite": BoolProperty(
             name="Overwrite",
             description="Replace the existing preset with this name",
@@ -121,7 +121,7 @@ class QD_OT_preset_load(PresetOperator, Operator):
     bl_translation_context = CONTEXT
     # UNDO 让载入进入撤销栈, Ctrl+Z 可以回到载入前的参数
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
-    __annotations__ = {"name": _name_property()}
+    __annotations__ = {"name": _operator_name_property()}
 
     def run(self, context):
         """读取并核对信封, 校验通过后整体写回; 缺字段保留界面现值"""
@@ -141,7 +141,7 @@ class QD_OT_preset_remove(PresetOperator, Operator):
     bl_description = "Permanently delete this JSON preset after confirmation"
     bl_translation_context = CONTEXT
     bl_options: ClassVar[set[str]] = {"INTERNAL"}
-    __annotations__ = {"name": _name_property()}
+    __annotations__ = {"name": _operator_name_property()}
 
     def invoke(self, context, event):
         """删除不可撤销, 先弹确认对话框"""
@@ -151,7 +151,7 @@ class QD_OT_preset_remove(PresetOperator, Operator):
         """删除预设文件; 删掉的正好是当前预设时清空显示的名称"""
         owner = self.target(context)
         path = self.filepath()
-        path.unlink()
+        preset_files.remove_preset(path)
         if owner.preset_name == path.stem:
             _remember(context, owner, "")
         return tr_report(CONTEXT, 'Removed preset "{name}"', name=path.stem)

@@ -7,12 +7,28 @@ import bpy
 from ....common.created_data import CreatedData
 from ..constants import SHARD_LIMIT
 from ..errors import MeshFractureError
-from . import boolean, mesh_ops, recursion
+from ..settings import (
+    bakes_booleans,
+    finishes_interior,
+    first_cut_limit,
+    recursion_rounds,
+    uses_interior,
+)
+from . import (
+    boolean,
+    cell_objects,
+    cleanup,
+    interior,
+    intersect,
+    recursion,
+    sampling,
+    shard_objects,
+)
 from .naming import NamingPlan
 
 # 超出碎块硬上限时的消息
 LIMIT_MESSAGE = (
-    "More than {limit} shards would be generated; lower Max Pieces, Max per Shard or Rounds"
+    "More than {limit} shards would be generated; lower First Cut Pieces, Sub-Cut Pieces or Rounds"
 )
 
 
@@ -20,9 +36,9 @@ def _check_sources(context, sources, settings):
     """动手之前完成全部前置检查, 参数非法时不会留下半成品"""
     if context.mode != "OBJECT" or not sources:
         raise MeshFractureError("Select editable mesh objects in Object Mode")
-    index = settings["material_index"]
+    index = settings.material_index
     for obj in sources:
-        if obj.data.library is not None and mesh_ops.uses_interior(settings):
+        if obj.data.library is not None and uses_interior(settings):
             # 标记断面时要临时改写源网格的面隐藏标记, 链接库里的网格不可写
             raise MeshFractureError(
                 'Mesh data of "{name}" is linked from a library; '
@@ -77,21 +93,21 @@ def _cut(context, obj, settings, batch, rng, limit):
     old_display = obj.display_type
     # 只有首次切割且需要标记断面时才会清掉源网格的面隐藏标记, 其余情况不写源网格
     old_hidden = None
-    if batch.first and mesh_ops.uses_interior(settings):
+    if batch.first and uses_interior(settings):
         old_hidden = [face.hide for face in obj.data.polygons]
     try:
-        if settings["use_debug_redraw"]:
+        if settings.use_debug_redraw:
             # 线框显示方便观察切割进度, 结果不受影响
             obj.display_type = "WIRE"
         # 求值快照每次切割只取一次, 胞体构造与布尔求交共用
         snapshot = boolean.inspect_source(obj, context.evaluated_depsgraph_get())
-        points = mesh_ops.seed_points(context, obj, settings, limit, rng)
+        points = sampling.seed_points(context, obj, settings, limit, rng)
         # 种子点数就已超限时, 在耗时的布尔求交之前报错
         _check_limit(len(points))
-        cells = mesh_ops.build_cells(context, obj, snapshot, points, settings, batch, rng)
-        cells = mesh_ops.intersect_cells(context, obj, snapshot, cells, settings, batch)
-        if settings["use_recenter"]:
-            mesh_ops.recenter(cells)
+        cells = cell_objects.build_cells(context, obj, snapshot, points, settings, batch, rng)
+        cells = intersect.intersect_cells(context, obj, snapshot, cells, settings, batch)
+        if settings.use_recenter:
+            shard_objects.recenter(cells)
         batch.number(cells)
         return cells
     finally:
@@ -103,13 +119,12 @@ def _cut(context, obj, settings, batch, rng, limit):
 
 def _finish(cells, settings, naming):
     """全部切割结束后的收尾: 合并共面面, 统一命名与断面标记; 保留的父碎块一并处理"""
-    debug = settings["use_debug_bool"]
     objects = cells + naming.parents
-    if objects and not debug:
-        mesh_ops.dissolve_final_shards(objects)
+    if objects and bakes_booleans(settings):
+        cleanup.dissolve_final_shards(objects)
     naming.apply_names(objects)
-    if objects and not debug and mesh_ops.uses_interior(settings):
-        mesh_ops.finish_interior(objects, settings)
+    if objects and finishes_interior(settings):
+        interior.finish_interior(objects, settings)
 
 
 def _subdivide(context, parent, limit, cells, naming, settings, rng):
@@ -122,26 +137,26 @@ def _subdivide(context, parent, limit, cells, naming, settings, rng):
     cells.extend(children)
     # 父块已被子块取代, 不再参与之后的递归与上限计数
     cells.remove(parent)
-    if settings["use_keep_parents"]:
+    if settings.use_keep_parents:
         naming.keep_parent(parent)
     else:
         # 删除被替换的父块, 避免父子几何重叠
-        mesh_ops.remove_generated_object(parent)
+        shard_objects.remove_generated_object(parent)
     return True
 
 
 def main_object(context, collection, obj, settings, rng, tracker, done):
     """对单个源物体做首次切割并按需递归, 最后统一收尾, 返回最终碎块
 
-    done 是之前的源已经生成的碎块数; 每轮先规划再整批细分, 碎块总数上限只在轮与轮之间扣减
+    done 是之前的源已经生成的碎块数; 碎块总数上限先约束首次切割的种子数, 每轮递归再按剩余预算规划
     """
     naming = NamingPlan(obj.name, collection, settings, tracker)
-    cells = _cut(context, obj, settings, naming.first_batch(), rng, settings["source_limit"])
+    cells = _cut(context, obj, settings, naming.first_batch(), rng, first_cut_limit(settings))
     _check_limit(done + len(cells))
-    maximum = settings["recursion_clamp"]
+    maximum = settings.recursion_clamp
     cursor = context.scene.cursor.location
     # 保留布尔修改器时递归会让引用失效, 直接跳过
-    rounds = 0 if settings["use_debug_bool"] else settings["recursion"]
+    rounds = recursion_rounds(settings)
     for _round in range(rounds):
         # 上限为 0 表示不限, 预算记为 None
         budget = maximum - len(cells) if maximum else None
@@ -167,7 +182,7 @@ def run(context, sources, settings, rng):
     started = perf_counter()
     context.window_manager.progress_begin(0, len(sources))
     try:
-        collection = _output_collection(context, settings["collection_name"], tracker)
+        collection = _output_collection(context, settings.collection_name, tracker)
         cells = []
         source_to_shards = {}
         for index, obj in enumerate(sources):

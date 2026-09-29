@@ -1,4 +1,7 @@
-"""参数规格 - PROPERTY_SPECS 是本工具参数的唯一来源, 同时驱动 RNA 定义, 界面文案, 校验范围与预设字段"""
+"""参数规格 - PROPERTY_SPECS 是本工具参数的唯一来源, 同时驱动 RNA 定义, 界面文案, 校验范围与预设字段
+
+参数之间的生效关系也在这里声明一次: 流水线与界面置灰都读同一组规则, 不各自复制
+"""
 
 from ...common.schema import Schema
 from .constants import CELL_SCALE_MIN, CONTEXT, SHARD_LIMIT
@@ -14,50 +17,48 @@ PROPERTY_SPECS = {
                 (
                     "VERT_OWN",
                     "Own Verts",
-                    "Use original source mesh vertices in world space, before modifiers.",
+                    "Use the original vertices of the source mesh, before modifiers.",
                 ),
                 (
                     "VERT_CHILD",
                     "Child Verts",
-                    "Use vertices of direct child objects; mesh children use original vertices and "
-                    "convertible children use evaluated geometry.",
+                    "Use the vertices of direct child objects; curves and similar types use "
+                    "their evaluated geometry.",
                 ),
                 (
                     "PARTICLE_OWN",
                     "Own Particles",
-                    "Use current positions of all particles, including unborn and dead ones, from "
-                    "all particle systems on the source object; child particles are not included.",
+                    "Use every particle position of the source object, including unborn and "
+                    "dead ones; child particles are not included.",
                 ),
                 (
                     "PARTICLE_CHILD",
                     "Child Particles",
-                    "Use current positions of all particles, including unborn and dead ones, from "
-                    "all particle systems on direct child objects; child particles are not "
-                    "included.",
+                    "Use every particle position of direct child objects, including unborn and "
+                    "dead ones; child particles are not included.",
                 ),
                 (
                     "PENCIL",
                     "Annotation Pencil",
-                    "Use points from the active annotation layer and frame, not Grease Pencil "
-                    "object geometry.",
+                    "Use the points of the active annotation layer at the current frame.",
                 ),
             ),
             "options": {"ENUM_FLAG"},
             "default": {"VERT_OWN"},
-            "description": "Combine selected seed sources. Child means direct child objects. If no "
-            "points are found, use the source mesh vertices.",
+            "description": "Where the cut seeds come from; several sources can be combined. "
+            "Without any point, the source mesh vertices are used.",
         },
     ),
     "source_limit": (
         "IntProperty",
         {
-            "name": "Max Pieces",
-            "description": "Maximum pieces of the first cut: at most this many seeds are picked "
-            "at random from the sampled points, before deduplication, and each seed yields at "
-            "most one piece; island splitting can add pieces. 0 uses all points. Does not add "
-            "points. Recursive cuts use Max per Shard.",
+            "name": "First Cut Pieces",
+            "description": "Most pieces the first cut can make: seeds beyond this are dropped at "
+            "random. 0 uses all points. Shard Limit can lower it; recursive cuts use Sub-Cut "
+            "Pieces.",
             "min": 0,
             "max": 5000,
+            "soft_max": 500,
             "default": 100,
         },
     ),
@@ -65,9 +66,8 @@ PROPERTY_SPECS = {
         "FloatProperty",
         {
             "name": "Seed Jitter",
-            "description": "Move each seed in a random direction by up to this fraction of half "
-            "the world-space bounding-box diagonal of the object being cut, so recursive cuts "
-            "jitter relative to the parent shard. 0 disables jitter.",
+            "description": "Move each seed randomly by up to this fraction of half the "
+            "bounding-box diagonal of the object being cut. 0 disables it.",
             "min": 0.0,
             "max": 1.0,
             "default": 0.5,
@@ -78,9 +78,9 @@ PROPERTY_SPECS = {
         "IntProperty",
         {
             "name": "Random Seed",
-            "description": "Random seed for seed sampling, seed jitter, recursive selection and "
-            "cell vertex jitter. The same inputs and seed reproduce the cut within the same "
-            "Blender version. Change this value for a different pattern; 0 is a fixed seed.",
+            "description": "Random seed for seed picking, seed jitter, recursive selection and "
+            "cell vertex jitter. Every value gives one fixed result in the same Blender "
+            "version; change it for a different pattern.",
             "min": 0,
             "max": 2147483647,
             "default": 0,
@@ -90,9 +90,9 @@ PROPERTY_SPECS = {
         "FloatVectorProperty",
         {
             "name": "Axis Weights",
-            "description": "Axis weights from 0.001 to 1 for cell dividing planes; only their ratios "
-            "matter, and a lower weight stretches cells along that axis. Does not scale the "
-            "object. Equal weights give the unweighted partition.",
+            "description": "Per-axis weights of the cell planes; only their ratios matter, and a "
+            "lower weight stretches the cells along that axis. Equal weights give a plain "
+            "Voronoi cut.",
             "size": 3,
             "min": CELL_SCALE_MIN,
             "max": 1.0,
@@ -103,38 +103,37 @@ PROPERTY_SPECS = {
         "IntProperty",
         {
             "name": "Rounds",
-            "description": "Subdivision rounds after the first cut; the first cut is level 1 and "
-            "each round adds a level. 0 disables recursion. Growth also depends on the split "
-            "fraction and Max Shards.",
+            "description": "Extra rounds that cut the shards again after the first cut. 0 "
+            "disables recursion.",
             "min": 0,
             "max": 5000,
+            "soft_max": 5,
             "default": 1,
         },
     ),
     "recursion_source_limit": (
         "IntProperty",
         {
-            "name": "Max per Shard",
-            "description": "Maximum pieces each shard is cut into during recursion: at most this "
-            "many seeds are picked at random from the shard, before deduplication; island "
-            "splitting can add pieces. 0 uses all available points. Parent shards have no "
-            "particles or children, so unless Annotation Pencil is selected their seeds are "
-            "their own vertices and values above the vertex count have no further effect.",
-            "min": 0,
+            "name": "Sub-Cut Pieces",
+            "description": "Most pieces each shard is cut into per round. At least 2, because "
+            "one seed only recuts a shard into itself. Values above the vertex count of a "
+            "shard have no further effect.",
+            "min": 2,
             "max": 5000,
+            "soft_max": 32,
             "default": 8,
         },
     ),
     "recursion_clamp": (
         "IntProperty",
         {
-            "name": "Max Shards",
-            "description": "Maximum shard count per source object. Before each round, the "
-            "subdivision is planned to fit following Split Priority; only island splitting can "
-            "exceed it. 0 disables the limit; the first cut is not limited. Generation stops "
-            f"with an error beyond {SHARD_LIMIT} shards in total.",
+            "name": "Shard Limit",
+            "description": "Most shards kept per source object, counting the first cut. 0 "
+            "disables the limit. Island splitting can exceed it slightly; more than "
+            f"{SHARD_LIMIT} shards in total stops with an error.",
             "min": 0,
-            "max": 10000,
+            "max": SHARD_LIMIT,
+            "soft_max": 1000,
             "default": 250,
         },
     ),
@@ -142,8 +141,7 @@ PROPERTY_SPECS = {
         "FloatProperty",
         {
             "name": "Split Fraction",
-            "description": "Fraction of current shards subdivided each round, rounded down. 0 "
-            "selects none; 1 selects all. Split Priority chooses which shards.",
+            "description": "Fraction of the shards cut again each round, rounded down.",
             "min": 0.0,
             "max": 1.0,
             "default": 1.0,
@@ -157,45 +155,42 @@ PROPERTY_SPECS = {
                 (
                     "EVEN",
                     "None - Even Split",
-                    "When Max Shards cannot fit a full round, subdivide every shard a little, "
-                    "sharing the allowed pieces evenly; bigger shards get the remainder first. "
-                    "With a split fraction below 1, bigger shards are selected.",
+                    "Give every shard a few pieces so the allowed total is shared evenly; "
+                    "bigger shards get the remainder first.",
                 ),
-                ("RANDOM", "Random", "Choose shards to subdivide at random."),
+                ("RANDOM", "Random", "Pick shards at random."),
                 (
                     "SIZE_MIN",
                     "Small Shards",
-                    "Choose shards with smaller world-space bounding-box diagonals first.",
+                    "Smaller shards first, by bounding-box diagonal.",
                 ),
                 (
                     "SIZE_MAX",
                     "Big Shards",
-                    "Choose shards with larger world-space bounding-box diagonals first.",
+                    "Bigger shards first, by bounding-box diagonal.",
                 ),
                 (
                     "CURSOR_MIN",
                     "Cursor Close",
-                    "Choose shard origins closest to the 3D cursor first.",
+                    "Shards whose origin is nearest the 3D cursor first.",
                 ),
                 (
                     "CURSOR_MAX",
                     "Cursor Far",
-                    "Choose shard origins farthest from the 3D cursor first.",
+                    "Shards whose origin is farthest from the 3D cursor first.",
                 ),
             ),
             "default": "EVEN",
-            "description": "How subdivision is shared when not every shard can be fully "
-            "subdivided: the split fraction is below 1, or Max Shards cannot fit a full round. "
-            "Size uses the world-space bounding-box diagonal; cursor distance uses object "
-            "origins.",
+            "description": "How limited splitting is shared when the split fraction is below 1 "
+            "or Shard Limit cannot fit a full round.",
         },
     ),
     "use_smooth_faces": (
         "BoolProperty",
         {
             "name": "Smooth Interior",
-            "description": "Smooth-shade newly created interior faces; exterior shading "
-            "comes from the source mesh.",
+            "description": "Smooth-shade the new interior faces. Outer faces keep the shading "
+            "of the source.",
             "default": False,
         },
     ),
@@ -203,8 +198,8 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Sharp Edges",
-            "description": "Mark edges between interior and exterior faces as sharp, "
-            "independently of smooth interior shading.",
+            "description": "Mark the border between interior and outer faces as sharp, so "
+            "smooth-shaded sources keep a clean rim.",
             "default": True,
         },
     ),
@@ -212,9 +207,8 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Split Islands",
-            "description": "Separate disconnected parts of each Boolean result into objects; "
-            "parts that touch only at a vertex count as disconnected. This can produce more "
-            "shards than seed points.",
+            "description": "Turn parts that are not connected into separate shards; touching "
+            "only at a vertex counts as not connected.",
             "default": True,
         },
     ),
@@ -222,9 +216,8 @@ PROPERTY_SPECS = {
         "FloatProperty",
         {
             "name": "Cut Inset",
-            "description": "Inset each seed-dividing plane by this world-space length in Blender "
-            "units, at every cut including recursive cuts. Opposing faces have about twice "
-            "this gap; large values can erase cells.",
+            "description": "Push each cutting plane inward by this distance, leaving a gap of "
+            "about twice this between shards. Too large removes cells.",
             "min": 0.0,
             "max": 1.0,
             "default": 0.001,
@@ -236,9 +229,9 @@ PROPERTY_SPECS = {
     "material_index": (
         "IntProperty",
         {
-            "name": "Interior Slot",
-            "description": "Zero-based material slot index for interior faces, including those "
-            "of recursive cuts; 0 selects the first slot.",
+            "name": "Cut Material",
+            "description": "Material slot of the interior faces, also in recursive cuts. 0 is "
+            "the first slot.",
             "default": 0,
             "min": 0,
         },
@@ -247,8 +240,8 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Interior VGroup",
-            "description": "Create the vertex group Interior for interior-only vertices. Boundary "
-            "vertices shared with exterior faces are excluded.",
+            "description": "Create an Interior vertex group with the vertices that belong "
+            "only to interior faces.",
             "default": False,
         },
     ),
@@ -256,7 +249,8 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Recenter",
-            "description": "Move each shard origin to its geometry center using MEDIAN, without moving its geometry.",
+            "description": "Move the origin of each shard to the mean of its vertices; the "
+            "geometry stays in place.",
             "default": True,
         },
     ),
@@ -264,10 +258,9 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Keep Parents",
-            "description": "Keep shards that were subdivided instead of deleting them. They move "
-            "into the level collections <source>_Parents_L<level> inside <source>_Parents, are "
-            "not cut again and are not part of the result. The originally selected source "
-            "objects are always kept.",
+            "description": "Keep the shards that were cut again, in <source>_Parents_L<level> "
+            "collections, instead of deleting them. They are not cut again and are not part "
+            "of the result.",
             "default": False,
         },
     ),
@@ -275,10 +268,8 @@ PROPERTY_SPECS = {
         "StringProperty",
         {
             "name": "Collection",
-            "description": "Output collection name. Empty uses the current collection. A named "
-            "collection must be editable and visible in this view layer; create it only if no "
-            "collection has that name. Each source object gets its own collection here, holding "
-            "all final shards in <source>_Shards.",
+            "description": "Output collection; empty uses the current collection. Each source "
+            "gets its own collection inside it, with all shards in <source>_Shards.",
             "default": "cell_collection",
         },
     ),
@@ -286,9 +277,8 @@ PROPERTY_SPECS = {
         "StringProperty",
         {
             "name": "Shard Prefix",
-            "description": "Prefix of shard names, followed by the source object name and one "
-            "index per cut level: cell_Cube_003 is the third shard of the first cut and "
-            "cell_Cube_003_002 is the second shard cut from it.",
+            "description": "Prefix of the shard names, followed by the source name and one "
+            "index per cut level, such as cell_Cube_003_002.",
             "default": "cell",
         },
     ),
@@ -296,8 +286,7 @@ PROPERTY_SPECS = {
         "IntProperty",
         {
             "name": "Index Digits",
-            "description": "Minimum digit width of each index in shard names, padded with "
-            "zeros. Longer numbers are not cut.",
+            "description": "Minimum digits of each index in the shard names, zero padded.",
             "min": 0,
             "max": 8,
             "default": 3,
@@ -306,9 +295,9 @@ PROPERTY_SPECS = {
     "use_debug_points": (
         "BoolProperty",
         {
-            "name": "Seed Points",
-            "description": "Create a DebugPoints object for every cut, including recursive "
-            "cuts, showing its seeds after jitter. It is diagnostic geometry, not a shard.",
+            "name": "Show Seeds",
+            "description": "Create a DebugPoints object for every cut showing its seeds after "
+            "jitter. It is not a shard.",
             "default": False,
         },
     ),
@@ -316,9 +305,8 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Live Progress",
-            "description": "Refresh the viewport after every cell to show progress, drawing the "
-            "object being cut as wireframe until its cut ends. Makes cutting several times "
-            "slower; has no effect in background mode.",
+            "description": "Redraw after every cell and show the cut object as wireframe. "
+            "Much slower; no effect in background mode.",
             "default": False,
         },
     ),
@@ -326,10 +314,63 @@ PROPERTY_SPECS = {
         "BoolProperty",
         {
             "name": "Keep Boolean Modifier",
-            "description": "Keep enabled Boolean modifiers on convex base meshes; evaluated geometry still shows the intersection. Skip recursion, island splitting, coplanar face merging and interior finishing.",
+            "description": "Keep the Boolean modifiers on the convex cells instead of applying "
+            "them. Skips recursion, island splitting, face merging and interior finishing.",
             "default": False,
         },
     ),
+}
+
+
+def bakes_booleans(values):
+    """是否应用布尔求交; 开启保留布尔修改器时不应用, 递归, 孤岛拆分, 面合并与断面收尾都随之跳过"""
+    return not values.use_debug_bool
+
+
+def recursion_rounds(values):
+    """实际执行的递归轮数; values 可以是参数值或参数组"""
+    return values.recursion if bakes_booleans(values) else 0
+
+
+def uses_interior(values):
+    """是否需要区分内部断面: 断面顶点组与锐边都要按面隐藏标记判定断面"""
+    return values.use_interior_vgroup or values.use_sharp_edges
+
+
+def finishes_interior(values):
+    """是否在最后做断面收尾"""
+    return bakes_booleans(values) and uses_interior(values)
+
+
+def splits_islands(values):
+    """是否拆分孤岛"""
+    return bakes_booleans(values) and values.use_island_split
+
+
+def first_cut_limit(values):
+    """首次切割的种子上限: 首次切割上限与碎块总数上限取小, 任一为 0 表示不限"""
+    limit, maximum = values.source_limit, values.recursion_clamp
+    if maximum:
+        return min(limit, maximum) if limit else maximum
+    return limit
+
+
+def _recursing(values):
+    """参数只被递归阶段读取"""
+    return recursion_rounds(values) > 0
+
+
+# 参数的生效条件: 字段名 -> 条件函数; 条件不成立时界面把它置灰但仍可编辑, 没有登记的参数总是生效
+# 流水线读同一批函数, 所以界面上可用的参数就是流水线里真正生效的参数
+ACTIVE_WHEN = {
+    "recursion": bakes_booleans,
+    "use_sharp_edges": bakes_booleans,
+    "use_interior_vgroup": bakes_booleans,
+    "use_island_split": bakes_booleans,
+    "recursion_source_limit": _recursing,
+    "recursion_chance": _recursing,
+    "recursion_chance_select": _recursing,
+    "use_keep_parents": _recursing,
 }
 
 

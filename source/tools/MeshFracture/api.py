@@ -43,9 +43,9 @@ def generate_fragments(context, sources, config, *, rng=None):
     输出集合由 collection_name 决定: 空名用当前集合, 否则按名查找或新建
     rng 为 None 时按 random_seed 建立局部随机流
     """
-    settings = SCHEMA.validate({**SCHEMA.defaults(), **config})
+    settings = SCHEMA.resolve(config)
     if rng is None:
-        rng = random.Random(settings["random_seed"])
+        rng = random.Random(settings.random_seed)
     # 固定输入快照: 后续 Blender 算子改变选择时不会改变阶段输入
     sources = tuple(sources)
     with preserve_selection(context):

@@ -8,34 +8,24 @@ from ...common.blender_context import restore_selection
 from ...common.translate import tr, tr_report
 from ...framework.contract import scene_settings
 from ...framework.operators import ToolOperator
-from ...framework.ui import CheckGrid, ParamGroup, ToolPanel, parameter_panels
+from ...framework.ui import CheckGrid, ParamGroup, ToolPanel, label_row, parameter_panels
 from .api import generate_fragments, source_issues
 from .constants import CONTEXT, TOOL_ID
 from .core.diagnosis import NOT_CLOSED, SELF_INTERSECTING
-from .settings import SCHEMA
-
-
-def _source_row(column, heading):
-    """切割种子来源的一行: 左侧行标签与其他字段的标签列对齐, 返回右侧放按钮的行"""
-    # 0.4 与 Blender 分列布局的标签宽度一致
-    split = column.split(factor=0.4, align=True)
-    label = split.row()
-    label.alignment = "RIGHT"
-    label.label(text=heading, translate=False)
-    return split.row(align=True)
+from .settings import ACTIVE_WHEN, SCHEMA
 
 
 def _draw_source(layout, owner):
     """切割种子来源子面板: 自身与子物体各一行顶点与粒子按钮, 注解铅笔与物体无关, 归在特殊一行显示全称"""
     column = layout.column(align=True)
     verts, particles = tr(CONTEXT, "Verts"), tr(CONTEXT, "Particles")
-    own = _source_row(column, tr(CONTEXT, "Own"))
+    own = label_row(column, tr(CONTEXT, "Own"), translate=False)
     own.prop_enum(owner, "source", "VERT_OWN", text=verts, translate=False)
     own.prop_enum(owner, "source", "PARTICLE_OWN", text=particles, translate=False)
-    children = _source_row(column, tr(CONTEXT, "Children"))
+    children = label_row(column, tr(CONTEXT, "Children"), translate=False)
     children.prop_enum(owner, "source", "VERT_CHILD", text=verts, translate=False)
     children.prop_enum(owner, "source", "PARTICLE_CHILD", text=particles, translate=False)
-    annotation = _source_row(column, tr(CONTEXT, "Special"))
+    annotation = label_row(column, tr(CONTEXT, "Special"), translate=False)
     annotation.prop_enum(owner, "source", "PENCIL", text="Annotation Pencil", text_ctxt=CONTEXT)
 
 
@@ -43,13 +33,15 @@ def _draw_source(layout, owner):
 # 输出与调试画成底部的弹出按钮
 GROUPS = (
     ParamGroup("Seed Source", ("source",), draw=_draw_source),
-    ParamGroup("Cut Parameters", ("source_limit", "source_noise", "random_seed", "margin")),
+    ParamGroup(
+        "Cut Parameters",
+        ("source_limit", "recursion_clamp", "source_noise", "random_seed", "margin"),
+    ),
     ParamGroup(
         "Recursive Shatter",
         (
             "recursion",
             "recursion_source_limit",
-            "recursion_clamp",
             "recursion_chance",
             "recursion_chance_select",
             "use_keep_parents",
@@ -72,28 +64,12 @@ GROUPS = (
     ),
     ParamGroup("Debug", ("use_debug_redraw", "use_debug_points", "use_debug_bool"), popover=True),
 )
-# 保留布尔修改器时, 收尾与递归阶段都不执行
-DEBUG_INACTIVE = frozenset({"use_sharp_edges", "use_interior_vgroup", "use_island_split"})
-# 只被递归阶段读取的参数
-RECURSION_DEPENDENT = frozenset(
-    {
-        "recursion_source_limit",
-        "recursion_clamp",
-        "recursion_chance",
-        "recursion_chance_select",
-        "use_keep_parents",
-    }
-)
 
 
 def _param_active(owner, key):
-    """参数对应的执行阶段可达时才显示为可用, 否则置灰"""
-    if key in DEBUG_INACTIVE or key == "recursion":
-        return not owner.use_debug_bool
-    recursion_enabled = owner.recursion > 0 and not owner.use_debug_bool
-    if key in RECURSION_DEPENDENT:
-        return recursion_enabled
-    return True
+    """参数的生效条件成立时才可用, 否则置灰但仍可编辑; 规则与流水线共用, 见 settings.ACTIVE_WHEN"""
+    rule = ACTIVE_WHEN.get(key)
+    return rule is None or rule(owner)
 
 
 def _can_apply(context):
