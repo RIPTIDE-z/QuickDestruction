@@ -13,6 +13,13 @@
        最终碎块与删除父块时一致
     9. 碎块总数上限: 放不下整轮细分时总数不超过上限; 平均细分时每块都被细分, 大碎块优先时被切的正是最大的几块
     10. 点接触的部分: 默认参数切割猴头, 封闭父块的体积都被子块接住, 没有没有面的空碎块
+    11. 首次切割上限: 碎块总数上限也约束首次切割, 上限之内的结果不变
+    12. 孤岛拆分: 平板状的胞体与圆环相交成两段, 打开时拆成两块, 关闭时留在同一块里
+    13. 共面面合并: 网格化的立方体切割后碎块里没有残留的共面边
+    14. 种子扰动: 扰动改变结果, 同一随机种子可复现
+    15. 材质与数据层: 碎块保留材质槽与链接方式, UV 与颜色层, 断面材质只落在断面上
+    16. 布尔策略: 封闭网格不启用容错求解, 越界与非有限坐标的结果被拒绝, 没有面的网格无法切割
+    17. 求交结果整理: 焊接重合顶点, 清掉散边散点, 立方体的面保持不变
 测试过程:
     每个场景先清空数据, 建立源物体与子物体种子, 经 MeshFracture.api.generate_fragments 切割,
     不注册插件界面; 每条判据输出 [PASS] 或 [FAIL]
@@ -21,26 +28,25 @@
 实测环境: Blender 5.2.2 (Python 3.13) 与 Blender 4.2.23 (Python 3.11)
 """
 
-import random
 import sys
 import tempfile
-import traceback
 from pathlib import Path
 
 import bmesh
 import bpy
 from mathutils import Vector
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import harness
+from harness import check, cube, reset, seeds, select, volume
 
-from source.common import shards as shard_contract  # noqa: E402
-from source.common.errors import InvalidParameterError  # noqa: E402
-from source.tools.MeshFracture.api import generate_fragments  # noqa: E402
-from source.tools.MeshFracture.core import interior, pipeline  # noqa: E402
-from source.tools.MeshFracture.errors import MeshFractureError  # noqa: E402
+from source.common import shards as shard_contract
+from source.common.blender_context import mesh_edit
+from source.common.errors import InvalidParameterError
+from source.tools.MeshFracture.api import generate_fragments
+from source.tools.MeshFracture.core import boolean, cleanup, interior, pipeline
+from source.tools.MeshFracture.errors import IntersectionBoundsError, MeshFractureError
 
-FAILURES = []
 # 子物体顶点做种子, 关闭种子扰动与内缩, 其余按场景覆盖
 BASE = {"source": {"VERT_CHILD"}, "source_limit": 0, "source_noise": 0.0, "margin": 0.0}
 # 体积比允许的偏差: 凸包阶段的抖动与焊接带来约 1e-5 的误差
@@ -49,61 +55,9 @@ VOLUME_TOLERANCE = 1e-4
 TOUCH_LOSS_LIMIT = 0.005
 
 
-def check(label, condition, detail=""):
-    """记录一条必须成立的判据"""
-    print(f"[{'PASS' if condition else 'FAIL'}] {label}{f' | {detail}' if detail else ''}")
-    if not condition:
-        FAILURES.append(label)
-
-
-def reset():
-    """清空物体, 网格, 材质, 集合与链接库, 活动集合设回场景根集合"""
-    for kind in ("objects", "meshes", "materials", "collections", "libraries"):
-        data = getattr(bpy.data, kind)
-        for item in list(data):
-            data.remove(item)
-    layer = bpy.context.view_layer
-    layer.active_layer_collection = layer.layer_collection
-
-
-def cube(name, half=1.0, location=(0.0, 0.0, 0.0)):
-    """边长 2*half 的立方体物体"""
-    mesh = bpy.data.meshes.new(name)
-    bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=2.0 * half)
-    bm.to_mesh(mesh)
-    bm.free()
-    obj = bpy.data.objects.new(name, mesh)
-    obj.location = location
-    bpy.context.collection.objects.link(obj)
-    return obj
-
-
-def seeds(parent, count, spread, seed):
-    """在父物体局部空间放一组随机种子点, 作为 VERT_CHILD 来源"""
-    rng = random.Random(seed)
-    points = [tuple(rng.uniform(-spread, spread) for _ in range(3)) for _ in range(count)]
-    mesh = bpy.data.meshes.new(parent.name + "_seeds")
-    mesh.from_pydata(points, [], [])
-    obj = bpy.data.objects.new(parent.name + "_seeds", mesh)
-    bpy.context.collection.objects.link(obj)
-    obj.parent = parent
-    return obj
-
-
 def cut(sources, config, collection=""):
     """经阶段 API 切割; 输出集合名默认为空, 即当前集合"""
     return generate_fragments(bpy.context, sources, {**config, "collection_name": collection})
-
-
-def volume(obj):
-    """物体在世界空间的网格体积"""
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-    bm.transform(obj.matrix_world)
-    result = bm.calc_volume(signed=False)
-    bm.free()
-    return result
 
 
 def volume_ratio(result, expected):
@@ -374,6 +328,231 @@ def case_touching_parts():
     check("没有空碎块", not empty, str(empty[:3]))
 
 
+def torus_source(seed_count=None):
+    """圆环源物体; 给定 seed_count 时另加子物体种子"""
+    bpy.ops.mesh.primitive_torus_add(major_radius=1.0, minor_radius=0.4)
+    torus = bpy.context.active_object
+    if seed_count:
+        seeds(torus, seed_count, 1.2, 9)
+    return torus
+
+
+def case_first_cut_limit():
+    """碎块总数上限也约束首次切割: 圆环用全部顶点做种子, 上限之内不变, 超过时被截取"""
+    base = {"source": {"VERT_OWN"}, "source_noise": 0.0, "use_island_split": False}
+    for clamp, limit, rounds, expected in (
+        (0, 0, 0, 576),
+        (100, 0, 0, 100),
+        (100, 0, 1, 100),
+        (1000, 0, 0, 576),
+        (100, 30, 0, 30),
+        (30, 100, 0, 30),
+    ):
+        reset()
+        config = {**base, "source_limit": limit, "recursion_clamp": clamp, "recursion": rounds}
+        count = len(cut([torus_source()], config).shards)
+        check(
+            f"总数上限 {clamp} 首次切割上限 {limit} 递归 {rounds} 轮",
+            count == expected,
+            f"{count} 块, 期望 {expected}",
+        )
+
+
+def components(obj):
+    """碎块网格按共享边连通的部分数"""
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    seen, count = set(), 0
+    for face in bm.faces:
+        if face in seen:
+            continue
+        count += 1
+        stack = [face]
+        seen.add(face)
+        while stack:
+            for edge in stack.pop().edges:
+                for other in edge.link_faces:
+                    if other not in seen:
+                        seen.add(other)
+                        stack.append(other)
+    bm.free()
+    return count
+
+
+def case_island_split():
+    """孤岛拆分: 三个种子沿 x 轴排开, 中间的胞体是一块平板, 与圆环相交成互不连通的两段"""
+    config = {**BASE, "recursion": 0}
+    results = {}
+    for split in (True, False):
+        reset()
+        torus = torus_source()
+        mesh = bpy.data.meshes.new("axis_seeds")
+        mesh.from_pydata([(-0.6, 0.0, 0.0), (0.0, 0.0, 0.0), (0.6, 0.0, 0.0)], [], [])
+        holder = bpy.data.objects.new("axis_seeds", mesh)
+        bpy.context.collection.objects.link(holder)
+        holder.parent = torus
+        result = cut([torus], {**config, "use_island_split": split}, "")
+        results[split] = [components(shard) for shard in result.shards]
+        print(f"   拆分孤岛 {split}: {len(result.shards)} 块, 连通块数 {results[split]}")
+    check("打开时每块碎块都只有一个连通块", set(results[True]) == {1})
+    check("关闭时中间的胞体含两个连通块", max(results[False]) == 2, str(results[False]))
+    check("拆分后块数多一块", len(results[True]) == len(results[False]) + 1)
+
+
+def subdivided_cube(cuts=2):
+    """每个面都切成 (cuts+1)^2 个共面小面的立方体"""
+    reset()
+    mesh = bpy.data.meshes.new("Grid")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=2.0)
+    bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=cuts, use_grid_fill=True)
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = bpy.data.objects.new("Grid", mesh)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+
+def coplanar_edges(shards, limit=5e-4):
+    """碎块内两侧面几乎共面的边数; 这样的边应当已经被合并掉"""
+    total = 0
+    for shard in shards:
+        bm = bmesh.new()
+        bm.from_mesh(shard.data)
+        total += sum(
+            1
+            for edge in bm.edges
+            if len(edge.link_faces) == 2 and edge.calc_face_angle(0.0) < limit
+        )
+        bm.free()
+    return total
+
+
+def case_final_merge():
+    """最终合并共面面: 网格化的立方体切割后, 碎块里不再有两侧几乎共面的边"""
+    source = subdivided_cube()
+    faces = len(source.data.polygons)
+    seeds(source, 6, 0.9, 4)
+    result = cut([source], {**BASE, "recursion": 0}, "")
+    left = coplanar_edges(result.shards)
+    print(f"   源 {faces} 个面, 切成 {len(result.shards)} 块, 剩余共面边 {left}")
+    check("没有残留的共面边", left == 0, str(left))
+
+
+def case_seed_jitter():
+    """种子扰动: 为 0 与不为 0 的结果不同, 同一随机种子下可复现, 体积仍然守恒"""
+    prints = {}
+    for label, noise in (("none", 0.0), ("jitter", 0.5), ("jitter again", 0.5)):
+        reset()
+        source = cube("Src")
+        seeds(source, 12, 0.9, 6)
+        result = cut([source], {**BASE, "source_noise": noise, "recursion": 0}, "")
+        prints[label] = fingerprint(result)
+        if noise:
+            ratio = volume_ratio(result, 8.0)
+            check(f"{label} 体积守恒", abs(ratio - 1) < VOLUME_TOLERANCE, f"{ratio:.6f}")
+    check("扰动改变了切割结果", prints["none"] != prints["jitter"])
+    check("同一随机种子的扰动可复现", prints["jitter"] == prints["jitter again"])
+
+
+def case_materials_layers():
+    """材质与数据层: 碎块保留材质槽与链接方式, UV 与颜色层; 断面材质只落在断面上"""
+    reset()
+    source = cube("Src")
+    inner, outer, override = (
+        bpy.data.materials.new(name) for name in ("Outer", "Inner", "Override")
+    )
+    source.data.materials.append(inner)
+    source.data.materials.append(outer)
+    source.material_slots[1].link = "OBJECT"
+    source.material_slots[1].material = override
+    for name in ("UVA", "UVB"):
+        source.data.uv_layers.new(name=name)
+    source.data.color_attributes.new(name="Tint", type="FLOAT_COLOR", domain="POINT")
+    seeds(source, 8, 0.9, 5)
+    result = cut([source], {**BASE, "recursion": 0, "material_index": 1}, "")
+    shard = result.shards[0]
+    slots = [
+        (slot.link, slot.material.name if slot.material else None) for slot in shard.material_slots
+    ]
+    check("保留材质槽与链接方式", slots == [("DATA", "Outer"), ("OBJECT", "Override")], str(slots))
+    check("保留 UV 层", [layer.name for layer in shard.data.uv_layers] == ["UVA", "UVB"])
+    check(
+        "保留颜色层",
+        [(a.name, a.domain, a.data_type) for a in shard.data.color_attributes]
+        == [("Tint", "POINT", "FLOAT_COLOR")],
+    )
+    indices = {face.material_index for shard in result.shards for face in shard.data.polygons}
+    check("断面用索引 1, 外表面沿用源物体的 0", indices == {0, 1}, str(indices))
+    exterior = [
+        face.material_index
+        for shard in result.shards
+        for face in shard.data.polygons
+        if max(abs(c) for c in (shard.matrix_world @ face.center)) > 0.999
+    ]
+    check("贴在源表面上的面都是索引 0", exterior and set(exterior) == {0}, str(set(exterior)))
+
+
+def case_boolean_policy():
+    """布尔策略与前置检查: 求解策略, 越界与非有限坐标的校验, 没有面的网格"""
+    reset()
+    depsgraph_of = bpy.context.evaluated_depsgraph_get
+    small = cube("Small")
+    big = cube("Big", half=2.0)
+    bpy.ops.mesh.primitive_plane_add()
+    plane = bpy.context.active_object
+    bpy.context.view_layer.update()
+    snapshot = boolean.inspect_source(small, depsgraph_of())
+    check(
+        "立方体的对角线与焊接距离",
+        abs(snapshot.diagonal - 12**0.5) < 1e-6,
+        f"{snapshot.diagonal:.6f}",
+    )
+    check("焊接距离随尺度", abs(snapshot.weld_distance - snapshot.diagonal * 1e-4) < 1e-12)
+    check("封闭的立方体不启用容错求解", not snapshot.use_hole_tolerant)
+    check("开放的平面启用容错求解", boolean.inspect_source(plane, depsgraph_of()).use_hole_tolerant)
+
+    boolean.validate_intersection(small.data, small.matrix_world, snapshot)
+    check("范围之内的结果通过校验", True)
+    expect_error(
+        "超出源包围盒的结果被拒绝",
+        IntersectionBoundsError,
+        lambda: boolean.validate_intersection(big.data, big.matrix_world, snapshot),
+    )
+    broken = cube("Broken")
+    broken.data.vertices[0].co.x = float("nan")
+    expect_error(
+        "含非有限坐标的结果被拒绝",
+        MeshFractureError,
+        lambda: boolean.validate_intersection(broken.data, broken.matrix_world, snapshot),
+    )
+
+    faceless = bpy.data.objects.new("Faceless", bpy.data.meshes.new("Faceless"))
+    faceless.data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [])
+    bpy.context.collection.objects.link(faceless)
+    select([faceless])
+    bpy.context.view_layer.update()
+    expect_error("没有面的网格无法切割", MeshFractureError, lambda: cut([faceless], {}, ""))
+    check("失败后没有碎块", not [o for o in bpy.data.objects if o.get("_qd_source")])
+
+
+def case_weld_cleanup():
+    """求交结果整理: 焊接重合顶点, 清掉散边散点, 立方体的面保持不变"""
+    reset()
+    mesh = cube("Weld").data
+    with mesh_edit(mesh) as bm:
+        # 一个重合顶点, 一个散点, 一条散边
+        bm.verts.ensure_lookup_table()
+        bm.verts.new(bm.verts[0].co)
+        bm.verts.new((5.0, 5.0, 5.0))
+        bm.edges.new((bm.verts.new((6.0, 0.0, 0.0)), bm.verts.new((7.0, 0.0, 0.0))))
+        bm.to_mesh(mesh)
+    cleanup.weld_intersection(mesh, 1e-5)
+    check("整理后只剩立方体的 8 个顶点", len(mesh.vertices) == 8, str(len(mesh.vertices)))
+    check("整理后没有散边", not any(edge.is_loose for edge in mesh.edges))
+    check("立方体的 6 个面保持不变", len(mesh.polygons) == 6, str(len(mesh.polygons)))
+
+
 def case_naming():
     """多源与超长中文源名不重名, 名字带源物体名与路径, 碎块集中在各源物体的 <源>_Shards 里"""
     reset()
@@ -537,22 +716,14 @@ CASES = (
     case_keep_parents,
     case_max_shards,
     case_touching_parts,
+    case_first_cut_limit,
+    case_island_split,
+    case_final_merge,
+    case_seed_jitter,
+    case_materials_layers,
+    case_boolean_policy,
+    case_weld_cleanup,
 )
 
 
-def main():
-    """逐个运行场景, 单个场景出错记为失败但不影响其余场景"""
-    print(f"Blender {bpy.app.version_string} Python {sys.version.split()[0]}")
-    for case in CASES:
-        print(f"== {case.__doc__}")
-        try:
-            case()
-        except Exception:
-            traceback.print_exc()
-            check(f"{case.__name__} 执行完成", False)
-    print("ALL PASS" if not FAILURES else f"失败 {len(FAILURES)} 项: {FAILURES}")
-    if FAILURES:
-        sys.exit(1)
-
-
-main()
+harness.run_cases(CASES)

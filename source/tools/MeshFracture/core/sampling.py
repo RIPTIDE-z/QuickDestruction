@@ -31,23 +31,28 @@ def _particle_points(item, depsgraph):
 
 
 def _annotation_points(scene):
-    """场景活动注解层在活动帧上的笔画点"""
+    """场景活动注解层在当前帧的笔画点
+
+    当前帧取帧号不大于当前帧的最近一帧, 与注解保持上一帧的显示规则一致
+    不读图层的 active_frame: 它是视口重绘时才刷新的缓存, 脚本调用时会是旧帧或空
+    """
     # 注解入口改过名: 4.2 及更早是 grease_pencil, 4.3 起是 annotation
     annotation = getattr(scene, "grease_pencil", None) or getattr(scene, "annotation", None)
     if annotation is None:
         return []
-    # 活动层的访问方式在不同版本下不同, 两种都试
-    layer = getattr(annotation.layers, "active", None)
-    if layer is None:
-        active_name = getattr(annotation.layers, "active_note", None)
-        layer = next(
-            (item for item in annotation.layers if getattr(item, "info", None) == active_name),
-            None,
-        )
-    frame = getattr(layer, "active_frame", None)
-    if frame is None:
+    layers = annotation.layers
+    # 活动层用 active_index 取, 各版本都有; 新建的图层会成为活动层
+    if not 0 <= layers.active_index < len(layers):
         return []
-    return [point.co.copy() for stroke in getattr(frame, "strokes", ()) for point in stroke.points]
+    held = [
+        frame
+        for frame in layers[layers.active_index].frames
+        if frame.frame_number <= scene.frame_current
+    ]
+    if not held:
+        return []
+    frame = max(held, key=lambda item: item.frame_number)
+    return [point.co.copy() for stroke in frame.strokes for point in stroke.points]
 
 
 def points_from_object(context, depsgraph, obj, source):

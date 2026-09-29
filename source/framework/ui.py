@@ -47,8 +47,6 @@ class ParamGroup(NamedTuple):
     fields: tuple
     # 为真时子面板默认收起, 用于不常调的参数
     closed: bool = False
-    # 画在子面板标题上的总开关字段, 关闭时子面板内容置灰
-    toggle: str | None = None
     # 为真时不占子面板, 在面板底部画成弹出按钮, 用于很少调整的参数
     popover: bool = False
     # 工具专属的绘制函数 draw(layout, owner), 需要特殊排法时使用; fields 仍要列出它画的字段
@@ -89,20 +87,11 @@ def _draw_vector(layout, owner, schema, key):
 
 
 def _draw_field(layout, owner, schema, key):
-    """绘制一个字段; 向量的分量排在一行, 多选枚举的标签单独一行, 选项两列排开, 保证名称完整显示"""
-    kind, options = schema.specs[key]
-    if kind.endswith("VectorProperty"):
+    """绘制一个字段; 向量的分量排在一行, 其余按 Blender 默认的分列布局"""
+    if schema.specs[key][0].endswith("VectorProperty"):
         _draw_vector(layout, owner, schema, key)
-        return
-    if "ENUM_FLAG" not in options.get("options", ()):
+    else:
         layout.prop(owner, key)
-        return
-    column = layout.column(align=True)
-    column.use_property_split = False
-    column.label(text=options["name"], text_ctxt=schema.context)
-    grid = column.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
-    for identifier, name, _description in options["items"]:
-        grid.prop_enum(owner, key, identifier, text=name, text_ctxt=schema.context)
 
 
 def draw_fields(layout, owner, schema, fields, active):
@@ -121,29 +110,17 @@ def draw_fields(layout, owner, schema, fields, active):
 
 
 def _group_draw(tool_id, schema, group, active):
-    """生成子面板的 draw: 绘制本组字段, 标题开关关闭时整组置灰"""
+    """生成子面板的 draw: 有自绘函数时交给它, 否则按字段表绘制"""
 
     def draw(self, context):
         """绘制本组字段"""
         owner = scene_settings(context, tool_id)
-        if group.toggle:
-            self.layout.active = getattr(owner, group.toggle)
         if group.draw:
             group.draw(self.layout, owner)
             return
         draw_fields(self.layout, owner, schema, group.fields, active)
 
     return draw
-
-
-def _toggle_draw(tool_id, toggle):
-    """生成子面板的 draw_header: 在标题上绘制总开关"""
-
-    def draw_header(self, context):
-        """绘制标题上的总开关, 标签由子面板标题承担"""
-        self.layout.prop(scene_settings(context, tool_id), toggle, text="")
-
-    return draw_header
 
 
 def _popover_row_draw(context_name, popovers):
@@ -195,11 +172,7 @@ def parameter_panels(parent, schema, core, groups, active):
     core 是 parent 自己绘制的字段; 返回的类按分组顺序注册, 子面板的注册顺序就是界面上的上下顺序
     弹出面板在全部子面板之后, 由一个不带标题的子面板把它们的按钮并排画在最底部
     """
-    # 标题上的总开关也算已排布
-    placed = [
-        *core,
-        *(key for g in groups for key in (*field_keys(g.fields), g.toggle) if key is not None),
-    ]
+    placed = [*core, *(key for group in groups for key in field_keys(group.fields))]
     if sorted(placed) != sorted(schema.specs):
         missing = sorted(set(schema.specs) - set(placed))
         repeated = sorted({key for key in placed if placed.count(key) > 1})
@@ -219,8 +192,6 @@ def parameter_panels(parent, schema, core, groups, active):
             "bl_options": {"DEFAULT_CLOSED"} if group.closed else set(),
             "draw": _group_draw(parent.tool_id, schema, group, active),
         }
-        if group.toggle:
-            namespace["draw_header"] = _toggle_draw(parent.tool_id, group.toggle)
         panels.append(type(name, (ToolPanel, Panel), namespace))
     if popovers:
         footer = {

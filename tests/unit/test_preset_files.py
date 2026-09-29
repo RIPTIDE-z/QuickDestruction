@@ -72,6 +72,32 @@ def test_read_rejects_large_file(tmp_path):
         preset_files.read_preset(path)
 
 
+def test_read_wraps_unreadable_files(tmp_path):
+    """文件缺失, 编码不对与 JSON 不合法都转成预设错误, 不露出系统与解析器的原始异常"""
+    (tmp_path / "text.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "binary.json").write_bytes(b"\xff\xfe\x00\x01")
+    for name in ("text", "binary", "missing"):
+        with pytest.raises(PresetError) as caught:
+            preset_files.read_preset(tmp_path / f"{name}.json")
+        LOG.info("%s -> %s", name, caught.value.message)
+    with pytest.raises(PresetError, match="could not be read"):
+        preset_files.read_preset(tmp_path / "missing.json")
+    with pytest.raises(PresetError, match="format is invalid"):
+        preset_files.read_preset(tmp_path / "text.json")
+    with pytest.raises(PresetError, match="format is invalid"):
+        preset_files.read_preset(tmp_path / "binary.json")
+
+
+def test_remove_preset(tmp_path):
+    """删除已有的预设成功; 文件已经不存在时转成预设错误"""
+    path = preset_files.preset_filepath(tmp_path, "gone")
+    preset_files.save_preset(tmp_path, "gone", preset_files.encode("tool", {}))
+    preset_files.remove_preset(path)
+    assert not path.exists()
+    with pytest.raises(PresetError, match="could not be removed"):
+        preset_files.remove_preset(path)
+
+
 def test_decode_roundtrip():
     """合规信封返回其中的参数"""
     assert preset_files.decode("tool", preset_files.encode("tool", {"a": 1})) == {"a": 1}

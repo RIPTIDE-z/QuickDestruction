@@ -7,14 +7,15 @@
 测试过程:
     1. 注册插件, 把各工具的面板放进出厂设置下侧栏默认显示的 Item 页, 交给 Blender 自己绘制
     2. 另注册一个驱动面板, 在它的 draw 里用真实 layout 与真实绘制上下文逐个驱动绘制入口:
-       工具面板, 子面板与弹出面板, 子面板标题开关, 标题栏预设入口, 预设菜单; 转发型 layout 代理记录每次控件调用
+       工具面板, 子面板与弹出面板, 标题栏预设入口, 预设菜单; 转发型 layout 代理记录每次控件调用
     3. 自检: 在同一上下文里写 ID 数据必须被拒绝, 否则说明驱动上下文并不受限, 整个结论不成立
     入口全部由 registration.TOOLS 推导, 新增工具会自动纳入
 判据:
     - 工具的顶层面板没有父面板, 子面板挂在本工具的面板下; 自身或上级默认收起的面板没有被绘制,
       其余侧栏面板都被绘制且不抛异常; 弹出面板只在点开时绘制, 由驱动面板驱动
-    - 每个驱动入口不抛异常并至少产生一个控件, 包括子面板内容与标题开关
+    - 每个驱动入口不抛异常并至少产生一个控件, 包括子面板与弹出面板的内容
     - 顶层面板提供本工具的算子入口; 标题栏预设入口经布局上下文写入工具标识; 预设菜单请求到全部预设算子
+    - 交互调用生成算子: 源网格有问题时先弹出确认框, 确认之前不切割 (后台模式没有窗口, 只能在这里测)
 运行方式 (仓库根目录, 不能加 -b):
     <Blender 可执行文件> --factory-startup --python-exit-code 1 --python tests\\blender\\verify_ui_draw.py
 实测环境: Blender 5.2.2 (Python 3.13) 与 Blender 4.2.23 (Python 3.11)
@@ -138,7 +139,7 @@ def parent_of(cls):
 
 
 def tool_entries(tool, context):
-    """一个工具的绘制入口: 面板内容, 子面板标题开关, 以及带预设时的标题栏预设入口与预设菜单"""
+    """一个工具的绘制入口: 面板内容, 以及带预设时的标题栏预设入口与预设菜单"""
     own = [cls.bl_idname for cls in tool.classes if issubclass(cls, bpy.types.Operator)]
     entries = []
     for cls in tool_panels(tool):
@@ -151,13 +152,6 @@ def tool_entries(tool, context):
                 any_operator=True,
             )
         )
-        if "draw_header" in cls.__dict__:
-            entries.append(
-                Entry(
-                    f"{tool.tool_id}/{cls.__name__}/标题开关",
-                    lambda layout, ctx, cls=cls: cls.draw_header(as_self(layout), ctx),
-                )
-            )
     if not tool.presets:
         return entries
     main = next(cls for cls in tool_panels(tool) if not parent_of(cls) and not is_popover(cls))
@@ -312,9 +306,23 @@ def check_entry(entry, error, calls):
         check(f"{entry.name} 写入工具标识", presets.TOOL_MEMBER in written, str(sorted(written)))
 
 
+def check_dialog():
+    """真实窗口里调用生成算子: 源网格有问题时先弹出确认框而不切割"""
+    bpy.ops.mesh.primitive_monkey_add()
+    monkey = bpy.context.active_object
+    before = len(bpy.data.objects)
+    area = next(a for a in bpy.context.screen.areas if a.type == "VIEW_3D")
+    region = next(r for r in area.regions if r.type == "WINDOW")
+    with bpy.context.temp_override(area=area, region=region):
+        result = bpy.ops.qd_mesh_fracture.generate("INVOKE_DEFAULT")
+    check("有问题的网格先弹出确认框", result == {"RUNNING_MODAL"}, f"{monkey.name}: {result}")
+    check("确认之前没有切割", len(bpy.data.objects) == before)
+
+
 def finish():
     """汇总判据; 定时器里无法传退出码, 失败时直接以非零状态结束进程"""
     check_sidebar()
+    check_dialog()
     check("驱动面板被执行", bool(RESULTS))
     for entry, error, calls in RESULTS:
         check_entry(entry, error, calls)

@@ -22,7 +22,13 @@ ruff 还会检查圈复杂度（上限 10）与函数参数个数（上限 8）�
 
 ## 测试
 
-两个 Blender 版本都要各跑一遍：
+一条命令跑完单元测试，再对每个给定的 Blender 依次跑全部 Blender 测试，任何一项失败退出码都是 1：
+
+```powershell
+uv run python scripts/run_tests.py <Blender 5.2> <Blender 4.2>
+```
+
+选项 `--skip-unit` 不跑单元测试，`--skip-ui` 不跑会弹出 Blender 窗口的界面测试。也可以单独运行：
 
 ```powershell
 uv run pytest
@@ -32,11 +38,14 @@ uv run pytest
 
 | 测试 | 运行方式 | 覆盖内容 |
 | --- | --- | --- |
-| `tests/unit` | pytest，不需要 Blender | 参数校验、预设文件与信封，以及语言文件的覆盖、陈旧与写法检查 |
-| `verify_fracture.py` | 后台 Blender | 体积守恒、可复现、断面收尾、命名与集合结构、失败回滚、输入边界、重设原点、保留父碎块、碎块总数上限、点接触的部分 |
-| `verify_ui_draw.py` | 真实界面，不能加 `-b` | 面板、子面板与弹出面板绘制不抛错，折叠状态正确，各绘制入口产生控件，以及绘制期不写 ID 数据 |
+| `tests/unit` | pytest，不需要 Blender | 参数校验与默认值解析，预设文件与信封，语言文件的覆盖、陈旧与写法检查，设置项的联动规则，细分名额分配，碎块标记 |
+| `verify_fracture.py` | 后台 Blender | 体积守恒、可复现、断面收尾、命名与集合结构、失败回滚、输入边界、重设原点、保留父碎块、碎块总数上限与首次切割上限、点接触的部分、孤岛拆分、共面面合并、种子扰动、材质与数据层、布尔策略、求交结果整理 |
+| `verify_inputs.py` | 后台 Blender | 源网格体检（不封闭与自相交），各种切割种子来源与回退 |
+| `verify_operator.py` | 后台 Blender | 生成算子，预设的保存、读取与删除，注册与失败回滚 |
+| `verify_ui_draw.py` | 真实界面，不能加 `-b` | 面板、子面板与弹出面板绘制不抛错，折叠状态正确，各绘制入口产生控件，绘制期不写 ID 数据，源网格有问题时的确认对话框 |
 
 - **单元测试**：只导入不依赖 Blender 的模块。虚拟环境装了类型桩后，`import bpy` 也能成功，这不能当作脱离 Blender 的证明。
+- **Blender 测试**：共用 `tests/blender/harness.py`，提供判据输出、场景重置与建物体的帮手；每条判据输出 `[PASS]` 或 `[FAIL]`，有失败时以非零状态结束。
 - **界面测试**：绘制入口由 `registration.TOOLS` 推导，新增工具会自动纳入。
 
 ## 打包与安装

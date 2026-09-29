@@ -142,6 +142,19 @@ def test_invalid_parameter_carries_label():
     assert SCHEMA_UNDER_TEST.invalid("missing").values == {"name": "missing"}
 
 
+def test_resolve_fills_defaults_and_is_read_only():
+    """缺失字段取默认值, 未知字段被拒绝, 得到的参数值只读, 拼错字段名立刻报错"""
+    values = SCHEMA.resolve({"margin": 0.25})
+    assert values.margin == 0.25
+    assert values.recursion == SCHEMA.defaults()["recursion"]
+    with pytest.raises(InvalidParameterError):
+        SCHEMA.resolve({"no_such_field": 1})
+    with pytest.raises(AttributeError):
+        values.margin = 1.0
+    with pytest.raises(AttributeError):
+        _ = values.no_such_field
+
+
 def test_mesh_fracture_defaults_are_valid():
     """MeshFracture 的每个字段都声明了默认值, 并且默认值能整体通过校验"""
     values = SCHEMA.validate(SCHEMA.defaults())
