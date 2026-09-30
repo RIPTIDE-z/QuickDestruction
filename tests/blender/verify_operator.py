@@ -4,6 +4,7 @@
     1. 生成算子: 读取场景里的参数, 成功时生成并选中碎块, 失败时报出可翻译的错误并保持场景不变,
        交互调用时干净的网格直接切割 (有问题的网格弹确认框需要真实窗口, 在 verify_ui_draw.py 里测)
     2. 预设算子: 保存, 覆盖保护, 载入, 删除, 坏文件与不合规文件的报告, 失败时参数保持不变
+       首次切割种子数与碎块总数上限: 界面上改动一方时另一方跟着调整, 预设违反顺序时被拒绝
     3. 注册: 注销后干净, 重复注册被拒绝, 任一步失败都整体回滚, 不合规的工具声明在改动 Blender 之前被拒绝
 测试过程:
     在后台 Blender 里注册插件, 用 bpy.ops 调用算子, 用 RuntimeError 的文字检查报告;
@@ -75,7 +76,7 @@ def prepare_scene(seed_count=6):
     config.source_noise = 0.0
     config.margin = 0.0
     config.recursion = 0
-    config.source_limit = 0
+    config.first_cut_seeds = 0
     config.collection_name = ""
     return source
 
@@ -83,11 +84,11 @@ def prepare_scene(seed_count=6):
 def case_generate_success():
     """生成算子: 读取场景参数, 生成碎块并只选中它们, 活动物体是第一块"""
     source = prepare_scene(6)
-    settings().source_limit = 4
+    settings().first_cut_seeds = 4
     result = bpy.ops.qd_mesh_fracture.generate("EXEC_DEFAULT")
     shards = shards_in_scene()
     check("算子完成", result == {"FINISHED"}, str(result))
-    check("碎块数来自场景参数的首次切割上限", len(shards) == 4, str(len(shards)))
+    check("碎块数来自场景参数的首次切割种子数", len(shards) == 4, str(len(shards)))
     selected = {obj.name for obj in bpy.context.selected_objects}
     check("只选中碎块", selected == {obj.name for obj in shards}, str(sorted(selected)[:3]))
     check("活动物体是碎块", bpy.context.view_layer.objects.active in shards)
@@ -135,7 +136,7 @@ def case_generate_failures():
 def case_generate_invoke():
     """交互调用 (INVOKE_DEFAULT): 干净的网格直接切割; 有问题的网格弹确认框, 需要真实窗口, 见 verify_ui_draw.py"""
     prepare_scene(4)
-    settings().source_limit = 4
+    settings().first_cut_seeds = 4
     result = bpy.ops.qd_mesh_fracture.generate("INVOKE_DEFAULT")
     check("干净的网格直接切割", result == {"FINISHED"} and len(shards_in_scene()) == 4, str(result))
 
@@ -207,9 +208,9 @@ def case_preset_errors():
     (isolated_directory(TOOL) / "binary.json").write_bytes(b"\xff\xfe\x00\x01")
     write_preset("unknown_field", preset_files.encode(TOOL, {"margin": 0.4, "no_such_field": 1}))
     write_preset("other_tool", preset_files.encode("other", {}))
-    write_preset(
-        "bad_value", preset_files.encode(TOOL, {"margin": 0.4, "recursion_source_limit": 1})
-    )
+    write_preset("bad_value", preset_files.encode(TOOL, {"margin": 0.4, "sub_cut_pieces": 1}))
+    # 场景里的碎块总数上限是默认的 250, 首次切割种子数超过它
+    write_preset("bad_order", preset_files.encode(TOOL, {"margin": 0.4, "first_cut_seeds": 900}))
     expectations = (
         ("garbage", "format is invalid"),
         ("binary", "format is invalid"),
@@ -217,6 +218,7 @@ def case_preset_errors():
         ("unknown_field", "Invalid parameter"),
         ("other_tool", "belongs to another tool"),
         ("bad_value", "Invalid parameter"),
+        ("bad_order", "Invalid parameter"),
     )
     for name, message in expectations:
         text = fail_text(
@@ -241,6 +243,43 @@ def case_preset_errors():
     finally:
         view.language, view.use_translate_reports = old
     check("中文报告", text is not None and "预设格式无效" in text, str(text))
+
+
+def case_limit_order():
+    """界面上改动首次切割种子数或碎块总数上限时, 另一方跟着调整, 始终满足 首次切割种子数 <= 碎块总数上限"""
+    prepare_scene()
+    config = settings()
+    config.recursion_clamp = 250
+    config.first_cut_seeds = 100
+    config.first_cut_seeds = 300
+    check(
+        "抬高首次切割种子数时总数上限跟着抬高",
+        config.recursion_clamp == 300,
+        str(config.recursion_clamp),
+    )
+    config.recursion_clamp = 50
+    check(
+        "压低总数上限时首次切割种子数跟着压低",
+        config.first_cut_seeds == 50,
+        str(config.first_cut_seeds),
+    )
+    config.recursion_clamp = 0
+    config.first_cut_seeds = 4000
+    check(
+        "总数上限为 0 表示不限, 不做调整",
+        (config.recursion_clamp, config.first_cut_seeds) == (0, 4000),
+    )
+    config.first_cut_seeds = 0
+    config.recursion_clamp = 20
+    check("首次切割种子数为 0 时不被总数上限改动", config.first_cut_seeds == 0)
+    # 预设载入按字段逐个赋值, 中间状态被回调调整, 最终必须与预设一致
+    config.first_cut_seeds, config.recursion_clamp = 0, 250
+    SCHEMA.write(config, {"first_cut_seeds": 400, "recursion_clamp": 600})
+    check(
+        "整体写入的结果与给定值一致",
+        (config.first_cut_seeds, config.recursion_clamp) == (400, 600),
+        f"{config.first_cut_seeds} {config.recursion_clamp}",
+    )
 
 
 def registered():
@@ -342,6 +381,7 @@ CASES = (
     case_language,
     case_presets,
     case_preset_errors,
+    case_limit_order,
     case_registration,
     case_registration_rollback,
     case_registration_checks,

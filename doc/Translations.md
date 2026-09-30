@@ -12,8 +12,8 @@
 ```json
 {
   "locale": "zh_HANS",
-  "interface": {"First Cut Pieces": "首次切割上限"},
-  "tooltips": {"Most pieces the first cut can make: ...": "首次切割最多切成的块数……"}
+  "interface": {"First Cut Seeds": "首次切割种子数"},
+  "tooltips": {"Most seeds the first cut uses, ...": "首次切割最多使用的种子数……"}
 }
 ```
 

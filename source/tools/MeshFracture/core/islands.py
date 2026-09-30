@@ -1,13 +1,13 @@
-"""孤岛拆分 - 把每个碎块里互不连通的几何拆成独立物体, 并按几何排序保证可复现"""
+"""孤岛拆分 - 把含多个互不连通部分的碎块拆成独立物体, 并按几何排序保证可复现
 
-import uuid
+只用数据 API: 每个多出来的孤岛是原碎块的一份副本, 只保留属于它的面
+不用 bpy.ops.mesh.separate: 算子每次调用都有固定开销并会触发依赖图更新, 碎块多时是最大的剩余耗时
+"""
 
-import bpy
+import bmesh
 
-from ....common.blender_context import select_only, vertex_coordinates
-
-# 孤岛拆分时认领结果用的自定义属性名, 拆分结束即删除
-_SPLIT_TOKEN = "_qd_split_owner"
+from ....common.blender_context import mesh_edit, vertex_coordinates
+from . import cleanup
 
 
 def _island_sort_key(obj):
@@ -23,28 +23,38 @@ def _island_sort_key(obj):
     )
 
 
-def split_islands(context, cells, batch):
-    """按不连通块拆分并认领结果, 按几何排序后返回; separate 的产出顺序不定, 排序保证可复现"""
-    # separate 在物体模式下作用于选中的物体, 因此只选中本批碎块
-    select_only(context, cells, cells[0])
-    # 物体副本会连自定义属性一起复制, 用一次性令牌认领本次拆分的结果
-    token = uuid.uuid4().hex
+def _keep_faces(mesh, keep):
+    """只保留下标在 keep 里的面, 其余的面连同只被它们使用的边与顶点一起删除"""
+    with mesh_edit(mesh) as bm:
+        bm.faces.ensure_lookup_table()
+        bmesh.ops.delete(
+            bm, geom=[face for face in bm.faces if face.index not in keep], context="FACES"
+        )
+        bm.to_mesh(mesh)
+
+
+def _split_cell(cell, tracker):
+    """把一个碎块的每个孤岛拆成独立物体, 返回全部孤岛物体, 第一个是原物体"""
+    with mesh_edit(cell.data) as bm:
+        groups = [{face.index for face in part} for part in cleanup.face_components(bm)]
+    pieces = [cell]
+    # 先从未改动的原网格复制出其余孤岛, 最后才削减原物体自己的网格
+    for keep in groups[1:]:
+        mesh = tracker.track("meshes", cell.data.copy())
+        _keep_faces(mesh, keep)
+        # 物体副本带走变换, 材质槽链接方式与所在集合, 只换网格
+        piece = tracker.track("objects", cell.copy())
+        piece.data = mesh
+        for collection in cell.users_collection:
+            collection.objects.link(piece)
+        pieces.append(piece)
+    _keep_faces(cell.data, groups[0])
+    return pieces
+
+
+def split_islands(cells, multi, tracker):
+    """把 multi 里的碎块按孤岛拆开, 返回全部碎块按几何排序的列表; multi 是已知含多个孤岛的碎块"""
+    pieces = []
     for cell in cells:
-        cell[_SPLIT_TOKEN] = token
-    try:
-        with context.temp_override(
-            object=cells[0],
-            active_object=cells[0],
-            selected_objects=cells,
-            selected_editable_objects=cells,
-        ):
-            bpy.ops.mesh.separate(type="LOOSE")
-    finally:
-        # separate 会选中拆出的物体, 只扫描选中物体即可, 不随碎块总数变慢; 抛错时也要完成认领与清理
-        selected = context.view_layer.objects.selected
-        claimed = [item for item in selected if item.get(_SPLIT_TOKEN) == token]
-        for item in claimed:
-            batch.naming.tracker.track("objects", item)
-            batch.naming.tracker.track("meshes", item.data)
-            del item[_SPLIT_TOKEN]
-    return sorted(claimed, key=_island_sort_key)
+        pieces.extend(_split_cell(cell, tracker) if cell in multi else [cell])
+    return sorted(pieces, key=_island_sort_key)

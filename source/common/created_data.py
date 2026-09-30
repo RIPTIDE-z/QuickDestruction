@@ -10,14 +10,35 @@ class CreatedData:
         """初始化三类 ID 列表"""
         # 键与 bpy.data 的集合名一致, 回滚时可直接 getattr(bpy.data, kind)
         self.ids = {"objects": [], "meshes": [], "collections": []}
+        # 待删数据: 已经取消链接, 等 flush 时一次批量删除
+        self.graveyard = []
 
     def track(self, kind, item):
         """记录本次创建的数据并原样返回, 便于写成 item = tracker.track(...)"""
         self.ids[kind].append(item)
         return item
 
+    def bury(self, *items):
+        """登记待删数据: 调用方要先取消链接; 逐个删除数据块的代价随数据库里的数据块总数增长, 攒着一起删快得多"""
+        self.graveyard.extend(items)
+
+    def flush(self):
+        """一次批量删除全部待删数据, 已经失效的引用跳过"""
+        alive = []
+        for item in self.graveyard:
+            try:
+                _ = item.name
+            except ReferenceError:
+                continue
+            alive.append(item)
+        self.graveyard.clear()
+        if alive:
+            bpy.data.batch_remove(alive)
+
     def rollback(self):
         """删除本次创建的数据; 已被替换或已经删除的项直接跳过"""
+        # 待删数据也登记在 ids 里, 由下面统一回收
+        self.graveyard.clear()
         # 先删物体, 网格与集合随后才可能变成无用户状态而被安全回收
         for kind, items in self.ids.items():
             data = getattr(bpy.data, kind)

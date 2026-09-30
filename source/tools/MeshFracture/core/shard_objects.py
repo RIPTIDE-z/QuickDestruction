@@ -12,13 +12,14 @@ def redraw():
         bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)
 
 
-def remove_generated_object(obj):
-    """删除生成的物体, 并回收随之失去用户的网格"""
-    # 先记下网格引用: 物体删除后 obj.data 不再可读
+def discard_object(tracker, obj):
+    """丢弃生成的物体: 取消全部链接, 物体与它的网格登记为待删, 由 tracker.flush 统一批量删除"""
     mesh = obj.data if obj.type == "MESH" else None
-    bpy.data.objects.remove(obj, do_unlink=True)
-    if mesh is not None and mesh.users == 0:
-        bpy.data.meshes.remove(mesh)
+    for collection in list(obj.users_collection):
+        collection.objects.unlink(obj)
+    tracker.bury(obj)
+    if mesh is not None:
+        tracker.bury(mesh)
 
 
 def recenter(cells):

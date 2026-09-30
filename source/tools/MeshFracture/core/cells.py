@@ -12,6 +12,18 @@ EPSILON_COPLANAR = 1e-4
 EPSILON_ISECT = 1e-6
 
 
+def _distance_shrink(scale):
+    """有效距离与欧氏距离之比的下界; 三轴等权时为 1
+
+    有效距离 = 欧氏距离乘连线方向与它按权重缩放后的方向夹角的余弦
+    由 Kantorovich 不等式, 这个余弦不小于 2 sqrt(ab) / (a + b), a 与 b 是最小与最大权重
+    """
+    if scale is None:
+        return 1.0
+    low, high = min(scale), max(scale)
+    return 2.0 * sqrt(low * high) / (low + high)
+
+
 def _cell_vertices(center, points, base_planes, scale, margin, epsilon):
     """一个种子点的胞体顶点, 顶点坐标相对种子点; scale 为 None 表示三轴等权"""
     # 把包围盒面的常数项平移到以此种子点为原点
@@ -21,6 +33,7 @@ def _cell_vertices(center, points, base_planes, scale, margin, epsilon):
     vertices, _indices = points_in_planes(planes, EPSILON_COPLANAR, epsilon)
     # 剪枝半径的初值: 还没量出胞体大小, 不做提前收工
     distance_max = float("inf")
+    shrink = _distance_shrink(scale)
     # 由近到远试邻居, 近处的邻居才会真正切到这个胞体
     for neighbor in sorted(points, key=lambda point: (point - center).length_squared):
         normal = neighbor - center
@@ -28,14 +41,14 @@ def _cell_vertices(center, points, base_planes, scale, margin, epsilon):
         if length == 0:
             # 种子点自身定不出中垂面
             continue
+        # 有效距离不小于欧氏距离乘 shrink, 而欧氏距离随排序不减, 所以超过半径后其余邻居都切不到
+        if length * shrink > distance_max:
+            break
         if scale is not None:
             # 非等轴权重改变法线与有效距离, 按权重缩放后再定平面
             alternative = Vector(tuple(normal[i] * scale[i] for i in range(3)))
             length *= alternative.normalized().dot(normal.normalized())
             normal = alternative
-        # 只有等轴时距离才随排序单调, 才能安全地提前收工
-        if scale is None and length > distance_max:
-            break
         plane = normal.normalized().to_4d()
         # 中垂面位于连线中点; 切面内缩量让平面再往里挪, 相邻碎块之间留出缝隙
         plane.w = -length / 2.0 + margin

@@ -74,6 +74,23 @@ def _valid(kind, options, value):
     return _in_range(value, kind, options)
 
 
+def _keep_order(small, large, edited):
+    """生成 update 回调: 改动 edited 使 小 <= 大 不成立时, 让另一方跟着调整到刚好成立"""
+
+    def update(owner, _context):
+        """大为 0 表示不限, 此时没有约束"""
+        low, high = getattr(owner, small), getattr(owner, large)
+        if not high or low <= high:
+            return
+        # 改的是小的一方就抬高大的一方, 改的是大的一方就压低小的一方
+        if edited == small:
+            setattr(owner, large, low)
+        else:
+            setattr(owner, small, high)
+
+    return update
+
+
 class Values:
     """一次操作用的只读参数值 - 字段按属性读取, 与参数组的读法一致, 拼错字段名会立刻抛 AttributeError"""
 
@@ -98,21 +115,35 @@ class Values:
 class Schema:
     """一份参数规格及其翻译上下文 - 工具的参数组, 预设与阶段 API 都经由它读写参数"""
 
-    def __init__(self, specs, context):
-        """绑定参数规格与翻译上下文"""
+    def __init__(self, specs, context, orders=()):
+        """绑定参数规格, 翻译上下文与字段之间的顺序约束"""
         # 字段名 -> (bpy.props 类型名, 关键字参数), 顺序即界面与预设的字段顺序
         self.specs = specs
         # 参数标签与枚举项名称使用的翻译上下文
         self.context = context
+        # 顺序约束: 每项 (小, 大) 要求 小 <= 大, 大为 0 表示不限; 每个字段最多出现在一项里
+        self.orders = orders
+        keys = [key for pair in orders for key in pair]
+        if len(set(keys)) != len(keys) or not set(keys) <= set(specs):
+            raise ValueError("Order constraints must name known fields, each at most once")
 
     def definitions(self):
         """生成一套新的 RNA 属性定义, 供参数组类使用"""
         # 延迟导入: 本模块在 Blender 之外也要能被单元测试导入
         from bpy import props
 
+        # 有顺序约束的字段在界面上被改动时, 让另一方跟着调整
+        callbacks = {}
+        for small, large in self.orders:
+            callbacks[small] = _keep_order(small, large, small)
+            callbacks[large] = _keep_order(small, large, large)
         # 规格里的类型名直接对应 bpy.props 的构造函数, 标签与提示交给 Blender 自动翻译
         return {
-            key: getattr(props, kind)(translation_context=self.context, **options)
+            key: getattr(props, kind)(
+                translation_context=self.context,
+                **options,
+                **({"update": callbacks[key]} if key in callbacks else {}),
+            )
             for key, (kind, options) in self.specs.items()
         }
 
@@ -132,8 +163,17 @@ class Schema:
             for key, (kind, options) in self.specs.items()
         }
 
-    def validate(self, data):
-        """整体校验并返回 RNA 形态的值; 拒绝未知字段, 缺失字段不出现在结果里"""
+    def _check_orders(self, merged):
+        """检查顺序约束, 违反时按较小的一方报参数错误"""
+        for small, large in self.orders:
+            if merged.get(large) and merged.get(small, 0) > merged[large]:
+                raise self.invalid(small)
+
+    def validate(self, data, base=None):
+        """整体校验并返回 RNA 形态的值; 拒绝未知字段, 缺失字段不出现在结果里
+
+        base 是缺失字段的现有值, 只用来检查顺序约束, 不进入结果
+        """
         unknown = set(data) - set(self.specs)
         if unknown:
             raise self.invalid(min(unknown))
@@ -145,6 +185,7 @@ class Schema:
             if not _valid(kind, options, data[key]):
                 raise self.invalid(key)
             values[key] = _to_rna(data[key], kind, options)
+        self._check_orders({**(base or {}), **values})
         return values
 
     def resolve(self, data):
@@ -153,7 +194,9 @@ class Schema:
 
     def write(self, owner, data):
         """校验后整体写入参数组, 任一字段赋值失败时恢复全部原值, 返回写入的字段数"""
-        values = self.validate(data)
+        # 只给了一部分字段时, 顺序约束要和参数组上的现有值一起检查
+        current = {key: getattr(owner, key) for pair in self.orders for key in pair}
+        values = self.validate(data, current)
         # 原值按 RNA 形态保存: 向量在这里就转成元组, 不持有会失效的临时数组
         previous = {key: _to_rna(getattr(owner, key), *self.specs[key]) for key in values}
         try:

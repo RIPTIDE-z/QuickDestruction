@@ -22,6 +22,9 @@ def _vertex_points(item, depsgraph):
 
 def _particle_points(item, depsgraph):
     """一个物体全部粒子系统的粒子位置, 已经是世界空间坐标"""
+    # 没有粒子系统就不必求值; 递归期间已完成的碎块不在依赖图里, 也不能求值
+    if not item.particle_systems:
+        return []
     evaluated = item.evaluated_get(depsgraph)
     return [
         particle.location.copy()
@@ -84,18 +87,22 @@ def random_unit_vector(rng):
     return Vector((radius * cos(angle), radius * sin(angle), z))
 
 
-def sample_points(context, obj, settings):
-    """取来源的全部候选点, 为空则回退自身顶点; 不消耗随机流, 规划递归时也用它估算块数"""
-    depsgraph = context.evaluated_depsgraph_get()
+def sample_points(context, obj, settings, depsgraph=None):
+    """取来源的全部候选点, 为空则回退自身顶点; 不消耗随机流, 规划递归时也用它估算块数
+
+    没有给依赖图时现取一个; 现取会立即求值所有待处理的修改器, 批量切割时要传入已经取好的依赖图
+    """
+    if depsgraph is None:
+        depsgraph = context.evaluated_depsgraph_get()
     points = points_from_object(context, depsgraph, obj, settings.source)
     if not points:
         points = points_from_object(context, depsgraph, obj, {"VERT_OWN"})
     return points
 
 
-def seed_points(context, obj, settings, limit, rng):
+def seed_points(context, obj, settings, limit, rng, depsgraph=None):
     """采样种子点: 取候选点, 超过 limit 时随机截断, 精确去重并检查有限性; limit 为 0 表示全部保留"""
-    points = sample_points(context, obj, settings)
+    points = sample_points(context, obj, settings, depsgraph)
     if limit and limit < len(points):
         # 先打乱再截断, 得到随机子集而不是前 N 个
         rng.shuffle(points)

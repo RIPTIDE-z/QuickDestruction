@@ -5,12 +5,12 @@ from time import perf_counter
 import bpy
 
 from ....common.created_data import CreatedData
-from ..constants import SHARD_LIMIT
+from ..constants import BATCH_PARENTS, SHARD_LIMIT
 from ..errors import MeshFractureError
 from ..settings import (
     bakes_booleans,
     finishes_interior,
-    first_cut_limit,
+    first_cut_seed_limit,
     recursion_rounds,
     uses_interior,
 )
@@ -24,11 +24,12 @@ from . import (
     sampling,
     shard_objects,
 )
+from .isolation import Isolation
 from .naming import NamingPlan
 
 # 超出碎块硬上限时的消息
 LIMIT_MESSAGE = (
-    "More than {limit} shards would be generated; lower First Cut Pieces, Sub-Cut Pieces or Rounds"
+    "More than {limit} shards would be generated; lower First Cut Seeds, Sub-Cut Pieces or Rounds"
 )
 
 
@@ -85,36 +86,56 @@ def _check_limit(count):
         raise MeshFractureError(LIMIT_MESSAGE, limit=SHARD_LIMIT)
 
 
-def _cut(context, obj, settings, batch, rng, limit):
-    """对单个物体执行一次切割, 种子最多 limit 个, 返回按路径编号的碎块
+def _prepare(context, job, settings, rng, depsgraph):
+    """一个被切物体的准备: 求值快照, 取种子, 建胞体并挂上求交修改器; 还没有求值任何布尔"""
+    obj, batch, limit = job
+    # 求值快照每次切割只取一次, 胞体构造与布尔求交共用
+    snapshot = boolean.inspect_source(obj, depsgraph)
+    points = sampling.seed_points(context, obj, settings, limit, rng, depsgraph)
+    # 种子点数就已超限时, 在耗时的布尔求交之前报错
+    _check_limit(len(points))
+    cells = cell_objects.build_cells(context, obj, snapshot, points, settings, batch, rng)
+    modifiers = intersect.attach(obj, snapshot, cells, settings, batch)
+    return snapshot, cells, modifiers
 
-    源物体的显示方式与面隐藏状态无论成败都还原
+
+def _cut_jobs(context, jobs, settings, rng):
+    """一批物体一起切, 返回每个物体按路径编号的碎块列表; jobs 是 [(物体, 批次, 种子上限), ...]
+
+    先逐个准备并挂上修改器, 再统一刷新一次视图层, 这一批的布尔在这一次里并行求值, 最后逐个取回结果
+    随机流按物体顺序消费, 与逐个切割时完全相同; 显示方式与面隐藏状态无论成败都还原
     """
-    old_display = obj.display_type
-    # 只有首次切割且需要标记断面时才会清掉源网格的面隐藏标记, 其余情况不写源网格
-    old_hidden = None
-    if batch.first and uses_interior(settings):
-        old_hidden = [face.hide for face in obj.data.polygons]
+    saved = []
+    for obj, batch, _limit in jobs:
+        # 只有首次切割且需要标记断面时才会清掉源网格的面隐藏标记, 其余情况不写源网格
+        hidden = None
+        if batch.first and uses_interior(settings):
+            hidden = [face.hide for face in obj.data.polygons]
+        saved.append((obj, obj.display_type, hidden))
     try:
         if settings.use_debug_redraw:
-            # 线框显示方便观察切割进度, 结果不受影响
-            obj.display_type = "WIRE"
-        # 求值快照每次切割只取一次, 胞体构造与布尔求交共用
-        snapshot = boolean.inspect_source(obj, context.evaluated_depsgraph_get())
-        points = sampling.seed_points(context, obj, settings, limit, rng)
-        # 种子点数就已超限时, 在耗时的布尔求交之前报错
-        _check_limit(len(points))
-        cells = cell_objects.build_cells(context, obj, snapshot, points, settings, batch, rng)
-        cells = intersect.intersect_cells(context, obj, snapshot, cells, settings, batch)
-        if settings.use_recenter:
-            shard_objects.recenter(cells)
-        batch.number(cells)
-        return cells
+            for obj, _display, _hidden in saved:
+                # 线框显示方便观察切割进度, 结果不受影响
+                obj.display_type = "WIRE"
+        depsgraph = context.evaluated_depsgraph_get()
+        prepared = [_prepare(context, job, settings, rng, depsgraph) for job in jobs]
+        # 修改器与隐藏标记都要先刷新视图层, 依赖图里才会包含它们; 取依赖图要放在刷新之后
+        context.view_layer.update()
+        depsgraph = context.evaluated_depsgraph_get()
+        outcomes = []
+        for (_obj, batch, _limit), (snapshot, cells, modifiers) in zip(jobs, prepared, strict=True):
+            cells = intersect.collect(snapshot, cells, modifiers, settings, batch, depsgraph)
+            if settings.use_recenter:
+                shard_objects.recenter(cells)
+            batch.number(cells)
+            outcomes.append(cells)
+        return outcomes
     finally:
-        obj.display_type = old_display
-        if old_hidden is not None:
-            obj.data.polygons.foreach_set("hide", old_hidden)
-            obj.data.update()
+        for obj, display, hidden in saved:
+            obj.display_type = display
+            if hidden is not None:
+                obj.data.polygons.foreach_set("hide", hidden)
+                obj.data.update()
 
 
 def _finish(cells, settings, naming):
@@ -127,31 +148,40 @@ def _finish(cells, settings, naming):
         interior.finish_interior(objects, settings)
 
 
-def _subdivide(context, parent, limit, cells, naming, settings, rng):
-    """细分一个父块: 子块加入碎块列表, 父块离开列表并按设置删除或移进父碎块集合; 返回是否有产出"""
-    batch = naming.next_batch(parent)
-    children = _cut(context, parent, settings, batch, rng, limit)
-    if not children:
-        # 细分没有产出时保留父块
-        return False
-    cells.extend(children)
-    # 父块已被子块取代, 不再参与之后的递归与上限计数
-    cells.remove(parent)
-    if settings.use_keep_parents:
-        naming.keep_parent(parent)
-    else:
-        # 删除被替换的父块, 避免父子几何重叠
-        shard_objects.remove_generated_object(parent)
-    return True
+def _subdivide(context, group, cells, naming, settings, rng, state):
+    """细分一批父块: 子块加入碎块列表, 父块离开列表并按设置丢弃或移进父碎块集合
+
+    group 是 [(父块, 种子上限), ...]; 没有产出的父块保留
+    """
+    tracker, isolation = state
+    with isolation.around([parent for parent, _limit in group], naming):
+        jobs = [(parent, naming.next_batch(parent), limit) for parent, limit in group]
+        for (parent, _limit), children in zip(
+            group, _cut_jobs(context, jobs, settings, rng), strict=True
+        ):
+            if not children:
+                continue
+            cells.extend(children)
+            # 父块已被子块取代, 不再参与之后的递归与上限计数
+            cells.remove(parent)
+            if settings.use_keep_parents:
+                naming.keep_parent(parent)
+            else:
+                # 丢弃被替换的父块, 避免父子几何重叠
+                shard_objects.discard_object(tracker, parent)
 
 
-def main_object(context, collection, obj, settings, rng, tracker, done):
+def main_object(context, collection, obj, settings, rng, state, done):
     """对单个源物体做首次切割并按需递归, 最后统一收尾, 返回最终碎块
 
+    state 是本次生成的回收账本与依赖图隔离
     done 是之前的源已经生成的碎块数; 碎块总数上限先约束首次切割的种子数, 每轮递归再按剩余预算规划
+    每轮开始前先按上界估算这一轮之后的总数, 必然超过硬上限时不再动手
     """
+    tracker = state[0]
     naming = NamingPlan(obj.name, collection, settings, tracker)
-    cells = _cut(context, obj, settings, naming.first_batch(), rng, first_cut_limit(settings))
+    first_job = (obj, naming.first_batch(), first_cut_seed_limit(settings))
+    (cells,) = _cut_jobs(context, [first_job], settings, rng)
     _check_limit(done + len(cells))
     maximum = settings.recursion_clamp
     cursor = context.scene.cursor.location
@@ -165,9 +195,16 @@ def main_object(context, collection, obj, settings, rng, tracker, done):
         plan = recursion.plan_round(context, cells, settings, cursor, rng, budget)
         if not plan:
             break
-        for parent, limit in plan:
-            if _subdivide(context, parent, limit, cells, naming, settings, rng):
-                _check_limit(done + len(cells))
+        _check_limit(done + recursion.projected_count(context, cells, plan, settings))
+        # 实时重绘要逐个父块地看到进度, 那时一批只有一个父块
+        size = 1 if settings.use_debug_redraw else BATCH_PARENTS
+        for start in range(0, len(plan), size):
+            _subdivide(context, plan[start : start + size], cells, naming, settings, rng, state)
+            _check_limit(done + len(cells))
+        # 每轮结束统一批量删除被替换的数据
+        tracker.flush()
+    # 首次切割丢弃的空胞体, 以及提前结束的轮次留下的待删数据
+    tracker.flush()
     _finish(cells, settings, naming)
     return cells
 
@@ -179,6 +216,9 @@ def run(context, sources, settings, rng):
     _check_sources(context, sources, settings)
     # 只记录并回收本次显式创建的数据
     tracker = CreatedData()
+    # 实时重绘要让人看到已完成的碎块, 那时不隔离
+    isolation = Isolation(context, tracker, not settings.use_debug_redraw)
+    state = (tracker, isolation)
     started = perf_counter()
     context.window_manager.progress_begin(0, len(sources))
     try:
@@ -186,7 +226,7 @@ def run(context, sources, settings, rng):
         cells = []
         source_to_shards = {}
         for index, obj in enumerate(sources):
-            created = main_object(context, collection, obj, settings, rng, tracker, len(cells))
+            created = main_object(context, collection, obj, settings, rng, state, len(cells))
             if not created:
                 raise MeshFractureError('No valid shards were produced for "{name}"', name=obj.name)
             cells.extend(created)
@@ -197,5 +237,7 @@ def run(context, sources, settings, rng):
         tracker.rollback()
         raise
     finally:
+        # 排除要在全部源结束后才取消, 每个源各自取消会让后面的源被前面的碎块拖慢
+        isolation.release()
         # 进度条必须收尾, 否则界面会一直停在进度状态
         context.window_manager.progress_end()

@@ -43,13 +43,22 @@ def candidates(cells, settings, cursor, rng):
 def _pieces_cap(context, parent, settings):
     """细分 parent 最多得到的块数: 每块切割上限与可用点数取小, 去重与空交集只会更少"""
     count = len(sampling.sample_points(context, parent, settings))
-    return min(settings.recursion_source_limit, count)
+    return min(settings.sub_cut_pieces, count)
+
+
+def projected_count(context, cells, plan, settings):
+    """按计划细分后碎块数的上界: 每个父块最多变成 种子上限 与 可用点数 中较小的块数, 至少仍是 1 块"""
+    grown = sum(
+        max(1, min(limit, len(sampling.sample_points(context, parent, settings))))
+        for parent, limit in plan
+    )
+    return len(cells) - len(plan) + grown
 
 
 def plan_round(context, cells, settings, cursor, rng, budget):
     """规划一轮细分, 返回 [(父块, 种子上限), ...]; budget 是本轮还能新增的块数, None 表示不限"""
     chosen = candidates(cells, settings, cursor, rng)
-    limit = settings.recursion_source_limit
+    limit = settings.sub_cut_pieces
     if budget is None:
         return [(parent, limit) for parent in chosen]
     caps = {parent: _pieces_cap(context, parent, settings) for parent in chosen}

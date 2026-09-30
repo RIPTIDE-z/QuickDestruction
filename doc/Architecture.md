@@ -94,7 +94,7 @@ TOOL = ToolSpec(
 - **文件格式**：由 `framework/preset_files.py` 负责，名称会被净化。写入时先写临时文件再整体替换；读取上限为 1 MiB，只当数据解析。
 
 ```json
-{"format_version": 1, "tool_id": "mesh_fracture", "values": {"source_limit": 100}}
+{"format_version": 1, "tool_id": "mesh_fracture", "values": {"first_cut_seeds": 100}}
 ```
 
 - **保存**：写出全部字段。
@@ -119,17 +119,18 @@ TOOL = ToolSpec(
 | 位置 | 职责 |
 | --- | --- |
 | `tool.py` | `ToolSpec` 声明 |
-| `settings.py` | 参数规格 `PROPERTY_SPECS`、`SCHEMA`，以及参数的语义与生效条件：`bakes_booleans`、`splits_islands`、`finishes_interior`、`recursion_rounds`、`first_cut_limit` 与 `ACTIVE_WHEN`，流水线与界面置灰读同一批函数 |
+| `settings.py` | 参数规格 `PROPERTY_SPECS`、`SCHEMA`，以及参数的语义与生效条件：`bakes_booleans`、`splits_islands`、`finishes_interior`、`recursion_rounds`、`first_cut_seed_limit` 与 `ACTIVE_WHEN`，流水线与界面置灰读同一批函数；字段之间的顺序约束（首次切割种子数不得超过碎块总数上限）声明在 `SCHEMA` 的 `orders` 里，由 `Schema` 统一校验，并在界面上让另一方跟着调整 |
 | `interaction.py` | 主面板 `QD_MESH_FRACTURE_PT_main`、分组表与切割种子来源的自绘函数（由此生成参数子面板）、生成算子 `qd_mesh_fracture.generate` |
 | `api.py` | 阶段 API、切割前体检与结果对象 |
-| `core/pipeline.py` | 编排：前置检查、首次切割、按轮执行递归、收尾、碎块硬上限、失败回滚 |
+| `core/pipeline.py` | 编排：前置检查、首次切割、按轮执行递归、收尾、碎块硬上限、失败回滚。一次切割分三步：准备（取种子、建胞体、挂求交修改器）、统一刷新一次视图层、取回结果；递归时每轮把父块分批，一批的布尔在同一次刷新里并行求值 |
 | `core/recursion.py` | 递归规划：按细分比例挑候选，估算每块最多切成几块 |
 | `core/allocation.py` | 碎块总数上限放不下整轮时，把剩余块数分给各候选；只有数值运算，不依赖 Blender，可以脱离 Blender 测试 |
 | `core/diagnosis.py` | 源网格体检：不封闭（用 `boolean.is_not_closed`，与布尔是否启用 Hole Tolerant 是同一个判定）与自相交（BVH 重叠面对，排除共享顶点的相邻面） |
 | `core/sampling.py` | 种子采样：候选点、按上限随机截取、种子扰动 |
 | `core/cell_objects.py`、`cells.py` | 胞体：`cells` 由平面求交得到每个种子的凸体顶点，`cell_objects` 把它们建成带材质槽与数据层的物体 |
 | `core/boolean.py`、`intersect.py` | 布尔：求值快照与越界校验，给胞体加求交修改器并取结果 |
-| `core/cleanup.py`、`islands.py` | 求交结果的焊接、清理与压平，最终碎块的共面面合并，孤岛拆分 |
+| `core/cleanup.py`、`islands.py` | 求交结果的焊接、清理与压平（同时数出互不连通的部分数），最终碎块的共面面合并，孤岛拆分（只用数据 API：多出来的孤岛是原碎块的副本，只保留属于它的面，只处理真正含多个孤岛的碎块） |
+| `core/isolation.py` | 依赖图隔离：递归期间把已完成的碎块所在集合排除出视图层，当前父块与新碎块临时放在工作集合里。Blender 每次刷新视图层的代价与视图层里的物体总数成正比，不隔离时递归耗时随碎块数二次方增长（2400 块约 76 s，隔离后约 11 s），结果逐位一致。排除在全部源结束后才取消；实时重绘时不隔离 |
 | `core/interior.py`、`shard_objects.py`、`naming.py` | 断面收尾，生成物体的基本操作（重绘、回收、重设原点），按路径命名与集合 |
 
 **关键设计**：

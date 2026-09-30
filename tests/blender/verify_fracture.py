@@ -4,7 +4,7 @@
     1. 体积守恒: 不同尺度, 非等轴权重, 两轮递归, 凹体加孤岛拆分后碎块体积之和等于源体积
     2. 可复现: 同一输入两次切割的几何完全一致
     3. 断面收尾: Interior 顶点组, 锐边, 隐藏面清理与断面材质索引, 标记锐边后碎块仍然封闭
-    4. 命名: 多源输出不重名, 名字由源物体名与逐层序号组成, 每个源物体一个集合且碎块集中在 <源>_Shards,
+    4. 命名: 多源输出不重名, 名字由源物体名, 后缀与逐层序号组成, 每个源物体一个集合且碎块集中在 <源>_Shards,
        超长中文源名也不会撞名
     5. 失败处理: 注入异常后本次新建的数据全部回收, 源物体状态还原
     6. 输入边界: 碎块硬上限与未知参数被拒绝, 链接库网格只在标记断面时被拒绝
@@ -13,13 +13,18 @@
        最终碎块与删除父块时一致
     9. 碎块总数上限: 放不下整轮细分时总数不超过上限; 平均细分时每块都被细分, 大碎块优先时被切的正是最大的几块
     10. 点接触的部分: 默认参数切割猴头, 封闭父块的体积都被子块接住, 没有没有面的空碎块
-    11. 首次切割上限: 碎块总数上限也约束首次切割, 上限之内的结果不变
+    11. 首次切割种子数: 为 0 时跟随碎块总数上限, 超过总数上限被拒绝, 上限之内的结果不变
     12. 孤岛拆分: 平板状的胞体与圆环相交成两段, 打开时拆成两块, 关闭时留在同一块里
     13. 共面面合并: 网格化的立方体切割后碎块里没有残留的共面边
     14. 种子扰动: 扰动改变结果, 同一随机种子可复现
     15. 材质与数据层: 碎块保留材质槽与链接方式, UV 与颜色层, 断面材质只落在断面上
     16. 布尔策略: 封闭网格不启用容错求解, 越界与非有限坐标的结果被拒绝, 没有面的网格无法切割
     17. 求交结果整理: 焊接重合顶点, 清掉散边散点, 立方体的面保持不变
+    18. 依赖图隔离: 递归期间已完成的碎块移出视图层, 结果与不隔离时完全一致, 结束后不留排除与工作集合,
+        中途失败回滚干净, 粒子来源加递归可以运行
+    19. 分批切割: 每批父块数不同结果完全一致, 待删数据批量删除后不留孤儿数据, 孤岛都被拆开
+    20. 提前预判硬上限: 每轮开始前按上界估算总数, 必然超限时这一轮不动手
+    21. 非等轴权重剪枝: 胞体与不剪枝时一致, 并且确实少试了邻居
 测试过程:
     每个场景先清空数据, 建立源物体与子物体种子, 经 MeshFracture.api.generate_fragments 切割,
     不注册插件界面; 每条判据输出 [PASS] 或 [FAIL]
@@ -28,9 +33,11 @@
 实测环境: Blender 5.2.2 (Python 3.13) 与 Blender 4.2.23 (Python 3.11)
 """
 
+import random
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import bmesh
 import bpy
@@ -44,11 +51,12 @@ from source.common import shards as shard_contract
 from source.common.blender_context import mesh_edit
 from source.common.errors import InvalidParameterError
 from source.tools.MeshFracture.api import generate_fragments
-from source.tools.MeshFracture.core import boolean, cleanup, interior, pipeline
+from source.tools.MeshFracture.core import boolean, cleanup, interior, intersect, pipeline
+from source.tools.MeshFracture.core import cells as cell_builder
 from source.tools.MeshFracture.errors import IntersectionBoundsError, MeshFractureError
 
 # 子物体顶点做种子, 关闭种子扰动与内缩, 其余按场景覆盖
-BASE = {"source": {"VERT_CHILD"}, "source_limit": 0, "source_noise": 0.0, "margin": 0.0}
+BASE = {"source": {"VERT_CHILD"}, "first_cut_seeds": 0, "source_noise": 0.0, "margin": 0.0}
 # 体积比允许的偏差: 凸包阶段的抖动与焊接带来约 1e-5 的误差
 VOLUME_TOLERANCE = 1e-4
 # 默认参数切割猴头时单个父块允许丢失的体积: 高于切面内缩造成的缝隙, 远低于求交出错时的损失
@@ -94,7 +102,7 @@ def case_volume():
     reset()
     source = cube("Src")
     seeds(source, 12, 0.9, 8)
-    config = {**BASE, "recursion": 2, "recursion_source_limit": 4, "recursion_clamp": 0}
+    config = {**BASE, "recursion": 2, "sub_cut_pieces": 4, "recursion_clamp": 0}
     result = cut([source], config, "Out")
     ratio = volume_ratio(result, 8.0)
     check(
@@ -111,7 +119,7 @@ def case_torus():
     source = bpy.context.active_object
     expected = volume(source)
     seeds(source, 16, 1.2, 9)
-    config = {**BASE, "recursion": 1, "recursion_source_limit": 4, "use_island_split": True}
+    config = {**BASE, "recursion": 1, "sub_cut_pieces": 4, "use_island_split": True}
     result = cut([source], config, "Out")
     ratio = volume_ratio(result, expected)
     check(
@@ -177,7 +185,7 @@ def keep_parents_run(rounds, remove):
     config = {
         **BASE,
         "recursion": rounds,
-        "recursion_source_limit": 2,
+        "sub_cut_pieces": 2,
         "recursion_clamp": 0,
         "use_keep_parents": not remove,
     }
@@ -185,8 +193,8 @@ def keep_parents_run(rounds, remove):
 
 
 def expected_name(obj):
-    """按路径推出的名字: 前缀, 源物体名, 每层三位序号"""
-    return "_".join(("cell", "Src", *(f"{index:03d}" for index in obj[shard_contract.PATH_MARK])))
+    """按路径推出的名字: 源物体名, 后缀, 每层三位序号"""
+    return "_".join(("Src", "cell", *(f"{index:03d}" for index in obj[shard_contract.PATH_MARK])))
 
 
 def check_parents(rounds, result, parents):
@@ -266,7 +274,7 @@ def max_shards_run(priority):
     config = {
         **BASE,
         "recursion": 1,
-        "recursion_source_limit": 8,
+        "sub_cut_pieces": 8,
         "recursion_clamp": 80,
         "recursion_chance_select": priority,
         "use_keep_parents": True,
@@ -337,8 +345,8 @@ def torus_source(seed_count=None):
     return torus
 
 
-def case_first_cut_limit():
-    """碎块总数上限也约束首次切割: 圆环用全部顶点做种子, 上限之内不变, 超过时被截取"""
+def case_first_cut_seeds():
+    """首次切割种子数为 0 时跟随碎块总数上限, 超过总数上限被拒绝: 圆环用全部顶点做种子"""
     base = {"source": {"VERT_OWN"}, "source_noise": 0.0, "use_island_split": False}
     for clamp, limit, rounds, expected in (
         (0, 0, 0, 576),
@@ -346,16 +354,26 @@ def case_first_cut_limit():
         (100, 0, 1, 100),
         (1000, 0, 0, 576),
         (100, 30, 0, 30),
-        (30, 100, 0, 30),
+        (100, 100, 0, 100),
+        (0, 30, 0, 30),
     ):
         reset()
-        config = {**base, "source_limit": limit, "recursion_clamp": clamp, "recursion": rounds}
+        config = {**base, "first_cut_seeds": limit, "recursion_clamp": clamp, "recursion": rounds}
         count = len(cut([torus_source()], config).shards)
         check(
-            f"总数上限 {clamp} 首次切割上限 {limit} 递归 {rounds} 轮",
+            f"总数上限 {clamp} 首次切割种子数 {limit} 递归 {rounds} 轮",
             count == expected,
             f"{count} 块, 期望 {expected}",
         )
+    reset()
+    expect_error(
+        "首次切割种子数超过碎块总数上限被拒绝",
+        InvalidParameterError,
+        lambda: cut(
+            [torus_source()],
+            {**base, "first_cut_seeds": 100, "recursion_clamp": 30, "recursion": 0},
+        ),
+    )
 
 
 def components(obj):
@@ -565,7 +583,7 @@ def case_naming():
     check(
         "碎块名带源物体名与两层序号",
         all(
-            name.startswith(("cell_A_", "cell_B_", "cell_非常")) and name.count("_") >= 3
+            name.startswith(("A_cell_", "B_cell_", "非常")) and name.count("_") >= 3
             for name in names
         ),
     )
@@ -605,7 +623,7 @@ def case_rollback():
 
     interior.finish_interior = boom
     try:
-        config = {**BASE, "recursion": 1, "recursion_source_limit": 4, "use_debug_redraw": True}
+        config = {**BASE, "recursion": 1, "sub_cut_pieces": 4, "use_debug_redraw": True}
         cut([source], config, "RollbackOut")
         check("注入的异常被抛出", False)
     except RuntimeError:
@@ -667,6 +685,217 @@ def case_limits():
         check("不标记断面时链接库网格可以切割", len(shards) > 0, f"{len(shards)} 块")
 
 
+def excluded_collections():
+    """视图层里被排除的集合名"""
+    names = []
+
+    def visit(layer):
+        """递归收集被排除的层节点"""
+        for child in layer.children:
+            if child.exclude:
+                names.append(child.name)
+            visit(child)
+
+    visit(bpy.context.view_layer.layer_collection)
+    return names
+
+
+def owned_names():
+    """全部带来源标记的物体名, 含保留的父碎块"""
+    return sorted(obj.name for obj in bpy.data.objects if obj.get("_qd_source"))
+
+
+def case_isolation():
+    """依赖图隔离: 结果与不隔离时完全一致, 结束后不留排除与工作集合, 失败时回滚干净"""
+    config = {
+        **BASE,
+        "recursion": 2,
+        "sub_cut_pieces": 4,
+        "recursion_clamp": 0,
+        "use_keep_parents": True,
+    }
+    outcomes = []
+    # 实时重绘不隔离, 是对照组
+    for debug in (False, True):
+        reset()
+        source = cube("Src")
+        seeds(source, 10, 0.9, 5)
+        result = cut([source], {**config, "use_debug_redraw": debug}, "Iso")
+        outcomes.append((fingerprint(result), owned_names(), len(result.shards)))
+        if not debug:
+            check("结束后没有被排除的集合", not excluded_collections(), str(excluded_collections()))
+            check("结束后没有遗留工作集合", bpy.data.collections.get("QD_Work") is None)
+            visible = bpy.context.view_layer.objects
+            check("全部物体回到视图层", all(o.name in visible for o in bpy.data.objects))
+            check("碎块可以选中", all(not shard.select_set(True) for shard in result.shards))
+    check("隔离不改变碎块几何", outcomes[0][0] == outcomes[1][0], f"{outcomes[0][2]} 块")
+    check("隔离不改变物体命名", outcomes[0][1] == outcomes[1][1], f"{len(outcomes[0][1])} 个")
+
+    # 细分到一半抛错: 新建数据含工作集合在内全部回收, 不留被排除的集合
+    reset()
+    source = cube("Src")
+    seeds(source, 10, 0.9, 5)
+    before = {
+        kind: set(getattr(bpy.data, kind).keys()) for kind in ("objects", "meshes", "collections")
+    }
+    original = intersect.collect
+    calls = []
+    hidden = []
+
+    def flaky(*args):
+        """第四次切割时抛错, 此时已处于隔离状态"""
+        calls.append(1)
+        if len(calls) == 4:
+            hidden.extend(excluded_collections())
+            raise RuntimeError("injected failure")
+        return original(*args)
+
+    intersect.collect = flaky
+    try:
+        cut([source], config, "IsoFail")
+        check("注入的异常被抛出", False)
+    except RuntimeError:
+        after = {kind: set(getattr(bpy.data, kind).keys()) for kind in before}
+        check(
+            "递归细分时碎块集合处于排除状态",
+            any(name.endswith("_Shards") for name in hidden),
+            str(hidden),
+        )
+        check(
+            "隔离中途失败后数据全部回收",
+            after == before,
+            str({k: after[k] - before[k] for k in after}),
+        )
+        check("隔离中途失败后没有被排除的集合", not excluded_collections())
+    finally:
+        intersect.collect = original
+
+    # 递归时父块不在依赖图里: 粒子来源不能对它们求值
+    reset()
+    source = cube("Src")
+    shards = cut(
+        [source], {**BASE, "source": {"PARTICLE_OWN"}, "recursion": 1, "recursion_clamp": 40}
+    ).shards
+    check("粒子来源加递归可以运行", len(shards) > 1, f"{len(shards)} 块")
+
+
+def case_batching():
+    """分批切割: 每批父块数不同结果完全一致, 不留没有用户的网格与不在任何集合里的物体, 孤岛都被拆开"""
+    config = {
+        **BASE,
+        "recursion": 2,
+        "sub_cut_pieces": 4,
+        "recursion_clamp": 0,
+        "use_island_split": True,
+    }
+    original = pipeline.BATCH_PARENTS
+    outcomes = {}
+    try:
+        for size in (1, 7, 32):
+            pipeline.BATCH_PARENTS = size
+            reset()
+            torus = torus_source(seed_count=14)
+            result = cut([torus], {**config, "source": {"VERT_CHILD"}}, "Batch")
+            outcomes[size] = (fingerprint(result), owned_names())
+            if size == 7:
+                orphans = [mesh.name for mesh in bpy.data.meshes if mesh.users == 0]
+                floating = [obj.name for obj in bpy.data.objects if not obj.users_collection]
+                check(
+                    "待删数据都已批量删除",
+                    not orphans and not floating,
+                    str((orphans + floating)[:3]),
+                )
+                # 被替换的父块与空胞体都必须离开场景: 带来源标记的物体正是最终碎块, 也没有临时名的物体
+                leftovers = set(owned_names()) - {shard.name for shard in result.shards}
+                temporary = [obj.name for obj in bpy.data.objects if obj.name.startswith("QDTMP_")]
+                check(
+                    "场景里只有最终碎块",
+                    not leftovers and not temporary,
+                    str((*leftovers, *temporary)[:3]),
+                )
+                split = [components(shard) for shard in result.shards]
+                check("每个碎块都是单一孤岛", set(split) == {1}, f"{len(split)} 块")
+    finally:
+        pipeline.BATCH_PARENTS = original
+    check(
+        "每批 7 个父块与逐个切割的碎块一致",
+        outcomes[7][0] == outcomes[1][0],
+        f"{len(outcomes[1][1])} 个",
+    )
+    check("每批 32 个父块与逐个切割的碎块一致", outcomes[32][0] == outcomes[1][0])
+    check("分批不改变物体命名", outcomes[7][1] == outcomes[1][1] == outcomes[32][1])
+
+
+def case_early_limit():
+    """每轮开始前按上界估算总数: 必然超过硬上限时在这一轮动手之前就报错"""
+    reset()
+    source = cube("Src")
+    seeds(source, 8, 0.9, 3)
+    original_limit, original_cut = pipeline.SHARD_LIMIT, intersect.collect
+    calls = []
+
+    def counted(*args):
+        """统计求交次数"""
+        calls.append(1)
+        return original_cut(*args)
+
+    pipeline.SHARD_LIMIT = 60
+    intersect.collect = counted
+    try:
+        config = {**BASE, "recursion": 3, "sub_cut_pieces": 6, "recursion_clamp": 0}
+        expect_error("预估超过硬上限时报错", MeshFractureError, lambda: cut([source], config))
+    finally:
+        pipeline.SHARD_LIMIT, intersect.collect = original_limit, original_cut
+    # 首次切割一次, 第一轮最多 8 个父块各一次; 第二轮预估会超限, 一次都不该切
+    check("超限的那一轮没有动手", len(calls) <= 9, f"{len(calls)} 次求交")
+    check("超限后没有遗留碎块", not [obj for obj in bpy.data.objects if obj.get("_qd_source")])
+
+
+def case_weight_pruning():
+    """非等轴权重的剪枝: 结果与不剪枝时一致, 并且确实少试了邻居"""
+    rng = random.Random(21)
+    points = [Vector(tuple(rng.uniform(-0.95, 0.95) for _ in range(3))) for _ in range(120)]
+    snapshot = SimpleNamespace(minimum=(-1.0,) * 3, maximum=(1.0,) * 3, diagonal=12**0.5)
+    counter = {"calls": 0}
+    original_planes, original_shrink = cell_builder.points_in_planes, cell_builder._distance_shrink
+
+    def counted(*args):
+        """统计求交平面的次数"""
+        counter["calls"] += 1
+        return original_planes(*args)
+
+    def summary(built):
+        """胞体顶点集合, 与顶点顺序无关"""
+        return [sorted(tuple(round(c, 6) for c in v) for v in vertices) for _c, vertices in built]
+
+    cell_builder.points_in_planes = counted
+    try:
+        for margin in (0.0, 0.01):
+            counter["calls"] = 0
+            pruned = cell_builder.points_as_bmesh_cells(points, (1.0, 0.5, 0.25), margin, snapshot)
+            pruned_calls = counter["calls"]
+            # 下界设为 0 就永远不会提前收工, 得到不剪枝的参照
+            cell_builder._distance_shrink = lambda _scale: 0.0
+            counter["calls"] = 0
+            reference = cell_builder.points_as_bmesh_cells(
+                points, (1.0, 0.5, 0.25), margin, snapshot
+            )
+            cell_builder._distance_shrink = original_shrink
+            check(
+                f"剪枝不改变胞体 内缩量 {margin:g}",
+                summary(pruned) == summary(reference),
+                f"{len(pruned)} 个胞体",
+            )
+            check(
+                f"剪枝少试了邻居 内缩量 {margin:g}",
+                pruned_calls < counter["calls"] * 0.8,
+                f"{pruned_calls} 对 {counter['calls']}",
+            )
+    finally:
+        cell_builder.points_in_planes = original_planes
+        cell_builder._distance_shrink = original_shrink
+
+
 def case_recenter():
     """重设原点: 原点位于顶点平均位置, 世界几何不动"""
     reset()
@@ -716,13 +945,17 @@ CASES = (
     case_keep_parents,
     case_max_shards,
     case_touching_parts,
-    case_first_cut_limit,
+    case_first_cut_seeds,
     case_island_split,
     case_final_merge,
     case_seed_jitter,
     case_materials_layers,
     case_boolean_policy,
     case_weld_cleanup,
+    case_isolation,
+    case_batching,
+    case_early_limit,
+    case_weight_pruning,
 )
 
 

@@ -131,6 +131,70 @@ def test_write_roundtrip_and_rollback():
     assert failing.count == 1
 
 
+# 带顺序约束的小规格: low 不得超过 high, high 为 0 表示不限
+ORDERED = Schema(
+    {
+        "low": ("IntProperty", {"name": "Low", "default": 0, "min": 0}),
+        "high": ("IntProperty", {"name": "High", "default": 0, "min": 0}),
+    },
+    "test",
+    orders=(("low", "high"),),
+)
+
+
+@pytest.mark.parametrize(
+    ("low", "high", "accepted"),
+    [(3, 5, True), (5, 5, True), (0, 5, True), (9, 0, True), (0, 0, True), (6, 5, False)],
+)
+def test_order_constraint(low, high, accepted):
+    """小的一方不得超过大的一方; 大的一方为 0 表示不限, 小的一方为 0 总是允许"""
+    LOG.info("low=%s high=%s accepted=%s", low, high, accepted)
+    if accepted:
+        assert ORDERED.validate({"low": low, "high": high}) == {"low": low, "high": high}
+        return
+    with pytest.raises(InvalidParameterError) as caught:
+        ORDERED.validate({"low": low, "high": high})
+    assert caught.value.field == "low"
+
+
+def test_order_constraint_uses_base_for_missing_fields():
+    """只给一部分字段时, 顺序约束与现有值一起检查, 现有值不进入结果"""
+    assert ORDERED.validate({"low": 9}) == {"low": 9}
+    with pytest.raises(InvalidParameterError):
+        ORDERED.validate({"low": 9}, base={"high": 5})
+    assert ORDERED.validate({"high": 20}, base={"low": 9}) == {"high": 20}
+    with pytest.raises(InvalidParameterError):
+        ORDERED.validate({"high": 4}, base={"low": 9})
+
+
+def test_write_checks_order_against_current_values():
+    """写回只给一个字段时按参数组上的现有值检查; 被拒绝时参数组不变"""
+    owner = SimpleNamespace(low=3, high=5)
+    with pytest.raises(InvalidParameterError):
+        ORDERED.write(owner, {"low": 8})
+    assert (owner.low, owner.high) == (3, 5)
+    assert ORDERED.write(owner, {"low": 8, "high": 10}) == 2
+    assert (owner.low, owner.high) == (8, 10)
+
+
+def test_order_constraint_must_name_known_fields_once():
+    """顺序约束里的字段必须在规格里, 每个字段最多出现一次"""
+    specs = ORDERED.specs
+    with pytest.raises(ValueError, match="Order constraints"):
+        Schema(specs, "test", orders=(("low", "missing"),))
+    with pytest.raises(ValueError, match="Order constraints"):
+        Schema(specs, "test", orders=(("low", "high"), ("high", "low")))
+
+
+def test_mesh_fracture_first_cut_cannot_exceed_shard_limit():
+    """MeshFracture 的首次切割种子数不得超过碎块总数上限, 总数上限为 0 时不限"""
+    with pytest.raises(InvalidParameterError) as caught:
+        SCHEMA.resolve({"first_cut_seeds": 300, "recursion_clamp": 250})
+    assert caught.value.field == "first_cut_seeds"
+    assert SCHEMA.resolve({"first_cut_seeds": 300, "recursion_clamp": 0}).first_cut_seeds == 300
+    assert SCHEMA.resolve({"first_cut_seeds": 250, "recursion_clamp": 250}).recursion_clamp == 250
+
+
 def test_invalid_parameter_carries_label():
     """参数错误带英文参数名与它的翻译上下文, 未知字段的参数名退回字段名"""
     error = SCHEMA_UNDER_TEST.invalid("count")

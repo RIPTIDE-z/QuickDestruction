@@ -1,4 +1,8 @@
-"""布尔求交 - 给每个胞体加相交修改器, 取求值结果替换胞体网格, 按设置整理并拆分孤岛"""
+"""布尔求交 - 给胞体加相交修改器, 取求值结果替换胞体网格, 按设置整理并拆分孤岛
+
+分两步: attach 挂上修改器, 调用方统一刷新一次视图层求值, collect 取回结果
+一批胞体的布尔因此在同一次刷新里并行求值, 逐个刷新时每次都有固定开销
+"""
 
 import bpy
 
@@ -19,7 +23,7 @@ def _add_intersection(cell, obj, snapshot, hide_faces):
 
 
 def _bake_intersection(cell, modifier, snapshot, depsgraph, tracker):
-    """取布尔求值结果替换胞体网格并移除修改器, 返回新网格"""
+    """取布尔求值结果替换胞体网格并移除修改器, 返回新网格; 旧网格登记为待删"""
     with boolean.validated_evaluation(cell, modifier, snapshot, depsgraph) as evaluated:
         # 直接复制依赖图里已求值的网格, 避免按全部数据层重新求值修改器栈
         mesh = tracker.track("meshes", bpy.data.meshes.new_from_object(evaluated))
@@ -27,32 +31,38 @@ def _bake_intersection(cell, modifier, snapshot, depsgraph, tracker):
     cell.data = mesh
     cell.modifiers.remove(modifier)
     if old_mesh.users == 0:
-        bpy.data.meshes.remove(old_mesh)
+        tracker.bury(old_mesh)
     return mesh
 
 
-def intersect_cells(context, obj, snapshot, cells, settings, batch):
-    """把每个胞体与被切物体求交得到贴合表面的碎块; 只做焊接, 清理与压平, 不合并面"""
-    weld_dist = snapshot.weld_distance
-    bake = bakes_booleans(settings)
+def attach(obj, snapshot, cells, settings, batch):
+    """给每个胞体挂上与被切物体求交的修改器, 返回修改器列表; 还需要刷新视图层才会求值"""
     if uses_interior(settings) and batch.first:
         # 首次切割先清掉源物体原有的面隐藏标记, 内部断面判定要从干净的起点开始
         obj.data.polygons.foreach_set("hide", [False] * len(obj.data.polygons))
         obj.data.update()
     hide_faces = finishes_interior(settings)
-    modifiers = [_add_intersection(cell, obj, snapshot, hide_faces) for cell in cells]
-    # 修改器与隐藏标记都要先刷新视图层, 依赖图里才会包含它们
-    context.view_layer.update()
-    depsgraph = context.evaluated_depsgraph_get()
-    results = []
+    return [_add_intersection(cell, obj, snapshot, hide_faces) for cell in cells]
+
+
+def collect(snapshot, cells, modifiers, settings, batch, depsgraph):
+    """取回求值结果得到贴合表面的碎块; 只做焊接, 清理与压平, 不合并面
+
+    depsgraph 必须是刷新视图层之后取到的; 空交集的胞体被丢弃, 需要时再拆分孤岛
+    """
+    tracker = batch.naming.tracker
+    bake = bakes_booleans(settings)
+    results, multi = [], set()
     for cell, modifier in zip(cells, modifiers, strict=True):
         if bake:
-            mesh = _bake_intersection(cell, modifier, snapshot, depsgraph, batch.naming.tracker)
-            cleanup.weld_intersection(mesh, weld_dist)
+            mesh = _bake_intersection(cell, modifier, snapshot, depsgraph, tracker)
+            parts = cleanup.weld_intersection(mesh, snapshot.weld_distance)
             if not mesh.polygons:
                 # 求交为空说明胞体落在源物体之外
-                shard_objects.remove_generated_object(cell)
+                shard_objects.discard_object(tracker, cell)
                 continue
+            if parts > 1:
+                multi.add(cell)
         else:
             # 保留修改器, 只校验求值结果是否越界
             with boolean.validated_evaluation(cell, modifier, snapshot, depsgraph):
@@ -61,6 +71,5 @@ def intersect_cells(context, obj, snapshot, cells, settings, batch):
         if settings.use_debug_redraw:
             shard_objects.redraw()
     if results and splits_islands(settings):
-        results = islands.split_islands(context, results, batch)
-    context.view_layer.update()
+        results = islands.split_islands(results, multi, tracker)
     return results

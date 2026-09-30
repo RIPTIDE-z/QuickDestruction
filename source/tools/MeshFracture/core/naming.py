@@ -1,7 +1,7 @@
 """命名计划 - 按切割路径命名, 每个源物体一个集合, 最终碎块集中放置, 保留的父碎块按层收纳
 
 路径是从源物体到碎块的逐层序号, 例如 (3, 2) 表示首次切割的第 3 块再细分出的第 2 块
-碎块名由前缀, 源物体名与路径组成, 例如 cell_Cube_003_002, 去掉最后一段就是父碎块的名字
+碎块名由源物体名, 后缀与路径组成, 例如 Cube_cell_003_002, 去掉最后一段就是父碎块的名字
 集合结构: <源物体> 下是 <源物体>_Shards, 保留父碎块时另有 <源物体>_Parents 与其中的 <源物体>_Parents_L<层>
 """
 
@@ -16,7 +16,7 @@ TEMP_NAME_PREFIX = "QDTMP_"
 # 源物体集合下各集合名的后缀
 SHARDS_SUFFIX = "_Shards"
 PARENTS_SUFFIX = "_Parents"
-# 名字里源物体名最多占的 UTF-8 字节数: 默认前缀与序号下, 五层以内的碎块网格名不超过 Blender 4.2 的 63 字节上限
+# 名字里源物体名最多占的 UTF-8 字节数: 默认后缀与序号下, 五层以内的碎块网格名不超过 Blender 4.2 的 63 字节上限
 # 超出时 Blender 会截断名字, 截断后撞名由 Blender 加后缀区分
 SOURCE_NAME_BYTES = 32
 
@@ -40,9 +40,9 @@ class ShardBatch:
         return self.naming.tracker.track("meshes", bpy.data.meshes.new(self.naming.temp_name()))
 
     def new_object(self, mesh, location):
-        """用网格建碎块物体并链接进碎块集合; 标记在切割结束后由 number 写入"""
+        """用网格建碎块物体并链接进落点集合; 标记在切割结束后由 number 写入"""
         obj = self.naming.tracker.track("objects", bpy.data.objects.new(mesh.name, mesh))
-        self.naming.shards.objects.link(obj)
+        self.naming.landing.objects.link(obj)
         obj.location = location
         return obj
 
@@ -61,8 +61,8 @@ class NamingPlan:
         self.source_name = source_name
         # 名字里用的源物体名, 按 UTF-8 字节截短, 不截断多字节字符
         self.label = source_name.encode("utf-8")[:SOURCE_NAME_BYTES].decode("utf-8", "ignore")
-        # 碎块名前缀, 只用于碎块名
-        self.prefix = settings.shard_prefix
+        # 碎块名后缀, 只用于碎块名
+        self.suffix = settings.shard_suffix
         # 路径里每段序号的最小位数
         self.padding = settings.shard_index_padding
         # 本次运行的回收账本
@@ -73,6 +73,8 @@ class NamingPlan:
         self.root = self._new_collection(self.label, collection)
         # 碎块集合, 切割中与最终的碎块都在这里
         self.shards = self._new_collection(f"{self.label}{SHARDS_SUFFIX}", self.root)
+        # 新建的碎块落进的集合, 默认是碎块集合; 递归期间隔离模块会临时改指工作集合
+        self.landing = self.shards
         # 已被细分但保留下来的父碎块, 与碎块一起统一命名
         self.parents = []
         # 父碎块的总集合与各层集合, 第一次保留父碎块时才建立
@@ -86,9 +88,9 @@ class NamingPlan:
         return collection
 
     def name_of(self, path):
-        """路径对应的碎块名: 前缀, 源物体名与逐层序号用下划线连接"""
+        """路径对应的碎块名: 源物体名, 后缀与逐层序号用下划线连接"""
         numbers = (f"{index:0{self.padding}d}" for index in path)
-        return "_".join(part for part in (self.prefix, self.label, *numbers) if part)
+        return "_".join(part for part in (self.label, self.suffix, *numbers) if part)
 
     def first_batch(self):
         """源物体首次切割的批次"""

@@ -35,7 +35,7 @@ def _flatten_faces(bm, tolerance):
         bmesh.ops.triangulate(bm, faces=targets)
 
 
-def _face_components(bm):
+def face_components(bm):
     """按共享边把面分成连通块; 只在顶点处相接的部分分属不同的块"""
     seen = set()
     parts = []
@@ -66,29 +66,34 @@ def _drop_loose(bm):
 
 
 def _disconnect_components(bm):
-    """把只在顶点处相接的几部分断开, 让拆分孤岛按共享边判断连通
+    """把只在顶点处相接的几部分断开, 让拆分孤岛按共享边判断连通, 返回连通块数
 
     这样的几部分留在同一物体里时, 下一轮以它为源的 Exact 求交会判错内外, 丢掉大片几何
     """
-    parts = _face_components(bm)
+    parts = face_components(bm)
     if len(parts) < 2:
-        return
+        return len(parts)
     # 最大的一块保留原顶点, 其余各块复制共享顶点后断开
     parts.sort(key=len)
     for part in parts[:-1]:
         bmesh.ops.split(bm, geom=part, use_only_faces=True)
+    return len(parts)
 
 
 def weld_intersection(mesh, weld_dist):
-    """整理求交结果供递归使用: 焊接重合顶点, 清掉散边散点, 断开点接触的部分, 再三角化非平面面"""
+    """整理求交结果供递归使用: 焊接重合顶点, 清掉散边散点, 断开点接触的部分, 再三角化非平面面
+
+    返回互不连通的部分数, 拆分孤岛据此只处理真正含多个孤岛的碎块
+    """
     with mesh_edit(mesh) as bm:
         bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
         _drop_loose(bm)
-        _disconnect_components(bm)
+        parts = _disconnect_components(bm)
         # 焊接与清理会改动拓扑, 重新算法线后才能判断面是否共面
         bm.normal_update()
         _flatten_faces(bm, weld_dist)
         bm.to_mesh(mesh)
+    return parts
 
 
 def dissolve_final_shards(cells):

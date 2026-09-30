@@ -4,7 +4,7 @@
     参数的生效条件, 首次切割的种子上限与取值范围决定了流水线与界面的行为, 都是纯逻辑,
     需要在不启动 Blender 的情况下逐条确认, 界面置灰与流水线读的是同一批函数
 测试过程:
-    用 SimpleNamespace 充当参数值, 枚举全部布尔组合检查生效条件; 列表检查首次切割上限;
+    用 SimpleNamespace 充当参数值, 枚举全部布尔组合检查生效条件; 列表检查首次切割种子数;
     用规格校验检查关键参数的边界值
 运行方式 (仓库根目录):
     uv run pytest tests/unit/test_settings.py
@@ -18,7 +18,7 @@ import pytest
 
 from source.common.errors import InvalidParameterError
 from source.tools.MeshFracture import settings
-from source.tools.MeshFracture.constants import SHARD_LIMIT
+from source.tools.MeshFracture.constants import MAX_ROUNDS, SHARD_LIMIT
 
 LOG = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def test_active_rules_truth_table(debug, rounds):
     for key in ("recursion", "use_sharp_edges", "use_interior_vgroup", "use_island_split"):
         assert active[key] == (not debug)
     for key in (
-        "recursion_source_limit",
+        "sub_cut_pieces",
         "recursion_chance",
         "recursion_chance_select",
         "use_keep_parents",
@@ -64,12 +64,18 @@ def test_recursion_rounds(debug, rounds):
 
 @pytest.mark.parametrize(
     ("limit", "maximum", "expected"),
-    [(0, 0, 0), (100, 0, 100), (0, 250, 250), (100, 250, 100), (300, 250, 250), (30, 250, 30)],
+    [(0, 0, 0), (100, 0, 100), (0, 250, 250), (100, 250, 100), (250, 250, 250), (30, 250, 30)],
 )
-def test_first_cut_limit(limit, maximum, expected):
-    """首次切割上限与碎块总数上限取小, 任一为 0 表示不限"""
-    owner = values(source_limit=limit, recursion_clamp=maximum)
-    assert settings.first_cut_limit(owner) == expected
+def test_first_cut_seed_limit(limit, maximum, expected):
+    """首次切割种子数为 0 时跟随碎块总数上限, 都为 0 表示不限"""
+    owner = values(first_cut_seeds=limit, recursion_clamp=maximum)
+    assert settings.first_cut_seed_limit(owner) == expected
+
+
+def test_defaults_respect_the_order_constraint():
+    """默认的首次切割种子数不超过默认的碎块总数上限"""
+    defaults = settings.SCHEMA.defaults()
+    assert defaults["first_cut_seeds"] <= defaults["recursion_clamp"]
 
 
 @pytest.mark.parametrize(
@@ -92,16 +98,18 @@ def test_pipeline_predicates(debug, split, vgroup, sharp):
 @pytest.mark.parametrize(
     ("key", "value", "accepted"),
     [
-        ("recursion_source_limit", 0, False),
-        ("recursion_source_limit", 1, False),
-        ("recursion_source_limit", 2, True),
-        ("recursion_source_limit", 5000, True),
-        ("recursion_source_limit", 5001, False),
+        ("sub_cut_pieces", 0, False),
+        ("sub_cut_pieces", 1, False),
+        ("sub_cut_pieces", 2, True),
+        ("sub_cut_pieces", 5000, True),
+        ("sub_cut_pieces", 5001, False),
+        ("recursion", MAX_ROUNDS, True),
+        ("recursion", MAX_ROUNDS + 1, False),
         ("recursion_clamp", 0, True),
         ("recursion_clamp", SHARD_LIMIT, True),
         ("recursion_clamp", SHARD_LIMIT + 1, False),
-        ("source_limit", 0, True),
-        ("source_limit", 5001, False),
+        ("first_cut_seeds", 0, True),
+        ("first_cut_seeds", 5001, False),
         ("recursion_chance", 1.5, False),
         ("margin", -0.1, False),
         ("shard_index_padding", 9, False),

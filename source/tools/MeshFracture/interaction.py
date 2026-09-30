@@ -35,13 +35,13 @@ GROUPS = (
     ParamGroup("Seed Source", ("source",), draw=_draw_source),
     ParamGroup(
         "Cut Parameters",
-        ("source_limit", "recursion_clamp", "source_noise", "random_seed", "margin"),
+        ("first_cut_seeds", "recursion_clamp", "source_noise", "random_seed", "margin"),
     ),
     ParamGroup(
         "Recursive Shatter",
         (
             "recursion",
-            "recursion_source_limit",
+            "sub_cut_pieces",
             "recursion_chance",
             "recursion_chance_select",
             "use_keep_parents",
@@ -59,7 +59,7 @@ GROUPS = (
     ),
     ParamGroup(
         "Output",
-        ("collection_name", "shard_prefix", "shard_index_padding"),
+        ("collection_name", "shard_suffix", "shard_index_padding"),
         popover=True,
     ),
     ParamGroup("Debug", ("use_debug_redraw", "use_debug_points", "use_debug_bool"), popover=True),

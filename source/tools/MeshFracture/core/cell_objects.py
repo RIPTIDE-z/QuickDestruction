@@ -70,7 +70,10 @@ def _sync_slot_links(source_object, cell):
 
 
 def build_cells(context, obj, snapshot, points, settings, batch, rng):
-    """由种子点建凸胞体物体; 随机流在采样之后按种子扰动, 顶点抖动的次序消费"""
+    """由种子点建凸胞体物体; 随机流在采样之后按种子扰动, 顶点抖动的次序消费
+
+    不刷新视图层: 调用方挂上求交修改器之后统一刷新一次, 一批胞体的布尔才能一起并行求值
+    """
     if not points:
         return []
     points = sampling.scatter_points(points, snapshot.diagonal, settings.source_noise, rng)
@@ -91,5 +94,4 @@ def build_cells(context, obj, snapshot, points, settings, batch, rng):
         if settings.use_debug_redraw:
             context.view_layer.update()
             shard_objects.redraw()
-    context.view_layer.update()
     return created

@@ -4,7 +4,7 @@
 """
 
 from ...common.schema import Schema
-from .constants import CELL_SCALE_MIN, CONTEXT, SHARD_LIMIT
+from .constants import CELL_SCALE_MIN, CONTEXT, MAX_ROUNDS, SHARD_LIMIT
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 # name 与 description 是英文原文, 也是语言文件里的键; 其余关键字原样交给 bpy.props
@@ -49,13 +49,14 @@ PROPERTY_SPECS = {
             "Without any point, the source mesh vertices are used.",
         },
     ),
-    "source_limit": (
+    "first_cut_seeds": (
         "IntProperty",
         {
-            "name": "First Cut Pieces",
-            "description": "Most pieces the first cut can make: seeds beyond this are dropped at "
-            "random. 0 uses all points. Shard Limit can lower it; recursive cuts use Sub-Cut "
-            "Pieces.",
+            "name": "First Cut Seeds",
+            "description": "Most seeds the first cut uses, picked at random from the seed source. "
+            "Each seed makes at most one shard, so there can be fewer shards, or more after "
+            "island splitting. It cannot exceed Shard Limit. 0 follows Shard Limit, or uses "
+            "all seeds when that is 0 too. Recursive cuts use Sub-Cut Pieces.",
             "min": 0,
             "max": 5000,
             "soft_max": 500,
@@ -106,18 +107,19 @@ PROPERTY_SPECS = {
             "description": "Extra rounds that cut the shards again after the first cut. 0 "
             "disables recursion.",
             "min": 0,
-            "max": 5000,
+            "max": MAX_ROUNDS,
             "soft_max": 5,
             "default": 1,
         },
     ),
-    "recursion_source_limit": (
+    "sub_cut_pieces": (
         "IntProperty",
         {
             "name": "Sub-Cut Pieces",
-            "description": "Most pieces each shard is cut into per round. At least 2, because "
-            "one seed only recuts a shard into itself. Values above the vertex count of a "
-            "shard have no further effect.",
+            "description": "Most pieces each shard is cut into per round; the real count can be "
+            "lower, and island splitting can add more. At least 2, because one seed only "
+            "recuts a shard into itself. Values above the vertex count of a shard have no "
+            "further effect.",
             "min": 2,
             "max": 5000,
             "soft_max": 32,
@@ -128,9 +130,9 @@ PROPERTY_SPECS = {
         "IntProperty",
         {
             "name": "Shard Limit",
-            "description": "Most shards kept per source object, counting the first cut. 0 "
-            "disables the limit. Island splitting can exceed it slightly; more than "
-            f"{SHARD_LIMIT} shards in total stops with an error.",
+            "description": "Most shards kept per source object, counting the first cut, so it "
+            "cannot be below First Cut Seeds. 0 disables the limit. Island splitting can "
+            f"exceed it slightly; more than {SHARD_LIMIT} shards in total stops with an error.",
             "min": 0,
             "max": SHARD_LIMIT,
             "soft_max": 1000,
@@ -273,12 +275,12 @@ PROPERTY_SPECS = {
             "default": "cell_collection",
         },
     ),
-    "shard_prefix": (
+    "shard_suffix": (
         "StringProperty",
         {
-            "name": "Shard Prefix",
-            "description": "Prefix of the shard names, followed by the source name and one "
-            "index per cut level, such as cell_Cube_003_002.",
+            "name": "Shard Suffix",
+            "description": "Suffix of the shard names, added after the source name and followed "
+            "by one index per cut level, such as Cube_cell_003_002.",
             "default": "cell",
         },
     ),
@@ -347,12 +349,12 @@ def splits_islands(values):
     return bakes_booleans(values) and values.use_island_split
 
 
-def first_cut_limit(values):
-    """首次切割的种子上限: 首次切割上限与碎块总数上限取小, 任一为 0 表示不限"""
-    limit, maximum = values.source_limit, values.recursion_clamp
-    if maximum:
-        return min(limit, maximum) if limit else maximum
-    return limit
+def first_cut_seed_limit(values):
+    """首次切割的种子上限: 首次切割种子数为 0 时跟随碎块总数上限, 都为 0 表示不限
+
+    首次切割种子数不会超过碎块总数上限, 这由 SCHEMA 的顺序约束保证
+    """
+    return values.first_cut_seeds or values.recursion_clamp
 
 
 def _recursing(values):
@@ -367,7 +369,7 @@ ACTIVE_WHEN = {
     "use_sharp_edges": bakes_booleans,
     "use_interior_vgroup": bakes_booleans,
     "use_island_split": bakes_booleans,
-    "recursion_source_limit": _recursing,
+    "sub_cut_pieces": _recursing,
     "recursion_chance": _recursing,
     "recursion_chance_select": _recursing,
     "use_keep_parents": _recursing,
@@ -375,4 +377,5 @@ ACTIVE_WHEN = {
 
 
 # 绑定翻译上下文的参数规格: 生成参数组, 读取, 校验与写回都经由它
-SCHEMA = Schema(PROPERTY_SPECS, CONTEXT)
+# 顺序约束: 首次切割种子数不得超过碎块总数上限, 总数上限为 0 表示不限
+SCHEMA = Schema(PROPERTY_SPECS, CONTEXT, orders=(("first_cut_seeds", "recursion_clamp"),))
