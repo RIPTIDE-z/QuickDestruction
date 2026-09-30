@@ -52,10 +52,24 @@ def _copy_source_layers(mesh, source_mesh):
     for material in source_mesh.materials:
         mesh.materials.append(material)
     for layer in source_mesh.uv_layers:
-        mesh.uv_layers.new(name=layer.name)
+        copied = mesh.uv_layers.new(name=layer.name)
+        copied.active_render = layer.active_render
+        copied.active_clone = layer.active_clone
     for attribute in source_mesh.color_attributes:
         mesh.color_attributes.new(
             name=attribute.name, type=attribute.data_type, domain=attribute.domain
+        )
+    # 按名称恢复选择 - 避免新建层的默认状态改变材质使用的数据层
+    if source_mesh.uv_layers.active is not None:
+        mesh.uv_layers.active_index = mesh.uv_layers.find(source_mesh.uv_layers.active.name)
+    colors = source_mesh.color_attributes
+    if colors.active_color is not None:
+        mesh.color_attributes.active_color_index = mesh.color_attributes.find(
+            colors.active_color.name
+        )
+    if 0 <= colors.render_color_index < len(colors):
+        mesh.color_attributes.render_color_index = mesh.color_attributes.find(
+            colors[colors.render_color_index].name
         )
 
 

@@ -36,8 +36,10 @@
 import random
 import sys
 import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import bmesh
 import bpy
@@ -47,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness
 from harness import check, cube, reset, seeds, select, volume
 
+from source.common import created_data
 from source.common import shards as shard_contract
 from source.common.blender_context import mesh_edit
 from source.common.errors import InvalidParameterError
@@ -484,9 +487,19 @@ def case_materials_layers():
     source.data.materials.append(outer)
     source.material_slots[1].link = "OBJECT"
     source.material_slots[1].material = override
-    for name in ("UVA", "UVB"):
-        source.data.uv_layers.new(name=name)
-    source.data.color_attributes.new(name="Tint", type="FLOAT_COLOR", domain="POINT")
+    for index, name in enumerate(("UVA", "UVB")):
+        layer = source.data.uv_layers.new(name=name)
+        for item in layer.data:
+            item.uv = (index + 0.25, index + 0.75)
+    source.data.uv_layers.active_index = 1
+    source.data.uv_layers["UVB"].active_render = True
+    source.data.uv_layers["UVB"].active_clone = True
+    for name in ("Tint", "TintB"):
+        color = source.data.color_attributes.new(name=name, type="FLOAT_COLOR", domain="POINT")
+        for item in color.data:
+            item.color = (0.2, 0.4, 0.6, 1.0)
+    source.data.color_attributes.active_color_index = 1
+    source.data.color_attributes.render_color_index = 1
     seeds(source, 8, 0.9, 5)
     result = cut([source], {**BASE, "recursion": 0, "material_index": 1}, "")
     shard = result.shards[0]
@@ -498,7 +511,7 @@ def case_materials_layers():
     check(
         "保留颜色层",
         [(a.name, a.domain, a.data_type) for a in shard.data.color_attributes]
-        == [("Tint", "POINT", "FLOAT_COLOR")],
+        == [("Tint", "POINT", "FLOAT_COLOR"), ("TintB", "POINT", "FLOAT_COLOR")],
     )
     indices = {face.material_index for shard in result.shards for face in shard.data.polygons}
     check("断面用索引 1, 外表面沿用源物体的 0", indices == {0, 1}, str(indices))
@@ -509,6 +522,39 @@ def case_materials_layers():
         if max(abs(c) for c in (shard.matrix_world @ face.center)) > 0.999
     ]
     check("贴在源表面上的面都是索引 0", exterior and set(exterior) == {0}, str(set(exterior)))
+    # 不只检查层名 - 非首层选择必须在普通递归和保留布尔模式中保持
+    for label, options in (
+        ("普通", None),
+        ("递归", {"recursion": 1, "sub_cut_pieces": 2}),
+        ("保留布尔", {"use_debug_bool": True}),
+    ):
+        tested = result if options is None else cut([source], {**BASE, **options})
+        check(
+            f"{label} 保留 UV 活动渲染克隆层",
+            all(
+                obj.data.uv_layers.active.name == "UVB"
+                and obj.data.uv_layers["UVB"].active_render
+                and obj.data.uv_layers["UVB"].active_clone
+                for obj in tested.shards
+            ),
+        )
+        check(
+            f"{label} 保留颜色活动和渲染层",
+            all(
+                obj.data.color_attributes.active_color.name == "TintB"
+                and obj.data.color_attributes[obj.data.color_attributes.render_color_index].name
+                == "TintB"
+                for obj in tested.shards
+            ),
+        )
+    check(
+        "源 UV 数据未改写",
+        all(
+            tuple(item.uv) == (index + 0.25, index + 0.75)
+            for index, layer in enumerate(source.data.uv_layers)
+            for item in layer.data
+        ),
+    )
 
 
 def case_boolean_policy():
@@ -642,6 +688,94 @@ def expect_error(label, error_type, call):
         check(label, False, "没有抛错")
     except error_type as error:
         check(label, True, repr(error))
+
+
+def case_cleanup_failures():
+    """最终清理失败仍回滚 - 次要错误不覆盖主错误或跳过进度结束"""
+    for stage in ("release", "progress_end", "rollback"):
+        reset()
+        source = cube("Src")
+        select([source])
+        before = {
+            kind: set(getattr(bpy.data, kind).keys())
+            for kind in ("objects", "meshes", "collections")
+        }
+        wm = SimpleNamespace(progress_begin=Mock(), progress_update=Mock(), progress_end=Mock())
+        context = SimpleNamespace(**bpy.context.copy())
+        context.window_manager = wm
+        context.evaluated_depsgraph_get = bpy.context.evaluated_depsgraph_get
+        primary = RuntimeError(f"injected {stage}")
+        secondary = RuntimeError("secondary cleanup failure")
+        if stage == "progress_end":
+            wm.progress_end.side_effect = [primary, None]
+        with ExitStack() as patches:
+            if stage == "release":
+                patches.enter_context(
+                    patch.object(pipeline.Isolation, "release", side_effect=[primary, None])
+                )
+            elif stage == "rollback":
+                patches.enter_context(
+                    patch.object(interior, "finish_interior", side_effect=primary)
+                )
+                patches.enter_context(
+                    patch.object(created_data.CreatedData, "rollback", side_effect=secondary)
+                )
+            try:
+                generate_fragments(context, [source], {**BASE, "recursion": 0})
+                check(f"{stage} 注入故障被抛出", False)
+            except RuntimeError as error:
+                check(f"{stage} 保留主异常", error is primary)
+        check(f"{stage} 仍尝试结束进度", wm.progress_end.call_count >= 1)
+        if stage == "rollback":
+            # 故障解除后原账本行为仍可由现有回归用例验证
+            check("回收失败后原选择仍恢复", bpy.context.selected_objects == [source])
+        else:
+            after = {kind: set(getattr(bpy.data, kind).keys()) for kind in before}
+            check(f"{stage} 清理失败后回滚干净", after == before)
+
+
+def case_created_data_failures():
+    """单项回收失败继续其他条目 - 批量失败保留待删记录"""
+    tracker = created_data.CreatedData()
+    items = {name: SimpleNamespace(name=name) for name in ("a", "b")}
+    calls, blocked = [], [True]
+
+    def remove(item, **_kwargs):
+        """模拟数据集合的单项删除故障"""
+        calls.append(item.name)
+        if item.name == "b" and blocked[0]:
+            raise RuntimeError("injected delete")
+        del items[item.name]
+
+    data = SimpleNamespace(
+        objects=SimpleNamespace(get=items.get, remove=remove), meshes={}, collections={}
+    )
+    for item in items.values():
+        tracker.track("objects", item)
+    with patch.object(created_data, "bpy", SimpleNamespace(data=data)):
+        expect_error("单项回收失败明确抛错", RuntimeError, tracker.rollback)
+        check("单项失败不阻止其他回收", calls == ["b", "a"] and list(items) == ["b"])
+        blocked[0] = False
+        tracker.rollback()
+        tracker.rollback()
+        check("剩余条目可重试且不会重复删除", not items)
+    reset()
+    obj = cube("Pending")
+    tracker = created_data.CreatedData()
+    tracker.bury(obj, obj.data)
+    fake = SimpleNamespace(
+        data=SimpleNamespace(batch_remove=Mock(side_effect=RuntimeError("injected batch")))
+    )
+    with patch.object(created_data, "bpy", fake):
+        expect_error("批量删除失败明确抛错", RuntimeError, tracker.flush)
+        check("失败后仍保留待删记录", len(tracker.graveyard) == 2)
+    tracker.flush()
+    check(
+        "批量删除重试后完成",
+        not tracker.graveyard
+        and "Pending" not in bpy.data.objects
+        and "Pending" not in bpy.data.meshes,
+    )
 
 
 def case_limits():
@@ -940,6 +1074,8 @@ CASES = (
     case_interior,
     case_naming,
     case_rollback,
+    case_cleanup_failures,
+    case_created_data_failures,
     case_limits,
     case_recenter,
     case_keep_parents,

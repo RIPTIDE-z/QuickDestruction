@@ -1,5 +1,7 @@
 """创建账本 - 记录本次新建的 objects, meshes 与 collections, 失败时只回收这些条目"""
 
+import traceback
+
 import bpy
 
 
@@ -31,14 +33,16 @@ class CreatedData:
             except ReferenceError:
                 continue
             alive.append(item)
-        self.graveyard.clear()
         if alive:
             bpy.data.batch_remove(alive)
+        # 删除成功才清空记录 - 部分删除失败时下一次仍能过滤失效引用并重试
+        self.graveyard.clear()
 
     def rollback(self):
         """删除本次创建的数据; 已被替换或已经删除的项直接跳过"""
         # 待删数据也登记在 ids 里, 由下面统一回收
         self.graveyard.clear()
+        failures = []
         # 先删物体, 网格与集合随后才可能变成无用户状态而被安全回收
         for kind, items in self.ids.items():
             data = getattr(bpy.data, kind)
@@ -59,3 +63,9 @@ class CreatedData:
                 except ReferenceError:
                     # 已经删除的数据只剩失效引用
                     continue
+                except Exception as error:
+                    # 单项失败不跳过其他条目 - 全部尝试后仍向调用方报告失败
+                    traceback.print_exc()
+                    failures.append(error)
+        if failures:
+            raise failures[0]

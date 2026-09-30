@@ -12,11 +12,13 @@
 
 ## 安装
 
-```bat
-install.bat <Blender 可执行文件>
+在项目根目录运行，将路径替换为本机 Blender 可执行文件：
+
+```powershell
+.\install.bat 'D:\program\Blender\blender.exe'
 ```
 
-- **过程**：用指定的 Blender 打包、安装并启用扩展，装进的就是这个 Blender 版本的配置。
+- **过程**：用指定的 Blender 打包、安装并启用扩展，安装到它使用的用户配置；开发验证可通过环境变量指定临时配置，见[开发文档](doc/Developer.md)。
 - **重启**：安装后需要重启 Blender。
 
 ## 使用
@@ -25,7 +27,7 @@ install.bat <Blender 可执行文件>
 2. 按 **N** 打开侧栏，切到 **QuickDestruction** 标签页。
 3. 在 **MeshFracture** 面板里调整参数，点击 **Generate Fragments**。
 
-源物体不封闭或自相交时，会先弹出提示框说明后果，由你决定是否继续。源物体始终保留，按 **Ctrl+Z** 可以撤销整次生成。参数可以保存为预设。
+体检发现源物体不封闭或自相交时，会弹出提示框，由你决定是否继续；这项检查不保证发现全部几何问题。源物体始终保留，按 **Ctrl+Z** 可以撤销整次生成。参数可以保存为预设。
 
 ## 文档
 

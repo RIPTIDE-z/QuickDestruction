@@ -1,5 +1,6 @@
 """流程编排 - 逐源首次切割与递归细分, 统一命名和断面收尾, 失败时回收本次新建数据"""
 
+import traceback
 from time import perf_counter
 
 import bpy
@@ -220,8 +221,8 @@ def run(context, sources, settings, rng):
     isolation = Isolation(context, tracker, not settings.use_debug_redraw)
     state = (tracker, isolation)
     started = perf_counter()
-    context.window_manager.progress_begin(0, len(sources))
     try:
+        context.window_manager.progress_begin(0, len(sources))
         collection = _output_collection(context, settings.collection_name, tracker)
         cells = []
         source_to_shards = {}
@@ -232,12 +233,20 @@ def run(context, sources, settings, rng):
             cells.extend(created)
             source_to_shards[obj] = tuple(created)
             context.window_manager.progress_update(index + 1)
-        return cells, source_to_shards, perf_counter() - started
-    except Exception:
-        tracker.rollback()
-        raise
-    finally:
-        # 排除要在全部源结束后才取消, 每个源各自取消会让后面的源被前面的碎块拖慢
+        seconds = perf_counter() - started
+        # 清理也属于成功路径 - 失败时仍需回收已经生成的数据
         isolation.release()
-        # 进度条必须收尾, 否则界面会一直停在进度状态
         context.window_manager.progress_end()
+        return cells, source_to_shards, seconds
+    except Exception:
+        # 恢复失败不能覆盖原异常或阻止其他收尾动作
+        for cleanup_action in (
+            tracker.rollback,
+            isolation.release,
+            context.window_manager.progress_end,
+        ):
+            try:
+                cleanup_action()
+            except Exception:
+                traceback.print_exc()
+        raise
