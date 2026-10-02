@@ -11,9 +11,14 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.types import Operator, Panel
 
-from ...common import asset
+from ...common import asset, shards
 from ...common.errors import DomainError
-from ...common.status import CURRENT, simulation_status
+from ...common.status import (
+    CURRENT,
+    drivers_signature,
+    scene_signature,
+    simulation_status,
+)
 from ...common.translate import tr, tr_report
 from ...framework.contract import scene_settings
 from ...framework.operators import ToolOperator, failure_text
@@ -26,9 +31,10 @@ from ...framework.ui import (
     picked_objects,
 )
 from .api import bake, bake_steps, reset
-from .constants import CONTEXT, NAVIGATION_EVENTS, TOOL_ID
+from .constants import CONTEXT, NAVIGATION_EVENTS, SUBSTEP_LIMIT, TOOL_ID
 from .core import task
-from .settings import ACTIVE_WHEN, SCHEMA, frame_range
+from .core.session import suggestion
+from .settings import ACTIVE_WHEN, FINAL, SCHEMA, frame_range
 
 # 定时器间隔, 秒; 每次定时器事件推进一帧, 单帧的耗时远大于它
 TIMER_INTERVAL = 0.001
@@ -38,7 +44,7 @@ STATUS_ROWS = 6
 # 参数分组: 帧范围最常调整; 求解设置很少改动, 默认收起
 GROUPS = (
     ParamGroup("Frame Range", ("use_scene_range", "frame_start", "frame_end")),
-    ParamGroup("Solver", ("substeps", "solver_iterations", "time_scale"), closed=True),
+    ParamGroup("Solver", ("quality", "substeps", "solver_iterations", "time_scale"), closed=True),
 )
 
 
@@ -63,6 +69,23 @@ def _report_text(result):
             CONTEXT,
             "({count} start frames were moved to the frame after Start Frame)",
             count=result.clamped,
+        )
+    if result.raised:
+        text += " " + tr_report(
+            CONTEXT, "(Substeps raised to {count} for final quality)", count=result.substeps
+        )
+    if result.capped:
+        text += " " + tr_report(
+            CONTEXT,
+            "(The suggested substeps are above the limit of {count}; fast shards may still "
+            "pass through thin ones)",
+            count=SUBSTEP_LIMIT,
+        )
+    if result.blocked:
+        text += " " + tr_report(
+            CONTEXT,
+            "({count} starts were held back by frozen or fixed bodies; Sleeping lets impacts pass on)",
+            count=result.blocked,
         )
     return text
 
@@ -116,11 +139,12 @@ class QD_SIMULATION_OT_bake(ToolOperator, Operator):
         self._manager = context.window_manager
         self._workspace = context.workspace
         try:
+            # 输入先读完再拿运行锁: 读取失败时没有锁需要释放
             roots = asset.resolve(picked_objects(context))
+            data = SCHEMA.read(scene_settings(context, TOOL_ID))
             task.claim(self._abort)
         except Exception as error:
             return self._fail(error)
-        data = SCHEMA.read(scene_settings(context, TOOL_ID))
         self._steps = bake_steps(context, roots, data)
         try:
             progress = next(self._steps)
@@ -246,12 +270,83 @@ def _settings_changed(root, context):
     current = {
         "frame_start": start,
         "frame_end": end,
-        "substeps": owner.substeps,
+        "requested": owner.substeps,
         "solver_iterations": owner.solver_iterations,
         "time_scale": owner.time_scale,
     }
     used = run["settings"]
+    if owner.quality != used.get("quality", owner.quality):
+        return True
     return any(abs(current[key] - used.get(key, current[key])) > 1e-6 for key in current)
+
+
+# 子步建议的缓存: 键是 (各资产的物理修订号, 驱动摘要, 场景签名, 帧范围, 时间缩放), 值是 (建议值, 是否截断)
+# 输入没变时绘制不重复编译
+_SUGGESTION = {"key": None, "value": (0, False)}
+
+
+def _suggested(context, roots, owner):
+    """选中资产的子步建议值; 只在输入变化后重新计算, 因为要读全部碎块的网格"""
+    revisions = tuple(
+        (shards.asset_of(root), (asset.physics_record(root) or {}).get("rev")) for root in roots
+    )
+    start, end = frame_range(owner, context.scene)
+    key = (
+        revisions,
+        drivers_signature(context.scene),
+        scene_signature(context.scene),
+        start,
+        end,
+        owner.time_scale,
+    )
+    if _SUGGESTION["key"] != key:
+        _SUGGESTION["key"] = key
+        _SUGGESTION["value"] = suggestion(context, roots, owner)
+    return _SUGGESTION["value"]
+
+
+def _draw_participants(layout, context, roots):
+    """这次烘焙会碰到什么: 选中的资产数, 一起参与的环境刚体数, 以及要临时移出的其他资产数"""
+    world = context.scene.rigidbody_world
+    if world is None or world.collection is None:
+        return
+    taking = {shards.asset_of(root) for root in roots}
+    environment, others = 0, set()
+    for obj in world.collection.objects:
+        asset_id = shards.asset_of(obj)
+        if asset_id is None:
+            environment += 1
+        elif asset_id not in taking:
+            others.add(asset_id)
+    if environment:
+        text = tr(
+            CONTEXT,
+            "{assets} assets and {bodies} other rigid bodies take part",
+            assets=len(roots),
+            bodies=environment,
+        )
+    else:
+        text = tr(CONTEXT, "{assets} assets take part", assets=len(roots))
+    layout.label(text=text, translate=False, icon="OUTLINER_COLLECTION")
+    if others:
+        text = tr(
+            CONTEXT,
+            "{count} other assets are moved out of the rigid body world while baking",
+            count=len(others),
+        )
+        layout.label(text=text, translate=False, icon="INFO")
+
+
+def _draw_suggestion(layout, context, roots):
+    """子步建议: 比设定值高时提示, 说明终稿质量会自动采用它"""
+    owner = scene_settings(context, TOOL_ID)
+    wanted, capped = _suggested(context, roots, owner)
+    if wanted <= owner.substeps:
+        return
+    text = tr(CONTEXT, "Suggested substeps: {count}", count=wanted)
+    layout.label(text=text, translate=False, icon="ERROR" if capped else "INFO")
+    if owner.quality != FINAL:
+        layout.label(text="Set Quality to Final to use it", text_ctxt=CONTEXT)
 
 
 def _draw_statuses(layout, context, roots):
@@ -289,6 +384,8 @@ class QD_SIMULATION_PT_main(ToolPanel, Panel):
         roots = draw_assets(layout, context)
         if roots:
             _draw_statuses(layout, context, roots)
+            _draw_participants(layout, context, roots)
+            _draw_suggestion(layout, context, roots)
         running = task.busy()
         if running:
             layout.label(text="Baking, press Esc to cancel", text_ctxt=CONTEXT, icon="TIME")

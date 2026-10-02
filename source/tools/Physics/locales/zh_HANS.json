@@ -43,7 +43,12 @@
     "The panel differs from the applied settings": "面板与已应用的设置不同",
     "Select one asset with physics applied": "请选中一个已应用物理的资产",
     "Loaded the applied settings of \"{name}\"": "已读取“{name}”已应用的设置",
-    "Physics": "物理设置"
+    "Physics": "物理设置",
+    "Penetration Resistance": "穿透阻力",
+    "{count} shards are not closed; their convex hull volume is used": "{count} 块碎块不封闭，体积按凸包计算",
+    "{material}, {mass}": "{material}，{mass}",
+    "{value:.1f} kg": "{value:.1f} 千克",
+    "{value:.1f} t": "{value:.1f} 吨"
   },
   "tooltips": {
     "Rigid body material and behavior of fractured assets": "破碎资产的刚体材料与受击前的行为",
@@ -65,7 +70,6 @@
     "Fraction of the moving speed lost over time, like air drag.": "移动速度随时间损失的比例，类似空气阻力。",
     "Fraction of the spinning speed lost over time.": "旋转速度随时间损失的比例。",
     "How shards behave before a driver reaches them.": "驱动作用到碎块之前，碎块的行为方式。",
-    "Shards hold still and cannot be pushed until a driver starts them; best for walls and pillars.": "碎块保持不动，也不会被撞动，直到被驱动起动；适合墙与柱。",
     "Shards sleep until something hits them; touching shards wake up together, so a hit can loosen a whole stack.": "碎块处于休眠，被撞到才醒；相互接触的碎块会一起醒来，一次撞击可能让整堆松散。",
     "Shards fall under gravity from the first frame.": "碎块从第一帧起就受重力下落。",
     "Pin the lowest shards in place so they never move, like a wall fixed to the ground.": "把最下面的碎块固定住，始终不动，就像固定在地面上的墙。",
@@ -74,6 +78,8 @@
     "Let Blender embed its default margin inside each shard; very thin shards get no margin.": "由 Blender 把默认边距内嵌在每块碎块里；很薄的碎块没有边距。",
     "Use the margin below for every shard; the collision shape grows outward by it.": "每块碎块都使用下方的边距，碰撞形状向外扩大这么多。",
     "Collision margin used in Fixed mode; keep it below half the gap between shards to avoid overlaps at the start.": "固定模式使用的碰撞边距；应小于碎块间隙的一半，以免开始时相互重叠。",
-    "Show the settings the selected asset was applied with in this panel, to review or adjust them": "把所选资产应用时使用的设置显示到此面板，便于查看或调整"
+    "Show the settings the selected asset was applied with in this panel, to review or adjust them": "把所选资产应用时使用的设置显示到此面板，便于查看或调整",
+    "Shards hold still until a driver starts them, and stop anything driven into them; use Sleeping when a driver covers only part of the shards.": "碎块保持不动，直到被驱动起动，被驱动撞上的碎块会被它挡住；驱动只覆盖一部分碎块时请改用休眠。",
+    "How hard it is for a bullet to pierce the material, relative to concrete; a bullet spends this much of its penetration per unit of thickness.": "子弹穿过这种材料有多难，以混凝土为 1；每穿过一单位厚度，子弹消耗这么多穿透力。"
   }
 }

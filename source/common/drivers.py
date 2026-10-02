@@ -8,6 +8,7 @@
 import hashlib
 import math
 from dataclasses import astuple, dataclass
+from itertools import pairwise
 
 from .schema import Schema
 
@@ -20,22 +21,60 @@ ATTRIBUTE = "qd_driver"
 NONE = "NONE"
 EXPLOSION = "EXPLOSION"
 PUSH = "PUSH"
+VORTEX = "VORTEX"
+ZONE = "ZONE"
+CURVE_FLOW = "CURVE_FLOW"
+PROJECTILE = "PROJECTILE"
+
+# 以曲线或箭头射线为路径的角色
+PATH_ROLES = (CURVE_FLOW, PROJECTILE)
+# 区域对区域内碎块的处理方式
+ZONE_ANCHOR = "ANCHOR"
+ZONE_FROZEN = "FROZEN"
+ZONE_SLEEPING = "SLEEPING"
+ZONE_FREE = "FREE"
+ZONE_EXCLUDE = "EXCLUDE"
+# 箭头射线驱动的射线长度, 世界单位; 弹道求交与飞行动画都只看这一段
+RAY_LENGTH = 100.0
+# 曲线没有倒角, 管半径也没有设置时的作用管半径, 世界单位
+DEFAULT_TUBE_RADIUS = 0.5
 
 # 每种角色在界面上显示的字段, 按用途分组, 组与组之间留空; 与角色无关的字段不显示
-# 分组依次是: 时间, 强度与衰减, 方向, 自转与随机
+# 分组依次是: 时间, 强度与衰减, 方向, 自转与随机; 弹道与区域各有自己的分组
 ROLE_FIELDS = {
     EXPLOSION: (
         ("frame", "wave_speed"),
-        ("speed", "falloff", "core_ratio"),
+        ("speed", "falloff", "core_ratio", "mass_response"),
         ("spread", "lift"),
         ("max_spin", "seed"),
     ),
     PUSH: (
         ("frame", "wave_speed"),
-        ("speed", "falloff", "core_ratio"),
+        ("speed", "falloff", "core_ratio", "mass_response"),
         ("spread", "front_only"),
         ("max_spin", "seed"),
     ),
+    VORTEX: (
+        ("frame", "wave_speed"),
+        ("speed", "falloff", "core_ratio", "mass_response"),
+        ("inward", "rise", "spread"),
+        ("max_spin", "seed"),
+    ),
+    CURVE_FLOW: (
+        ("frame", "wave_speed"),
+        ("speed", "falloff", "core_ratio", "mass_response"),
+        ("tube_radius", "attraction", "spread"),
+        ("max_spin", "seed"),
+    ),
+    PROJECTILE: (
+        ("frame", "bullet_speed", "penetration"),
+        ("entry_radius", "entry_speed"),
+        ("channel_radius", "channel_speed"),
+        ("exit_radius", "exit_speed", "exit_spread"),
+        ("spread", "falloff", "core_ratio", "mass_response"),
+        ("max_spin", "seed"),
+    ),
+    ZONE: (("zone_action",),),
 }
 
 # 驱动参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
@@ -48,6 +87,29 @@ DRIVER_SPECS = {
                 (NONE, "None", "Not used as a driver."),
                 (EXPLOSION, "Explosion", "Throw shards outward from the center of the sphere."),
                 (PUSH, "Push", "Push shards along the arrow of the empty."),
+                (
+                    VORTEX,
+                    "Vortex",
+                    "Swirl shards around the axis of the empty, optionally pulling them in "
+                    "or lifting them.",
+                ),
+                (
+                    ZONE,
+                    "Zone",
+                    "Change how the shards inside behave before the simulation starts; it "
+                    "gives them no speed.",
+                ),
+                (
+                    CURVE_FLOW,
+                    "Curve Flow",
+                    "Carry shards near a curve along it, in the direction of the curve.",
+                ),
+                (
+                    PROJECTILE,
+                    "Projectile",
+                    "A bullet along the arrow or curve that pierces the source solid and "
+                    "throws shards at the entry, along the channel and at the exit.",
+                ),
             ),
             "default": NONE,
             "description": "What the driver does to the shards in its range.",
@@ -161,6 +223,194 @@ DRIVER_SPECS = {
             "unit": "VELOCITY",
         },
     ),
+    "mass_response": (
+        "FloatProperty",
+        {
+            "name": "Mass Response",
+            "description": "Let lighter shards fly faster and heavier ones slower than the "
+            "average shard of the asset; 0 gives every shard the same speed.",
+            "min": 0.0,
+            "max": 2.0,
+            "default": 0.0,
+            "subtype": "FACTOR",
+        },
+    ),
+    "inward": (
+        "FloatProperty",
+        {
+            "name": "Inward Pull",
+            "description": "Part of the speed that points toward the axis; negative values "
+            "push shards outward.",
+            "min": -1.0,
+            "max": 1.0,
+            "default": 0.0,
+            "subtype": "FACTOR",
+        },
+    ),
+    "rise": (
+        "FloatProperty",
+        {
+            "name": "Rise",
+            "description": "Extra speed along the axis at full strength, per second of "
+            "simulated time.",
+            "min": -50.0,
+            "max": 50.0,
+            "soft_min": -20.0,
+            "soft_max": 20.0,
+            "default": 0.0,
+            "unit": "VELOCITY",
+        },
+    ),
+    "tube_radius": (
+        "FloatProperty",
+        {
+            "name": "Tube Radius",
+            "description": "Distance from the curve within which shards are carried; 0 uses "
+            "the bevel depth of the curve.",
+            "min": 0.0,
+            "soft_max": 10.0,
+            "default": 0.0,
+            "subtype": "DISTANCE",
+            "unit": "LENGTH",
+        },
+    ),
+    "attraction": (
+        "FloatProperty",
+        {
+            "name": "Attraction",
+            "description": "Part of the speed that pulls shards toward the curve.",
+            "min": 0.0,
+            "max": 1.0,
+            "default": 0.0,
+            "subtype": "FACTOR",
+        },
+    ),
+    "zone_action": (
+        "EnumProperty",
+        {
+            "name": "Shards in Zone",
+            "items": (
+                (ZONE_ANCHOR, "Anchor", "Fix the shards in place for the whole simulation."),
+                (ZONE_FROZEN, "Frozen", "Hold the shards still until a driver starts them."),
+                (ZONE_SLEEPING, "Sleeping", "Let the shards sleep until something hits them."),
+                (ZONE_FREE, "Free", "Let the shards fall from the first frame."),
+                (
+                    ZONE_EXCLUDE,
+                    "Exclude",
+                    "Leave the shards out of the simulation; they stay where they are and "
+                    "nothing collides with them.",
+                ),
+            ),
+            "default": ZONE_ANCHOR,
+            "description": "What happens to the shards whose center is inside the zone.",
+        },
+    ),
+    "bullet_speed": (
+        "FloatProperty",
+        {
+            "name": "Bullet Speed",
+            "description": "How fast the bullet travels, per second of simulated time; it "
+            "sets when each part of the path is hit.",
+            "min": 0.1,
+            "soft_max": 1000.0,
+            "default": 400.0,
+            "unit": "VELOCITY",
+        },
+    ),
+    "penetration": (
+        "FloatProperty",
+        {
+            "name": "Penetration",
+            "description": "Thickness of concrete the bullet can pierce; harder materials "
+            "stop it sooner.",
+            "min": 0.0,
+            "soft_max": 5.0,
+            "default": 0.3,
+            "subtype": "DISTANCE",
+            "unit": "LENGTH",
+        },
+    ),
+    "entry_radius": (
+        "FloatProperty",
+        {
+            "name": "Entry Radius",
+            "description": "Shards within this distance of the entry point are thrown back.",
+            "min": 0.0,
+            "soft_max": 2.0,
+            "default": 0.15,
+            "subtype": "DISTANCE",
+            "unit": "LENGTH",
+        },
+    ),
+    "channel_radius": (
+        "FloatProperty",
+        {
+            "name": "Channel Radius",
+            "description": "Shards within this distance of the bullet's path inside the "
+            "solid are pushed along it.",
+            "min": 0.0,
+            "soft_max": 1.0,
+            "default": 0.05,
+            "subtype": "DISTANCE",
+            "unit": "LENGTH",
+        },
+    ),
+    "exit_radius": (
+        "FloatProperty",
+        {
+            "name": "Exit Radius",
+            "description": "Shards within this distance of the exit point are thrown out.",
+            "min": 0.0,
+            "soft_max": 3.0,
+            "default": 0.4,
+            "subtype": "DISTANCE",
+            "unit": "LENGTH",
+        },
+    ),
+    "entry_speed": (
+        "FloatProperty",
+        {
+            "name": "Entry Speed",
+            "description": "Speed of the shards thrown back at the entry.",
+            "min": 0.0,
+            "soft_max": 50.0,
+            "default": 3.0,
+            "unit": "VELOCITY",
+        },
+    ),
+    "channel_speed": (
+        "FloatProperty",
+        {
+            "name": "Channel Speed",
+            "description": "Speed of the shards pushed along the bullet's path.",
+            "min": 0.0,
+            "soft_max": 50.0,
+            "default": 10.0,
+            "unit": "VELOCITY",
+        },
+    ),
+    "exit_speed": (
+        "FloatProperty",
+        {
+            "name": "Exit Speed",
+            "description": "Speed of the shards thrown out at the exit.",
+            "min": 0.0,
+            "soft_max": 50.0,
+            "default": 15.0,
+            "unit": "VELOCITY",
+        },
+    ),
+    "exit_spread": (
+        "FloatProperty",
+        {
+            "name": "Exit Spread",
+            "description": "Cone angle of the shards thrown out at the exit.",
+            "min": 0.0,
+            "max": math.pi,
+            "default": math.radians(35.0),
+            "subtype": "ANGLE",
+        },
+    ),
     "front_only": (
         "BoolProperty",
         {
@@ -218,6 +468,36 @@ class DriverSnapshot:
     front_only: bool
     # 随机种子
     seed: int
+    # 质量响应指数, 0 表示不响应
+    mass_response: float = 0.0
+    # 旋涡: 朝轴的速度比例, 负值向外
+    inward: float = 0.0
+    # 旋涡: 沿轴的速度
+    rise: float = 0.0
+    # 区域: 区域内碎块的处理方式
+    zone_action: str = ZONE_ANCHOR
+    # 区域: 立方体区域用各轴取最大值判断, 否则是椭球
+    box: bool = False
+    # 路径角色的世界坐标折线; 曲线取第一条样条, 箭头射线是两个点
+    path: tuple = ()
+    # 曲线方向: 作用管半径, 世界单位, 已解析好倒角深度与默认值
+    tube_radius: float = DEFAULT_TUBE_RADIUS
+    # 曲线方向: 朝曲线的速度比例
+    attraction: float = 0.0
+    # 弹道: 弹速, 每模拟秒
+    bullet_speed: float = 400.0
+    # 弹道: 混凝土等效的可穿透厚度
+    penetration: float = 0.3
+    # 弹道: 入口坑, 通道与出口坑的作用半径
+    entry_radius: float = 0.15
+    channel_radius: float = 0.05
+    exit_radius: float = 0.4
+    # 弹道: 入口坑, 通道与出口坑给碎块的速度
+    entry_speed: float = 3.0
+    channel_speed: float = 10.0
+    exit_speed: float = 15.0
+    # 弹道: 出口锥角, 弧度
+    exit_spread: float = math.radians(35.0)
 
 
 def is_driver(obj):
@@ -252,6 +532,57 @@ def range_radius(obj):
     return display_size(obj) * max(abs(value) for value in obj.matrix_world.to_scale())
 
 
+def curve_path(obj):
+    """曲线物体第一条样条的世界坐标折线; 没有样条时为空
+
+    贝塞尔按样条的分辨率逐段求值, 多段线取控制点, NURBS 取控制点连线作近似
+    求值后的网格在有倒角时是一根管子, 不能当折线用
+    """
+    # 延迟导入: 模块顶层要能在 Blender 之外导入
+    from mathutils import Vector
+    from mathutils.geometry import interpolate_bezier
+
+    splines = obj.data.splines
+    if not splines:
+        return ()
+    spline = splines[0]
+    world = obj.matrix_world
+    if spline.type == "BEZIER":
+        knots = list(spline.bezier_points)
+        if spline.use_cyclic_u:
+            knots.append(knots[0])
+        points = []
+        for first, second in pairwise(knots):
+            points += interpolate_bezier(
+                first.co, first.handle_right, second.handle_left, second.co, spline.resolution_u + 1
+            )[:-1]
+        points.append(knots[-1].co.copy())
+    else:
+        points = [Vector(point.co[:3]) for point in spline.points]
+        if spline.use_cyclic_u and points:
+            points.append(points[0])
+    return tuple(tuple(world @ point) for point in points)
+
+
+def _path_of(obj, params, center, axis):
+    """路径角色的折线: 曲线物体取样条, 其余沿箭头方向取一段射线"""
+    if params.role not in PATH_ROLES:
+        return ()
+    if obj.type == "CURVE":
+        return curve_path(obj)
+    reach = tuple(center[index] + axis[index] * RAY_LENGTH for index in range(3))
+    return (tuple(center), reach)
+
+
+def _tube_radius(obj, params):
+    """作用管半径: 设置值, 否则曲线的倒角深度乘缩放, 都没有时取默认值; 世界单位"""
+    if params.tube_radius > 0.0:
+        return params.tube_radius
+    if obj.type == "CURVE" and obj.data.bevel_depth > 0.0:
+        return obj.data.bevel_depth * max(abs(value) for value in obj.matrix_world.to_scale())
+    return DEFAULT_TUBE_RADIUS
+
+
 def snapshot(obj):
     """读取驱动物体当前的世界变换与参数, 返回 DriverSnapshot"""
     # 延迟导入: 模块顶层要能在 Blender 之外导入
@@ -277,6 +608,23 @@ def snapshot(obj):
         wave_speed=params.wave_speed,
         front_only=params.front_only,
         seed=params.seed,
+        mass_response=params.mass_response,
+        inward=params.inward,
+        rise=params.rise,
+        zone_action=params.zone_action,
+        box=obj.type == "EMPTY" and obj.empty_display_type == "CUBE",
+        path=_path_of(obj, params, tuple(world.translation), tuple(axis)),
+        tube_radius=_tube_radius(obj, params),
+        attraction=params.attraction,
+        bullet_speed=params.bullet_speed,
+        penetration=params.penetration,
+        entry_radius=params.entry_radius,
+        channel_radius=params.channel_radius,
+        exit_radius=params.exit_radius,
+        entry_speed=params.entry_speed,
+        channel_speed=params.channel_speed,
+        exit_speed=params.exit_speed,
+        exit_spread=params.exit_spread,
     )
 
 
@@ -288,6 +636,15 @@ def quantize(value):
     return f"{round(value, 6) + 0.0:.6f}"
 
 
+def _flat(value):
+    """展平嵌套的元组, 路径是点的元组"""
+    for item in value:
+        if isinstance(item, tuple):
+            yield from _flat(item)
+        else:
+            yield item
+
+
 def digest(snapshots):
     """一组驱动快照的摘要: 浮点数先量化, 避免末位误差造成误报的变化"""
     parts = []
@@ -296,7 +653,7 @@ def digest(snapshots):
             if isinstance(value, float):
                 parts.append(quantize(value))
             elif isinstance(value, tuple):
-                parts.append(",".join(quantize(number) for number in value))
+                parts.append(",".join(quantize(number) for number in _flat(value)))
             else:
                 parts.append(str(value))
         parts.append("|")

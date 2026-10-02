@@ -3,10 +3,9 @@
 这里只做校验与计算, 不改动场景; 写入, 推进与提交由 bake 模块完成
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from ....common import asset, drivers, impulse, rigidbody, shards
-from ....common.blender_context import vertex_coordinates
+from ....common import asset, drivers, impulse, planning, rigidbody, shards
 from ....common.status import (
     CURRENT,
     drivers_signature,
@@ -14,9 +13,10 @@ from ....common.status import (
     physics_status,
     scene_signature,
 )
-from ..constants import STAGE
+from ..constants import STAGE, SUBSTEP_LIMIT
 from ..errors import SimulationError
-from ..settings import frame_range
+from ..settings import FINAL, frame_range
+from .blocking import Walls
 
 
 @dataclass
@@ -57,16 +57,36 @@ class Session:
     signatures: dict
     # 起动帧被推迟的事件数
     clamped: int
+    # 不让路的物体, 起动时据此判定受阻
+    walls: Walls
+    # 驱动快照, 弹道的飞行动画按驱动名找回对应的物体
+    snapshots: list = field(default_factory=list)
+    # 弹道驱动名 -> 对各个资产的飞行计划
+    flights: dict = field(default_factory=dict)
+    # 终稿质量下的子步建议值, 0 表示没有建议; 以及它是否被上限截断
+    suggested: int = 0
+    capped: bool = False
 
 
 def _check_assets(roots):
     """每个资产的物理都必须处于输入未变的状态, 返回 [(根集合, 碎块列表), ...]"""
+    asset.validate(roots)
     result = []
     for root in roots:
         if physics_status(root).state != CURRENT:
             raise SimulationError('Apply physics to "{name}" first', name=root.name)
         result.append((root, asset.shards_of(root)))
     return result
+
+
+def _check_parents(pairs):
+    """碎块不能有父级: 关键帧写在碎块自己的变换通道里, 刚体也按世界姿态推进, 有父级时两者对不上"""
+    for _root, items in pairs:
+        for shard in items:
+            if shard.parent is not None:
+                raise SimulationError(
+                    'Shard "{name}" has a parent; unparent it before simulating', name=shard.name
+                )
 
 
 def _check_animation(pairs):
@@ -83,26 +103,15 @@ def _check_animation(pairs):
                 )
 
 
-def _rules(root):
-    """资产物理生效记录里的激活规则"""
-    record = asset.physics_record(root)
-    return impulse.Rules(
-        activation=record["activation"],
-        anchor_bottom=bool(record["use_anchor_bottom"]),
-        anchor_height=float(record["anchor_height"]),
-    )
+def _substeps(values, compiled, timing):
+    """实际使用的子步数: 终稿质量取设定值与建议值中较大的, 不超过上限
 
-
-def _info(shard, rest, asset_id):
-    """碎块在静止姿态下的编译信息: 质心是原点的位置, 最低点取静止姿态下的世界坐标"""
-    flat = vertex_coordinates(shard.data)
-    rows = rest.row
-    lowest = min(
-        rows[2][0] * flat[index] + rows[2][1] * flat[index + 1] + rows[2][2] * flat[index + 2]
-        for index in range(0, len(flat), 3)
-    )
-    key = asset_id + "/" + "/".join(str(index) for index in shards.path_of(shard))
-    return impulse.ShardInfo(key=key, center=tuple(rest.translation), lowest=lowest + rest[2][3])
+    返回 (子步数, 建议值, 建议值是否被上限截断)
+    """
+    if values.quality != FINAL:
+        return values.substeps, 0, False
+    suggested, capped = planning.suggested_substeps(compiled, timing, SUBSTEP_LIMIT)
+    return max(values.substeps, suggested), suggested, capped
 
 
 def _timing(scene, values):
@@ -111,6 +120,25 @@ def _timing(scene, values):
     if end <= start:
         raise SimulationError("End Frame must be after Start Frame")
     return start, end, rigidbody.frame_seconds(scene, values.time_scale)
+
+
+def suggestion(context, roots, values):
+    """终稿质量的子步建议值 (启发式): 返回 (建议值, 是否被上限截断)
+
+    不改动场景, 不做起动受阻判定; 资产的物理不是输入未变的状态, 或计划输入不满足时返回 (0, False)
+    """
+    scene = context.scene
+    if any(physics_status(root).state != CURRENT for root in roots):
+        return 0, False
+    try:
+        start, _end, dt = _timing(scene, values)
+        snapshots = [drivers.snapshot(obj) for obj in drivers.driver_objects(scene)]
+        depsgraph = context.evaluated_depsgraph_get()
+        timing = impulse.Timing(frame_start=start, dt=dt)
+        compiled = [planning.compile_asset(root, snapshots, timing, depsgraph) for root in roots]
+    except (SimulationError, planning.PlanError):
+        return 0, False
+    return planning.suggested_substeps(compiled, timing, SUBSTEP_LIMIT)
 
 
 def build(context, roots, values):
@@ -123,32 +151,55 @@ def build(context, roots, values):
     if world is None or world.collection is None:
         raise SimulationError("Apply physics before simulating")
     pairs = _check_assets(roots)
+    _check_parents(pairs)
     _check_animation(pairs)
     start, end, dt = _timing(scene, values)
     snapshots = [drivers.snapshot(obj) for obj in drivers.driver_objects(scene)]
     timing = impulse.Timing(frame_start=start, dt=dt)
+    depsgraph = context.evaluated_depsgraph_get()
+    compiled = [
+        planning.compile_asset(root, snapshots, timing, depsgraph) for root, _items in pairs
+    ]
     participants = []
-    clamped = 0
-    for root, items in pairs:
+    flights = {}
+    for (root, _items), item in zip(pairs, compiled, strict=True):
         asset_id = shards.asset_of(root)
-        rests = [asset.rest_matrix(shard) for shard in items]
-        infos = [_info(shard, rest, asset_id) for shard, rest in zip(items, rests, strict=True)]
-        plan = impulse.compile_plan(infos, snapshots, _rules(root), timing)
-        clamped += plan.clamped
-        for shard, rest, info in zip(items, rests, infos, strict=True):
-            participants.append(Participant(shard, asset_id, rest, plan.shards[info.key]))
+        for shard, rest, info in zip(item.shards, item.rests, item.infos, strict=True):
+            participants.append(Participant(shard, asset_id, rest, item.plan.shards[info.key]))
+        for name, flight in item.flights.items():
+            flights.setdefault(name, []).append(flight)
+    clamped = sum(item.plan.clamped for item in compiled)
+    substeps, suggested, capped = _substeps(values, compiled, timing)
     settings = {
         "frame_start": start,
         "frame_end": end,
-        "substeps": values.substeps,
+        "substeps": substeps,
         "solver_iterations": values.solver_iterations,
         "time_scale": values.time_scale,
+        # 面板上的请求值与质量档; 状态判定拿它们与面板比较, 而不是与提高后的实际子步比较
+        "requested": values.substeps,
+        "quality": values.quality,
     }
     signatures = {
         "drivers": drivers_signature(scene),
         "environment": environment_signature(scene),
         "scene": scene_signature(scene),
     }
+    walls = Walls(participants, scene, dt)
     return Session(
-        scene, world, list(roots), participants, start, end, dt, settings, signatures, clamped
+        scene,
+        world,
+        list(roots),
+        participants,
+        start,
+        end,
+        dt,
+        settings,
+        signatures,
+        clamped,
+        walls,
+        snapshots,
+        flights,
+        suggested,
+        capped,
     )

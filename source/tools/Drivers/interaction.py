@@ -6,19 +6,30 @@ import bpy
 from bpy.props import EnumProperty, StringProperty
 from bpy.types import Operator, Panel
 
-from ...common import drivers
+from ...common import asset, drivers
 from ...common.blender_context import select_only
 from ...common.translate import tr, tr_report
+from ...framework.contract import scene_settings
 from ...framework.operators import ToolOperator
-from ...framework.ui import ToolPanel, draw_fields, label_row
-from .api import add_driver, make_driver
-from .constants import CONTEXT, ROLE_ICONS, TOOL_ID
+from ...framework.ui import ToolPanel, draw_fields, label_row, picked_objects
+from .api import add_driver, affected_shards, make_driver
+from .constants import CONTEXT, CURVE_ROLES, ROLE_ICONS, TOOL_ID
+from .settings import SCHEMA
 
-# 算子的驱动角色选项; 按钮会写明各自的文字, 这里的名称只用于算子属性本身
+# 算子的驱动角色选项, 也是按钮的顺序与文字; 前三种是点状或范围型, 后面是路径与区域
 ROLE_CHOICES = (
     (drivers.EXPLOSION, "Explosion", "Throw shards outward from the center of the sphere"),
     (drivers.PUSH, "Push", "Push shards along the arrow of the empty"),
+    (drivers.VORTEX, "Vortex", "Swirl shards around the axis of the empty"),
+    (drivers.CURVE_FLOW, "Curve Flow", "Carry shards along a curve"),
+    (drivers.PROJECTILE, "Projectile", "Fire a bullet along the arrow or curve"),
+    (drivers.ZONE, "Zone", "Change how the shards inside behave before the simulation"),
 )
+# 各类物体能设成的角色: 曲线方向只能用曲线, 弹道两者都行, 其余只能用空物体
+EMPTY_ROLES = tuple(item for item in ROLE_CHOICES if item[0] != drivers.CURVE_FLOW)
+CURVE_CHOICES = tuple(item for item in ROLE_CHOICES if item[0] in CURVE_ROLES)
+# 作用范围由物体缩放决定的角色: 界面显示半径并提示缩放
+RANGE_ROLES = (drivers.EXPLOSION, drivers.PUSH, drivers.VORTEX, drivers.ZONE)
 
 
 def _role_property():
@@ -68,6 +79,24 @@ class QD_DRIVERS_OT_convert(ToolOperator, Operator):
         return tr_report(CONTEXT, '"{name}" is now a driver', name=obj.name)
 
 
+class QD_DRIVERS_OT_select_affected(ToolOperator, Operator):
+    """选中计划里会被驱动起动的碎块"""
+
+    bl_idname = "qd_drivers.select_affected"
+    bl_label = "Select Affected Shards"
+    bl_description = "Select the shards of the selected assets that the drivers will start moving"
+    bl_translation_context = CONTEXT
+    bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
+
+    def run(self, context):
+        """按计划选中有起动事件的碎块; 没有时不改动选择"""
+        found = affected_shards(context, asset.resolve(picked_objects(context)))
+        if not found:
+            return tr_report(CONTEXT, "No shard is affected by the drivers")
+        select_only(context, found, found[0])
+        return tr_report(CONTEXT, "Selected {count} affected shards", count=len(found))
+
+
 class QD_DRIVERS_OT_select(ToolOperator, Operator):
     """在驱动列表里点击时选中对应的驱动物体"""
 
@@ -94,11 +123,16 @@ class QD_DRIVERS_OT_select(ToolOperator, Operator):
         return None
 
 
-def _role_buttons(layout, operator):
-    """每种角色一个按钮, 并排一行"""
-    row = layout.row(align=True)
-    for role, name, _description in ROLE_CHOICES:
-        button = row.operator(
+def _always(*_args):
+    """参数的生效条件: 这里的字段始终可用"""
+    return True
+
+
+def _role_buttons(layout, operator, choices=ROLE_CHOICES):
+    """每种角色一个按钮, 两列排布"""
+    grid = layout.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
+    for role, name, _description in choices:
+        button = grid.operator(
             operator, text=tr(CONTEXT, name), translate=False, icon=ROLE_ICONS[role]
         )
         button.role = role
@@ -108,15 +142,22 @@ class QD_DRIVERS_PT_main(ToolPanel, Panel):
     """破坏驱动的侧栏主面板 - 在游标处添加驱动; 编辑与列表在子面板里"""
 
     bl_label = "Drivers"
-    bl_description = "Explosions and pushes that start the shards moving"
+    bl_description = "Explosions, pushes, vortices, curves and bullets that start the shards moving"
     bl_translation_context = CONTEXT
     tool_id = TOOL_ID
 
-    def draw(self, _context):
-        """添加按钮一行, 下面说明放置方式"""
+    def draw(self, context):
+        """添加按钮, 选中受影响的碎块, 计划预览的开关与显示设置"""
         layout = self.layout
         layout.label(text="Add at the 3D cursor:", text_ctxt=CONTEXT)
         _role_buttons(layout, QD_DRIVERS_OT_add.bl_idname)
+        layout.separator()
+        layout.operator(QD_DRIVERS_OT_select_affected.bl_idname, icon="RESTRICT_SELECT_OFF")
+        settings = scene_settings(context, TOOL_ID)
+        draw_fields(layout, settings, SCHEMA, ("show_preview",), _always)
+        column = layout.column()
+        column.active = settings.show_preview
+        draw_fields(column, settings, SCHEMA, ("preview_scale", "color_by_time"), _always)
 
 
 def _draw_range(layout, context, obj):
@@ -128,6 +169,18 @@ def _draw_range(layout, context, obj):
     row = label_row(layout, tr(CONTEXT, "Range"), translate=False)
     row.label(text=radius, translate=False)
     layout.label(text="Scale the empty to resize", text_ctxt=CONTEXT, icon="INFO")
+
+
+def _draw_hint(layout, role):
+    """路径与区域角色没有半径可显示, 按角色给出调整方式的提示"""
+    if role == drivers.CURVE_FLOW:
+        layout.label(
+            text="Edit the points of the curve to change the path", text_ctxt=CONTEXT, icon="INFO"
+        )
+    elif role == drivers.PROJECTILE:
+        layout.label(
+            text="The bullet follows the arrow or the curve", text_ctxt=CONTEXT, icon="INFO"
+        )
 
 
 def _draw_driver(layout, context, obj):
@@ -142,7 +195,10 @@ def _draw_driver(layout, context, obj):
         column.separator()
         draw_fields(column, params, drivers.DRIVER_SCHEMA, group, lambda *_args: True)
     column.separator()
-    _draw_range(column, context, obj)
+    if params.role in RANGE_ROLES:
+        _draw_range(column, context, obj)
+    else:
+        _draw_hint(column, params.role)
 
 
 class QD_DRIVERS_PT_active(ToolPanel, Panel):
@@ -161,7 +217,10 @@ class QD_DRIVERS_PT_active(ToolPanel, Panel):
             _draw_driver(layout, context, obj)
         elif obj is not None and obj.type == "EMPTY":
             layout.label(text="Use the active empty as:", text_ctxt=CONTEXT)
-            _role_buttons(layout, QD_DRIVERS_OT_convert.bl_idname)
+            _role_buttons(layout, QD_DRIVERS_OT_convert.bl_idname, EMPTY_ROLES)
+        elif obj is not None and obj.type == "CURVE":
+            layout.label(text="Use the active curve as:", text_ctxt=CONTEXT)
+            _role_buttons(layout, QD_DRIVERS_OT_convert.bl_idname, CURVE_CHOICES)
         else:
             layout.label(text="Select a driver, or add one above", text_ctxt=CONTEXT, icon="INFO")
 
@@ -202,6 +261,7 @@ class QD_DRIVERS_PT_list(ToolPanel, Panel):
 CLASSES = (
     QD_DRIVERS_OT_add,
     QD_DRIVERS_OT_convert,
+    QD_DRIVERS_OT_select_affected,
     QD_DRIVERS_OT_select,
     QD_DRIVERS_PT_main,
     QD_DRIVERS_PT_active,

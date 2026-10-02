@@ -4,6 +4,7 @@ import bpy
 
 from ....common import asset, rigidbody, shards
 from ..constants import STAGE
+from . import flight
 
 
 def _clear_shard(shard, asset_id):
@@ -34,4 +35,7 @@ def reset(context, roots):
             bpy.data.actions.remove(action)
         count += len(items)
     asset.prune_runs(scene)
+    # 弹体的飞行动画属于驱动而不是某个资产: 没有任何模拟成果时才一并清理
+    if not any(asset.sim_record(item[0]) for item in asset.roots_by_id().values()):
+        flight.clear()
     return count

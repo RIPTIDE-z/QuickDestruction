@@ -10,9 +10,14 @@
     6. 破坏驱动: 新建驱动的外观, 集合与默认起动帧; 只有空物体能设为驱动; 快照的作用空间与摘要
     7. 交接精度: 普通, 慢动作, 快动作与分数帧率下起动后第一个动力学帧的速度等于计划速度
     8. 激活方式: 范围外的冻结碎块与锚定碎块全程不动且没有动画; 自由下落的碎块被再交接后速度等于计划值
+    8a. 驱动角色: 旋涡绕轴转, 区域排除, 锚定与覆盖, 曲线方向的折线与切线速度, 弹道的入口坑, 通道,
+        出口坑, 穿透预算, 材料阻力, 事件时刻, 飞行动画与复位, 质量响应, 受影响的碎块与计划预览
+    8b. 受阻: 起动被冻结邻块, 锚定碎块或环境地面挡住时, 速度去掉朝向墙的分量, 不再塞进去后被顶出
+        反向的高速; 反弹不随子步数放大; 休眠的邻块是动态刚体, 不受影响; 均匀推力下整面墙同帧同速不互相挡路
     9. 会话: 多个资产一起模拟会相互碰撞, 未参与的资产临时移出并恢复, 环境刚体参与但属性不变
     10. 取消与失败: 推进中取消, 写成果与提交阶段失败, 场景都回到烘焙之前, 上一次的成果保留
     11. 状态: 驱动, 帧率, 重新应用物理, 同会话资产与环境刚体的变化都给出对应的过期原因
+    11b. 质量档与子步建议: 终稿提高子步, 上限截断并说明; 物理记录的总质量与穿透阻力
     12. 守卫: 复位, 外来动画, 运行锁, 起止帧校验, 有成果时禁止重设静止姿态;
         两次烘焙逐位一致; 保存重开后成果仍在
 测试过程:
@@ -46,8 +51,9 @@ from source.common.status import (
     physics_status,
     simulation_status,
 )
-from source.tools.Drivers.api import add_driver, make_driver
+from source.tools.Drivers.api import add_driver, affected_shards, make_driver, plan_preview
 from source.tools.Drivers.errors import DriverError
+from source.tools.Drivers.preview import preview_lines
 from source.tools.MeshFracture.api import generate_fragments
 from source.tools.Physics.api import apply_physics, remove_physics, reset_rest
 from source.tools.Physics.core import apply as physics_core
@@ -409,6 +415,84 @@ def case_bake_frozen_anchor():
     check("烘焙后模拟状态为输入未变", simulation_status(root, scene).state == CURRENT)
 
 
+def tracks(shards, frames):
+    """逐帧回放, 返回 {碎块名: [各帧世界位置]}; 烘焙后碎块不在刚体世界里, 可以任意跳帧"""
+    result = {shard.name: [] for shard in shards}
+    for frame in frames:
+        bpy.context.scene.frame_set(frame)
+        for shard in shards:
+            result[shard.name].append(shard.matrix_world.translation.copy())
+    return result
+
+
+def axis_speeds(series, axis, dt):
+    """所有碎块沿 axis 的逐帧速度里最大的正值与最大的负值"""
+    speeds = [
+        (track[index + 1][axis] - track[index][axis]) / dt
+        for track in series.values()
+        for index in range(len(track) - 1)
+    ]
+    return max(speeds), min(speeds)
+
+
+def push_wall(substeps=10, activation="FROZEN"):
+    """切一面墙, 爆炸中心在 -x 面外, 范围只够到靠近 -x 面的碎块, 它们被推向没被波及的内部 (+x)
+
+    返回 (烘焙结果, 逐帧位置, 每帧模拟秒)
+    """
+    sim_scene(gravity=False)
+    root, shards = physical("Wall", count=14, activation=activation)
+    explosion((-1.3, 0.0, 1.0), 1.0)
+    result = bake(bpy.context, [root], {"substeps": substeps})
+    return result, tracks(shards, range(1, 41)), 1.0 / 24.0
+
+
+def case_bake_blocked():
+    """受阻: 冻结邻块, 锚定碎块与环境地面挡住起动时不再被顶出反向高速; 休眠邻块与均匀推力不受影响
+
+    判据中的 1.5 m/s 容限: 去掉法向分量后允许的残余反弹只来自弹性与 2% 的缩小量,
+    修复前同一场景反向速度约 -21 m/s, 子步 60 时约 -91 m/s
+    """
+    for substeps in (10, 60):
+        result, series, dt = push_wall(substeps)
+        _forward, backward = axis_speeds(series, 0, dt)
+        check(
+            f"子步 {substeps}: 起动被冻结邻块挡住并计入报告",
+            result.blocked > 0,
+            str(result.blocked),
+        )
+        check(
+            f"子步 {substeps}: 向内推的碎块没有被顶出反向高速", backward > -1.5, f"{backward:.2f}"
+        )
+    result, series, dt = push_wall(activation="SLEEPING")
+    forward, backward = axis_speeds(series, 0, dt)
+    check("休眠邻块是动态刚体, 起动不受阻", result.blocked == 0, str(result.blocked))
+    check(
+        "休眠的碎块传递推力, 没有反向",
+        forward > 3.0 and backward > -1.5,
+        f"{forward:.2f} {backward:.2f}",
+    )
+
+    # 环境地面: 整面墙被向下推, 压在不动的地面上, 不能被顶起来
+    sim_scene()
+    ground = cube("Ground", half=5.0, location=(0.0, 0.0, -5.0))
+    root, shards = physical("Wall", count=14)
+    bpy.context.scene.rigidbody_world.collection.objects.link(ground)
+    ground.rigid_body.type = "PASSIVE"
+    values = {"frame": 5, "speed": 6.0, "falloff": "CONSTANT", "spread": 0.0, "max_spin": 0.0}
+    push = add_driver(bpy.context, drivers.PUSH, location=(0.0, 0.0, 1.0), **values)
+    push.rotation_euler = (3.141592653589793, 0.0, 0.0)
+    push.scale = (5.0, 5.0, 5.0)
+    bpy.context.view_layer.update()
+    result = bake(bpy.context, [root], {})
+    series = tracks(shards, range(1, 41))
+    up, _down = axis_speeds(series, 2, 1.0 / 24.0)
+    check("向下推的起动被环境地面挡住并计入报告", result.blocked > 0, str(result.blocked))
+    check("被压在地面上的碎块没有被顶起来", up < 1.5, f"{up:.2f}")
+    lowest = min(point.z for track in series.values() for point in track)
+    check("碎块没有穿过环境地面", lowest > -0.5, f"{lowest:.3f}")
+
+
 def case_bake_rehandoff():
     """自由下落中的碎块被后来的驱动再交接: 水平速度等于计划值, 模拟不重置"""
     sim_scene(gravity=True)
@@ -433,12 +517,125 @@ def case_bake_rehandoff():
     check("再交接前已经下落, 模拟没有重置", fallen)
 
 
+def case_bake_rehandoff_keeps_momentum():
+    """再交接叠加在当前速度上: 自由下落的碎块被水平推力推一下后继续下落, 竖直速度没有被重置"""
+    sim_scene(gravity=True)
+    damping = {"linear_damping": 0.0, "angular_damping": 0.0}
+    root, shards = physical("Wall", location=(0.0, 0.0, 30.0), activation="FREE", **damping)
+    values = {"frame": 10, "speed": 5.0, "falloff": "CONSTANT", "spread": 0.0, "max_spin": 0.0}
+    push = add_driver(bpy.context, drivers.PUSH, location=(0.0, 0.0, 30.0), **values)
+    push.rotation_euler = (0.0, 1.5707963267948966, 0.0)
+    push.scale = (10.0, 10.0, 10.0)
+    bpy.context.view_layer.update()
+    bake(bpy.context, [root], {})
+    dt = 1.0 / 24.0
+    before = (position(shards[0], 9).z - position(shards[0], 8).z) / dt
+    after = (position(shards[0], 15).z - position(shards[0], 14).z) / dt
+    check("推之前在下落", before < -2.0, f"{before:.2f}")
+    # 替换语义会把竖直速度重置为零, 之后只剩 5 帧重力: 约 -2.0; 叠加语义保留下落动量, 更慢地不会超过推之前
+    check(
+        "推之后竖直速度没有被重置, 仍在加速下落",
+        after < before - 0.5,
+        f"{before:.2f} -> {after:.2f}",
+    )
+
+
+def case_bake_consecutive_events():
+    """连续两帧的事件都生效: 第 5 帧向 +X 推, 第 6 帧向 +Y 推, 之后速度是两者之和"""
+    sim_scene(gravity=False)
+    damping = {"linear_damping": 0.0, "angular_damping": 0.0}
+    root, shards = physical("Wall", activation="SLEEPING", **damping)
+    base = {"speed": 4.0, "falloff": "CONSTANT", "spread": 0.0, "max_spin": 0.0}
+    along_x = add_driver(bpy.context, drivers.PUSH, location=(0.0, 0.0, 1.0), frame=5, **base)
+    along_x.rotation_euler = (0.0, 1.5707963267948966, 0.0)
+    along_x.scale = (10.0, 10.0, 10.0)
+    along_y = add_driver(
+        bpy.context, drivers.PUSH, location=(0.0, 0.0, 1.0), frame=6, **{**base, "speed": 3.0}
+    )
+    along_y.rotation_euler = (-1.5707963267948966, 0.0, 0.0)
+    along_y.scale = (10.0, 10.0, 10.0)
+    bpy.context.view_layer.update()
+    result = bake(bpy.context, [root], {})
+    check("每块碎块各被起动两次", result.rehandoffs == 2 * len(shards), f"{result.rehandoffs}")
+    dt = 1.0 / 24.0
+    worst = 0.0
+    for shard in shards:
+        speed = (position(shard, 12) - position(shard, 11)) / dt
+        worst = max(worst, abs(speed.x - 4.0), abs(speed.y - 3.0), abs(speed.z))
+    check("第二次起动没有被丢掉, 速度是两次之和", worst < 0.05, f"{worst:.3f}")
+
+
+def case_bake_partners():
+    """同一会话的资产互相依赖: 其中一个被复位或单独重新烘焙后, 另一个显示已过期"""
+    scene = sim_scene()
+    left, _left_shards = physical("Left", location=(-1.5, 0.0, 1.0))
+    right, _right_shards = physical("Right", location=(1.5, 0.0, 1.0))
+    explosion((0.0, 0.0, 1.0), 3.0)
+    bake(bpy.context, [left, right], {})
+    check(
+        "一起烘焙后两个都是输入未变",
+        all(simulation_status(r, scene).state == CURRENT for r in (left, right)),
+    )
+    reset_simulation(bpy.context, [right])
+    status = simulation_status(left, scene)
+    check(
+        "伙伴被复位后左边已过期",
+        status.reason == "Another asset of the same simulation changed",
+        str(status),
+    )
+    bake(bpy.context, [left, right], {})
+    bake(bpy.context, [left], {})
+    status = simulation_status(right, scene)
+    check(
+        "伙伴单独重新烘焙后右边已过期",
+        status.reason == "Another asset of the same simulation changed",
+        str(status),
+    )
+    check("单独重新烘焙的左边是输入未变", simulation_status(left, scene).state == CURRENT)
+
+
+def case_audit_guards():
+    """入口守卫: 碎块带父级时拒绝烘焙; API 直接给复制的资产拒绝; 烘焙进行时物理入口拒绝"""
+    scene = sim_scene()
+    root, shards = physical("Wall")
+    explosion((0.0, 0.0, 1.0), 3.0)
+    rig = bpy.data.objects.new("Rig", None)
+    bpy.context.collection.objects.link(rig)
+    shards[0].parent = rig
+    expect_error("碎块带父级时拒绝烘焙", lambda: bake(bpy.context, [root], {}), "has a parent")
+    shards[0].parent = None
+    copy = root.copy()
+    scene.collection.children.link(copy)
+    expect_error(
+        "API 直接给复制的资产时拒绝烘焙", lambda: bake(bpy.context, [root], {}), "duplicated"
+    )
+    expect_error(
+        "应用物理同样拒绝", lambda: apply_physics(bpy.context, [root], CONCRETE), "duplicated"
+    )
+    expect_error("移除物理同样拒绝", lambda: remove_physics(bpy.context, [root]), "duplicated")
+    bpy.data.collections.remove(copy)
+    sim_task.claim(sim_task.ensure_idle)
+    try:
+        for label, call in (
+            ("应用物理", lambda: apply_physics(bpy.context, [root], CONCRETE)),
+            ("移除物理", lambda: remove_physics(bpy.context, [root])),
+            ("重设静止姿态", lambda: reset_rest(bpy.context, [root])),
+        ):
+            expect_error(f"烘焙进行时拒绝{label}", call, "Another simulation")
+    finally:
+        sim_task.release(sim_task.ensure_idle)
+    check(
+        "锁释放后物理入口恢复", apply_physics(bpy.context, [root], CONCRETE).shards == len(shards)
+    )
+
+
 def case_bake_session():
     """多资产会话: 一起模拟会相互碰撞; 未参与的资产临时移出并恢复; 环境刚体参与但属性不变"""
     scene = sim_scene()
     # 地面足够大: 碎块以 12 m/s 飞 40 帧约 20 m, 不能从边缘掉下去
     ground = cube("Ground", half=60.0, location=(0.0, 0.0, -60.0))
-    left, left_shards = physical("Left", location=(-1.2, 0.0, 1.0))
+    # 左边用自由资产: 冻结的碎块被自己没波及的冻结邻块挡住, 飞不到右边, 受阻另有用例
+    left, left_shards = physical("Left", location=(-1.2, 0.0, 1.0), activation="FREE")
     right, right_shards = physical("Right", location=(1.2, 0.0, 1.0), activation="SLEEPING")
     _other, other_shards = physical("Other", location=(0.0, 8.0, 1.0), activation="FREE")
     world = scene.rigidbody_world
@@ -619,6 +816,415 @@ def case_bake_persistence():
     check("重开后回放位置不变", (position(shard, 30) - moved_at).length < 1e-6)
 
 
+def speeds_over_time(shards, frames, dt):
+    """所有碎块逐帧的速度大小里的最大值, 用来核对没有凭空出现的高速"""
+    series = tracks(shards, frames)
+    return max(
+        (track[index + 1] - track[index]).length / dt
+        for track in series.values()
+        for index in range(len(track) - 1)
+    )
+
+
+def case_roles_vortex():
+    """旋涡: 计划里的速度沿绕轴的切向, 没有轴向分量; 休眠的碎块烘焙后确实绕轴逆时针转"""
+    sim_scene(gravity=False)
+    root, shards = physical("Wall", count=14, activation="SLEEPING")
+    swirl = add_driver(
+        bpy.context,
+        drivers.VORTEX,
+        location=(0.0, 0.0, 1.0),
+        frame=5,
+        speed=6.0,
+        falloff="CONSTANT",
+        spread=0.0,
+        max_spin=0.0,
+    )
+    swirl.scale = (5.0, 5.0, 5.0)
+    bpy.context.view_layer.update()
+    expected = plans([root])
+    worst_axial, worst_speed = 0.0, 0.0
+    for shard in shards:
+        events = expected[shard.name].events
+        if not events:
+            continue
+        worst_axial = max(worst_axial, abs(events[0].velocity[2]))
+        worst_speed = max(worst_speed, abs(Vector(events[0].velocity).length - 6.0))
+    check("旋涡的速度没有轴向分量", worst_axial < 1e-6, f"{worst_axial:.2e}")
+    check("旋涡的速度大小等于设定", worst_speed < 1e-6, f"{worst_speed:.2e}")
+    bake(bpy.context, [root], {})
+    counter, total = 0, 0
+    center = Vector((0.0, 0.0, 1.0))
+    for shard in shards:
+        rest = asset.rest_matrix(shard).translation - center
+        moved = position(shard, 7) - asset.rest_matrix(shard).translation
+        if moved.length < 1e-4 or rest.xy.length < 1e-3:
+            continue
+        total += 1
+        counter += (rest.x * moved.y - rest.y * moved.x) > 0.0
+    check("多数碎块绕轴逆时针转", total > 3 and counter / total > 0.8, f"{counter}/{total}")
+
+
+def case_roles_zone():
+    """区域: 排除的碎块不参与, 不带动画, 停在原位; 锚定的不动; 休眠覆盖改了激活方式; 不给速度"""
+    sim_scene(gravity=False)
+    root, shards = physical("Wall", count=14, activation="SLEEPING")
+    exclude = add_driver(
+        bpy.context, drivers.ZONE, location=(-1.0, 0.0, 1.0), zone_action="EXCLUDE"
+    )
+    exclude.scale = (0.5, 0.5, 0.5)
+    anchor = add_driver(bpy.context, drivers.ZONE, location=(1.0, 0.0, 1.0), zone_action="ANCHOR")
+    anchor.scale = (0.5, 0.5, 0.5)
+    explosion((0.0, 0.0, 1.0), 4.0, speed=6.0)
+    expected = plans([root])
+    modes = {name: plan.mode for name, plan in expected.items()}
+    excluded = [s for s in shards if modes[s.name] == "EXCLUDED"]
+    anchored = [s for s in shards if modes[s.name] == "ANCHORED"]
+    check("区域排除了一部分碎块", bool(excluded), str(len(excluded)))
+    check("区域锚定了一部分碎块", bool(anchored), str(len(anchored)))
+    check(
+        "被排除与锚定的碎块没有起动事件",
+        all(not expected[s.name].events for s in excluded + anchored),
+    )
+    result = bake(bpy.context, [root], {})
+    check("报告里有被排除的碎块数", result.excluded == len(excluded), f"{result.excluded}")
+    still = all(keyed(s) == () and displaced(s, 40) < 1e-6 for s in excluded + anchored)
+    check("被排除与锚定的碎块没有动画, 停在原位", still)
+    check("没有被区域排除或锚定的碎块被炸开", result.moved > 0, str(result.moved))
+    check(
+        "烘焙后被排除的碎块也不在刚体世界里",
+        not members(bpy.context.scene) & {s.name for s in shards},
+    )
+    # 休眠覆盖: 区域里的碎块按休眠参与, 区域外按资产默认 (冻结)
+    sim_scene(gravity=False)
+    root, shards = physical("Wall", count=14)
+    override = add_driver(
+        bpy.context, drivers.ZONE, location=(-1.0, 0.0, 1.0), zone_action="SLEEPING"
+    )
+    override.scale = (0.9, 0.9, 0.9)
+    bpy.context.view_layer.update()
+    kinds = {plan.mode for plan in plans([root]).values()}
+    check("休眠覆盖只改区域内的激活方式", kinds == {"SLEEPING", "FROZEN"}, str(kinds))
+
+
+def case_roles_curve_flow():
+    """曲线方向: 新建与转换的类型检查, 贝塞尔与多段线读成折线, 速度沿切线, 管半径取倒角深度"""
+    sim_scene(gravity=False)
+    created = add_driver(bpy.context, drivers.CURVE_FLOW, location=(0.0, 0.0, 1.0))
+    check("新建的曲线方向驱动是曲线物体", created.type == "CURVE")
+    check("新建的曲线有三个控制点", len(drivers.snapshot(created).path) == 3)
+    box = cube("Box")
+    empty = bpy.data.objects.new("Plain", None)
+    bpy.context.collection.objects.link(empty)
+    expect_error("曲线方向不能设在网格上", lambda: make_driver(box, drivers.CURVE_FLOW), "curve")
+    expect_error(
+        "曲线方向不能设在空物体上", lambda: make_driver(empty, drivers.CURVE_FLOW), "curve"
+    )
+    expect_error("弹道不能设在网格上", lambda: make_driver(box, drivers.PROJECTILE), "projectile")
+    expect_error("旋涡不能设在曲线上", lambda: make_driver(created, drivers.VORTEX), "empty")
+    # 贝塞尔: 端点是控制点的世界坐标, 点数是分辨率加一, 倒角深度乘缩放是管半径
+    data = bpy.data.curves.new("Bezier", "CURVE")
+    data.dimensions = "3D"
+    data.bevel_depth = 0.25
+    spline = data.splines.new("BEZIER")
+    spline.bezier_points.add(1)
+    for point, co in zip(spline.bezier_points, ((0.0, 0.0, 0.0), (4.0, 0.0, 0.0)), strict=True):
+        point.co = co
+        point.handle_left_type = point.handle_right_type = "VECTOR"
+    obj = bpy.data.objects.new("Bezier", data)
+    obj.location = (1.0, 2.0, 3.0)
+    obj.scale = (2.0, 2.0, 2.0)
+    bpy.context.collection.objects.link(obj)
+    make_driver(obj, drivers.CURVE_FLOW)
+    bpy.context.view_layer.update()
+    snap = drivers.snapshot(obj)
+    check(
+        "贝塞尔读成分辨率加一个点", len(snap.path) == spline.resolution_u + 1, str(len(snap.path))
+    )
+    check("折线起点是第一个控制点的世界坐标", Vector(snap.path[0]) == Vector((1.0, 2.0, 3.0)))
+    check(
+        "折线终点是最后一个控制点的世界坐标",
+        (Vector(snap.path[-1]) - Vector((9.0, 2.0, 3.0))).length < 1e-5,
+    )
+    check("管半径取倒角深度乘缩放", abs(snap.tube_radius - 0.5) < 1e-6, f"{snap.tube_radius}")
+    # 一排碎块: 速度沿曲线的切线 (+X), 离曲线更远的碎块在管外; 先删掉上面建的驱动, 免得速度叠加
+    for leftover in (created, obj):
+        bpy.data.objects.remove(leftover)
+    root, shards = physical("Wall", count=14)
+    flow = add_driver(
+        bpy.context,
+        drivers.CURVE_FLOW,
+        location=(-2.0, 0.0, 1.0),
+        frame=5,
+        speed=5.0,
+        falloff="CONSTANT",
+        spread=0.0,
+        max_spin=0.0,
+        tube_radius=0.4,
+    )
+    flow.data.splines[0].points[0].co = (0.0, 0.0, 0.0, 1.0)
+    flow.data.splines[0].points[1].co = (2.0, 0.0, 0.0, 1.0)
+    flow.data.splines[0].points[2].co = (4.0, 0.0, 0.0, 1.0)
+    bpy.context.view_layer.update()
+    expected = plans([root])
+    hit = [plan.events[0].velocity for plan in expected.values() if plan.events]
+    check("曲线管内的碎块被起动", 0 < len(hit) < len(shards), f"{len(hit)}")
+    check(
+        "速度沿曲线的切线",
+        all(abs(v[0] - 5.0) < 1e-6 and abs(v[1]) < 1e-6 and abs(v[2]) < 1e-6 for v in hit),
+    )
+
+
+def case_projectile():
+    """弹道: 入口坑, 通道, 出口坑与穿透预算; 材料阻力; 事件时刻; 飞行动画与复位; 源物体缺失报错"""
+    sim_scene(gravity=False, end=60)
+    root, shards = physical("Wall", count=40, activation="SLEEPING")
+    params = {
+        "frame": 3,
+        "bullet_speed": 24.0,
+        "falloff": "CONSTANT",
+        "spread": 0.0,
+        "max_spin": 0.0,
+        "entry_radius": 0.5,
+        "channel_radius": 0.3,
+        "exit_radius": 0.6,
+    }
+    bullet = add_driver(
+        bpy.context, drivers.PROJECTILE, location=(-3.0, 0.0, 1.0), penetration=0.3, **params
+    )
+    bullet.rotation_euler = (0.0, 1.5707963267948966, 0.0)
+    # 先刷新: 父逆矩阵要用旋转之后的世界矩阵算, 否则子物体的起点会偏
+    bpy.context.view_layer.update()
+    slug = cube("Slug", half=0.05, location=(-3.0, 0.0, 1.0))
+    slug.parent = bullet
+    slug.matrix_parent_inverse = bullet.matrix_world.inverted()
+    bpy.context.view_layer.update()
+    session = sim_session.build(bpy.context, [root], SIM_SCHEMA.resolve({}))
+    flight = session.flights[bullet.name][0]
+    kinds = [strike.kind for strike in flight.strikes]
+    check(
+        "混凝土厚墙: 只有入口坑与通道, 子弹停在墙里",
+        kinds == ["ENTRY", "CHANNEL"] and flight.stop_arc is not None,
+        str(kinds),
+    )
+    check("子弹停在入口之后 0.3 处", abs(flight.stop_arc - 2.3) < 1e-3, f"{flight.stop_arc}")
+    entry = flight.strikes[0]
+    check("入口在墙面上", abs(entry.start[0] + 1.0) < 1e-4, f"{entry.start}")
+    check("入口坑把碎块抛回外侧", entry.direction[0] < -0.99, f"{entry.direction}")
+    expected = {p.shard.name: p.plan for p in session.participants}
+    movers = [name for name, plan in expected.items() if plan.events]
+    check(
+        "只有入口坑与通道范围内的碎块被起动",
+        0 < len(movers) < len(shards) / 2,
+        f"{len(movers)}/{len(shards)}",
+    )
+    frames = {expected[name].events[0].frame for name in movers}
+    check(
+        "起动帧由弹速换算: 入口坑在第 5 帧, 通道不晚于第 6 帧",
+        min(frames) == 3 + 2 and max(frames) <= 3 + 3,
+        str(sorted(frames)),
+    )
+    result = bake(bpy.context, [root], {})
+    check("烘焙后有碎块被打动", result.moved > 0, str(result.moved))
+    # 飞行动画: 发射帧之前停在原位, 之后沿路径飞到停点, 停下后保持
+    positions = {}
+    for frame in (1, 3, 6, 50):
+        bpy.context.scene.frame_set(frame)
+        positions[frame] = slug.matrix_world.translation.copy()
+    check(
+        "发射帧之前弹体在起点",
+        abs(positions[1].x + 3.0) < 1e-4 and abs(positions[3].x + 3.0) < 1e-4,
+    )
+    check(
+        "弹体飞到停点并保持",
+        abs(positions[6].x + 0.7) < 1e-3 and abs(positions[50].x + 0.7) < 1e-3,
+        f"{positions[6].x}",
+    )
+    check("烘焙写出了飞行动作", bool(flight_actions()))
+    reset_simulation(bpy.context, [root])
+    bpy.context.scene.frame_set(30)
+    check(
+        "复位后弹体回到起点且没有动画",
+        abs(slug.matrix_world.translation.x + 3.0) < 1e-4 and slug.animation_data.action is None,
+    )
+    check("复位后飞行动作被删除", not flight_actions())
+    # 薄板打穿: 预算足够时有出口坑, 子弹继续飞
+    bullet.qd_driver.penetration = 5.0
+    bpy.context.view_layer.update()
+    session = sim_session.build(bpy.context, [root], SIM_SCHEMA.resolve({}))
+    flight = session.flights[bullet.name][0]
+    kinds = [strike.kind for strike in flight.strikes]
+    check(
+        "预算足够时打穿并有出口坑",
+        kinds == ["ENTRY", "CHANNEL", "EXIT"] and flight.stop_arc is None,
+        str(kinds),
+    )
+    check("出口在墙的另一面", abs(flight.strikes[-1].start[0] - 1.0) < 1e-4)
+    # 材料阻力: 金属把同样的预算消耗得更快
+    bullet.qd_driver.penetration = 0.3
+    apply_physics(bpy.context, [root], {"material": "METAL", "activation": "SLEEPING"})
+    bpy.context.view_layer.update()
+    session = sim_session.build(bpy.context, [root], SIM_SCHEMA.resolve({}))
+    stop = session.flights[bullet.name][0].stop_arc
+    check("金属阻力 4: 停在入口之后 0.075 处", abs(stop - 2.075) < 1e-3, f"{stop}")
+    # 源物体被删除时报错
+    source = asset.source_of(root)
+    bpy.data.objects.remove(source)
+    expect_error(
+        "源物体被删除时弹道报错",
+        lambda: sim_session.build(bpy.context, [root], SIM_SCHEMA.resolve({})),
+        "source object",
+    )
+
+
+def flight_actions():
+    """场景里的飞行动作"""
+    return [action for action in bpy.data.actions if action.name.startswith("QD_Flight_")]
+
+
+def case_mass_response():
+    """质量响应: 同样的位置与衰减下, 比中位数轻的碎块更快, 重的更慢; 为 0 时全部相同"""
+    sim_scene(gravity=False)
+    root, shards = physical("Wall", count=14)
+    explosion((0.0, 0.0, 1.0), 4.0, speed=6.0, mass_response=1.0)
+    expected = plans([root])
+    masses = {s.name: s.rigid_body.mass for s in shards}
+    light = min(masses, key=masses.get)
+    heavy = max(masses, key=masses.get)
+    speed = {name: Vector(expected[name].events[0].velocity).length for name in (light, heavy)}
+    check("轻的碎块比重的快", speed[light] > speed[heavy], f"{speed}")
+    check(
+        "系数限制在 0.1 到 10 倍之间",
+        0.6 - 1e-3 <= speed[heavy] and speed[light] <= 60.0 + 1e-3,
+        f"{speed}",
+    )
+    flat = plans_with(root, mass_response=0.0)
+    speeds = {round(Vector(p.events[0].velocity).length, 4) for p in flat.values() if p.events}
+    check("响应为 0 时速度只取决于距离", len(speeds) == 1, f"{len(speeds)} 种速度")
+
+
+def plans_with(root, **changes):
+    """改写场景里第一个驱动的参数后重新编译计划"""
+    obj = drivers.driver_objects(bpy.context.scene)[0]
+    drivers.DRIVER_SCHEMA.write(getattr(obj, drivers.ATTRIBUTE), changes)
+    bpy.context.view_layer.update()
+    return plans([root])
+
+
+def case_quality_and_substeps():
+    """质量档: 终稿把子步提高到建议值并记在报告里, 上限截断时说明; 预览按设定; 状态仍为输入未变"""
+    scene = sim_scene(gravity=False)
+    root, _shards = physical("Wall", count=14)
+    explosion((0.0, 0.0, 1.0), 3.0, speed=40.0)
+    draft = bake(bpy.context, [root], {"substeps": 1})
+    check("预览档按设定的子步烘焙", draft.substeps == 1 and not draft.raised)
+    final = bake(bpy.context, [root], {"substeps": 1, "quality": "FINAL"})
+    check(
+        "终稿档提高了子步",
+        final.raised and final.substeps == min(200, final.suggested) > 1,
+        f"{final.substeps} {final.suggested}",
+    )
+    check("提高后的子步没有被截断", not final.capped)
+    check(
+        "子步足够时终稿不改动设定",
+        not bake(bpy.context, [root], {"substeps": 200, "quality": "FINAL"}).raised,
+    )
+    check("终稿烘焙后状态为输入未变", simulation_status(root, scene).state == CURRENT)
+    explosion((0.0, 0.0, 1.0), 3.0, speed=5000.0)
+    huge = bake(bpy.context, [root], {"substeps": 1, "quality": "FINAL"})
+    check(
+        "建议值超过上限时截断并说明",
+        huge.capped and huge.substeps == 200,
+        f"{huge.substeps} {huge.suggested}",
+    )
+    sim_scene(gravity=False)
+    root, _shards = physical("Wall", count=14)
+    check("没有驱动时没有建议值", bake(bpy.context, [root], {"quality": "FINAL"}).suggested == 0)
+
+
+def case_affected_and_preview():
+    """受影响的碎块与计划预览: 与烘焙编译的计划一致; 箭头线段数与颜色; 没应用物理时报错"""
+    sim_scene(gravity=False)
+    root, shards = physical("Wall", count=14)
+    explosion((-1.3, 0.0, 1.0), 1.0, wave_speed=12.0)
+    expected = plans([root])
+    found = affected_shards(bpy.context, [root])
+    check(
+        "受影响的碎块就是计划里有事件的碎块",
+        {s.name for s in found} == {n for n, p in expected.items() if p.events},
+    )
+    preview = plan_preview(bpy.context, [root])
+    entries = preview[next(iter(preview))]
+    check("计划预览按碎块路径列出计划", len(entries) == len(shards), f"{len(entries)}")
+    lines = preview_lines(bpy.context, [root], 0.1, True)
+    check(
+        "每块受影响的碎块一根箭头 (箭杆加两条头部线)",
+        len(lines) == 3 * len(found),
+        f"{len(lines)} {len(found)}",
+    )
+    colors = {tuple(round(c, 3) for c in line[2]) for line in lines}
+    check("按起动时刻着色时有渐变色", len(colors) > 1, str(len(colors)))
+    plain = {tuple(line[2]) for line in preview_lines(bpy.context, [root], 0.1, False)}
+    check("不按时间着色时是单色", len(plain) == 1)
+    shafts = sorted((Vector(line[1]) - Vector(line[0])).length for line in lines[0::3])
+    wanted = sorted(
+        0.1 * Vector(p.events[0].velocity).length for p in expected.values() if p.events
+    )
+    check(
+        "箭杆长度等于速度乘箭头比例",
+        all(abs(a - b) < 1e-6 for a, b in zip(shafts, wanted, strict=True)),
+    )
+    remove_physics(bpy.context, [root])
+    expect_error(
+        "没应用物理时受影响的碎块报错",
+        lambda: affected_shards(bpy.context, [root]),
+        "Apply physics",
+    )
+
+
+def case_physics_summary_and_resistance():
+    """物理记录里有总质量与不封闭数; 穿透阻力随材料联动写入并记录"""
+    reset()
+    root, shards = fractured()
+    apply_physics(bpy.context, [root], {"material": "METAL"})
+    record = asset.physics_record(root)
+    total = sum(s.rigid_body.mass for s in shards)
+    check(
+        "记录里的总质量等于各碎块质量之和",
+        abs(record["mass"] - total) < 1e-6 * total,
+        f"{record['mass']} {total}",
+    )
+    check("金属的穿透阻力是 4", record["resistance"] == 4.0)
+    check("记录里有不封闭的碎块数", record["open_meshes"] == 0)
+    apply_physics(bpy.context, [root], {"material": "CONCRETE"})
+    check("换成混凝土后穿透阻力是 1", asset.physics_record(root)["resistance"] == 1.0)
+    apply_physics(bpy.context, [root], {"material": "CUSTOM", "resistance": 2.5})
+    check("自定义材料保留给定的穿透阻力", asset.physics_record(root)["resistance"] == 2.5)
+
+
+def case_bake_partial_and_multi():
+    """部分覆盖与多驱动: 两个驱动先后波及同一面冻结的墙, 不出现凭空的高速; 休眠碎块再被推向冻结的墙时受阻"""
+    sim_scene(gravity=False)
+    root, shards = physical("Wall", count=14)
+    explosion((-1.3, 0.0, 1.0), 1.0, frame=5)
+    explosion((-1.3, 0.0, 1.0), 1.4, frame=9, speed=4.0)
+    result = bake(bpy.context, [root], {})
+    fastest = speeds_over_time(shards, range(1, 41), 1.0 / 24.0)
+    check("两个驱动叠加后没有高于驱动速度之和的碎块", fastest < 6.0 + 4.0 + 1.0, f"{fastest:.2f}")
+    check("冻结的墙里被挡住的起动计入报告", result.blocked > 0, str(result.blocked))
+    # 途中起动: 休眠的碎块先被推出去, 之后又被第二个驱动推向右边冻结的墙
+    sim_scene(gravity=False)
+    mover, mover_shards = physical("Mover", location=(-1.2, 0.0, 1.0), activation="SLEEPING")
+    wall, wall_shards = physical("Wall", location=(1.2, 0.0, 1.0))
+    explosion((-2.6, 0.0, 1.0), 1.8, frame=4, speed=6.0)
+    explosion((-2.6, 0.0, 1.0), 1.8, frame=14, speed=6.0)
+    result = bake(bpy.context, [mover, wall], {})
+    check("途中起动撞上冻结的墙时受阻", result.blocked > 0, str(result.blocked))
+    check("冻结的墙全程不动", all(displaced(s, 40) < 1e-6 for s in wall_shards))
+    fastest = speeds_over_time(mover_shards, range(1, 41), 1.0 / 24.0)
+    check("途中受阻后没有凭空的高速", fastest < 6.0 * 2 + 2.0, f"{fastest:.2f}")
+
+
 def main():
     """注册插件后运行全部场景"""
     registration.register()
@@ -635,12 +1241,26 @@ CASES = (
     case_drivers,
     case_bake_handoff,
     case_bake_frozen_anchor,
+    case_bake_blocked,
+    case_bake_partial_and_multi,
     case_bake_rehandoff,
+    case_bake_rehandoff_keeps_momentum,
+    case_bake_consecutive_events,
+    case_bake_partners,
+    case_audit_guards,
     case_bake_session,
     case_bake_cancel,
     case_bake_failures,
     case_bake_status,
     case_bake_reset_and_guards,
+    case_roles_vortex,
+    case_roles_zone,
+    case_roles_curve_flow,
+    case_projectile,
+    case_mass_response,
+    case_quality_and_substeps,
+    case_affected_and_preview,
+    case_physics_summary_and_resistance,
     case_bake_deterministic,
     # 会重新打开文件, 放在最后
     case_bake_persistence,

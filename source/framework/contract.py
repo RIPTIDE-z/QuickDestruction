@@ -45,6 +45,8 @@ class ToolSpec:
     presets: bool = False
     # 挂在其他数据块类型上的参数组, 例如驱动物体的参数
     attachments: tuple = ()
+    # 注册时执行, 注销时撤销的钩子: (启动函数, 停止函数) 的元组, 例如视口绘制回调; 两者都不带参数
+    hooks: tuple = ()
 
     @property
     def context(self):

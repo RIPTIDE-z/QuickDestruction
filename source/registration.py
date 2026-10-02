@@ -173,6 +173,8 @@ def register():
         ),
         # 挂载参数组的类已在上面注册, 这里再把指针挂到目标类型上
         *(_attach_step(attachment, cls) for attachment, cls in attached),
+        # 工具的钩子排在类之后: 钩子里的回调可能用到已注册的属性
+        *(hook for tool in TOOLS for hook in tool.hooks),
         (lambda: presets.SCHEMAS.update(preset_tools), presets.SCHEMAS.clear),
     )
     applied = []

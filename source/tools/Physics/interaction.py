@@ -34,13 +34,25 @@ def _param_active(owner, key):
     return rule is None or rule(owner)
 
 
+# 材料子面板里的字段: 材料在前, 后面是它联动写入的物理量
+MATERIAL_ROWS = (
+    "material",
+    "density",
+    "friction",
+    "restitution",
+    "linear_damping",
+    "angular_damping",
+    "resistance",
+)
+
+
 def _draw_material(layout, owner):
     """材料子面板: 材料下拉与各物理量; 选择材料后又手动改过数值时提示, 以免误以为仍是预设值"""
     draw_fields(
         layout,
         owner,
         SCHEMA,
-        ("material", "density", "friction", "restitution", "linear_damping", "angular_damping"),
+        MATERIAL_ROWS,
         _param_active,
     )
     if material_edited(owner):
@@ -51,11 +63,7 @@ def _draw_material(layout, owner):
 
 # 参数分组: 材料与受击前状态最常调整, 默认展开; 碰撞边距很少改动, 默认收起
 GROUPS = (
-    ParamGroup(
-        "Material",
-        ("material", "density", "friction", "restitution", "linear_damping", "angular_damping"),
-        draw=_draw_material,
-    ),
+    ParamGroup("Material", MATERIAL_ROWS, draw=_draw_material),
     ParamGroup(
         "Before Impact", (Expand("activation", labeled=False), "use_anchor_bottom", "anchor_height")
     ),
@@ -166,10 +174,45 @@ def _differs(owner, root):
     )
 
 
+def _material_name(identifier):
+    """材料枚举项的界面名称"""
+    items = SCHEMA.specs["material"][1]["items"]
+    return next((name for key, name, _description in items if key == identifier), identifier)
+
+
+def _mass_text(kilograms):
+    """质量的显示文字: 一吨以上用吨, 否则用千克"""
+    if kilograms >= 1000.0:
+        return tr(CONTEXT, "{value:.1f} t", value=kilograms / 1000.0)
+    return tr(CONTEXT, "{value:.1f} kg", value=kilograms)
+
+
+def _draw_summary(layout, root):
+    """已应用物理的资产摘要: 材料与总质量; 有不封闭的碎块时说明体积的算法"""
+    record = asset.physics_record(root)
+    if record is None:
+        return
+    text = tr(
+        CONTEXT,
+        "{material}, {mass}",
+        material=tr(CONTEXT, _material_name(record["material"])),
+        mass=_mass_text(record.get("mass", 0.0)),
+    )
+    layout.label(text=text, translate=False, icon="PHYSICS")
+    if record.get("open_meshes"):
+        text = tr(
+            CONTEXT,
+            "{count} shards are not closed; their convex hull volume is used",
+            count=record["open_meshes"],
+        )
+        layout.label(text=text, translate=False, icon="INFO")
+
+
 def _draw_statuses(layout, context, roots):
     """逐个资产画出物理状态; 单个资产时面板与已应用的设置不同则提示并给出读取按钮"""
     if len(roots) == 1:
         draw_stage_status(layout, tr(CONTEXT, "Status"), physics_status(roots[0]))
+        _draw_summary(layout, roots[0])
         if _differs(scene_settings(context, TOOL_ID), roots[0]):
             box = layout.box()
             box.label(

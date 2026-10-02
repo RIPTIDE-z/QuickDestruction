@@ -6,6 +6,10 @@
 from ...common.schema import Schema
 from .constants import CONTEXT
 
+# 质量档: 预览按设定的子步烘焙, 终稿把子步提高到建议值
+PREVIEW = "PREVIEW"
+FINAL = "FINAL"
+
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 PROPERTY_SPECS = {
     "use_scene_range": (
@@ -33,6 +37,24 @@ PROPERTY_SPECS = {
             "description": "Last frame of the simulation.",
             "min": 1,
             "default": 120,
+        },
+    ),
+    "quality": (
+        "EnumProperty",
+        {
+            "name": "Quality",
+            "items": (
+                (PREVIEW, "Preview", "Use the substeps below as they are; quick to bake."),
+                (
+                    FINAL,
+                    "Final",
+                    "Raise the substeps to the suggested value when it is higher, so fast "
+                    "shards are less likely to pass through thin ones.",
+                ),
+            ),
+            "default": PREVIEW,
+            "description": "Preview is for trying things out; Final bakes with enough substeps "
+            "for the fastest shards.",
         },
     ),
     "substeps": (

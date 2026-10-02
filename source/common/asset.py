@@ -29,6 +29,8 @@ SIM_ACTION_MARK = "_qd_sim_action"
 RUNS_MARK = "_qd_sim_runs"
 # 插件自有数据块上的阶段标记, 删除或替换前按资产标识与阶段一起核对归属
 STAGE_MARK = "_qd_stage"
+# 弹体子物体上记下的原位置, 飞行动画写入前保存, 复位时放回
+FLIGHT_REST_MARK = "_qd_flight_rest"
 # 当前的清单格式版本
 FORMAT = 1
 
@@ -127,6 +129,18 @@ def resolve(objects):
     return [found[name] for name in sorted(found)]
 
 
+def validate(roots):
+    """核对显式给出的根集合: 必须是资产, 清单格式已知, 标识没有被别的集合共用
+
+    阶段 API 直接接收根集合, 不经过 resolve, 所以在入口处补上这道检查
+    """
+    index = roots_by_id()
+    for root in roots:
+        if shards.asset_of(root) is None:
+            raise AssetError(NO_ASSET_MESSAGE)
+        _check_root(root, index)
+
+
 def duplicated_root(obj):
     """物体所在的资产是否与别的集合共用标识; 是则返回该物体所在的根集合, 否则返回 None"""
     if obj is None:
@@ -170,6 +184,27 @@ def shards_of(root):
 def source_of(root):
     """资产的源物体; 源物体已被删除时为 None"""
     return root.get(SOURCE_REF_MARK)
+
+
+def flight_rest(obj):
+    """弹体子物体飞行动画写入前的 location; 还没有记录时为 None"""
+    value = obj.get(FLIGHT_REST_MARK)
+    return None if value is None else tuple(value)
+
+
+def set_flight_rest(obj, location):
+    """记下弹体子物体的原 location"""
+    obj[FLIGHT_REST_MARK] = tuple(location)
+
+
+def clear_flight_rest(obj):
+    """去掉弹体子物体的原位置记录"""
+    obj.pop(FLIGHT_REST_MARK, None)
+
+
+def flight_rest_objects():
+    """有原位置记录的全部物体"""
+    return [obj for obj in bpy.data.objects if FLIGHT_REST_MARK in obj]
 
 
 def gap_of(root):

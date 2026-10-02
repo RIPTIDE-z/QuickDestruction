@@ -15,6 +15,9 @@ PENDING_STAGE = "simulate_pending"
 RESULT_PREFIX = "QD_Sim_"
 PENDING_PREFIX = "QD_Pending_"
 
+# 每帧子步的上限, 与参数规格里的最大值一致
+SUBSTEP_LIMIT = 200
+
 # 整段位移与转角都不超过它的碎块视为没有动, 不写关键帧, 停在静止姿态
 STATIC_EPSILON = 1e-6
 

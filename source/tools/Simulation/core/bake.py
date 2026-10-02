@@ -7,16 +7,17 @@
 
 import traceback
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import NamedTuple
 
 import bpy
+from mathutils import Vector
 
 from ....common import asset, impulse, rigidbody, shards
 from ....common.created_data import CreatedData, WriteLog
 from ..constants import PENDING_PREFIX, PENDING_STAGE, RESULT_PREFIX, STAGE, STATIC_EPSILON
-from . import keys
+from . import flight, keys
 from .session import build
 
 
@@ -45,6 +46,19 @@ class SimulationResult:
     rehandoffs: int
     # 起动帧被推迟到起始帧之后第一帧的事件数
     clamped: int
+    # 起动速度因被冻结, 锚定或环境刚体挡住而缩减的次数
+    blocked: int
+    # 整段冻结不动的碎块数: 没有被任何驱动波及的冻结碎块
+    frozen: int
+    # 被区域排除在模拟之外的碎块数
+    excluded: int
+    # 实际使用的每帧子步数
+    substeps: int
+    # 终稿质量把子步提高到了建议值
+    raised: bool
+    # 终稿质量下的子步建议值, 0 表示没有建议; 以及它是否被子步上限截断
+    suggested: int
+    capped: bool
     # 耗时, 秒
     seconds: float
 
@@ -67,7 +81,9 @@ def _set_world(session, temp):
 
 def _exclude_others(session, temp):
     """刚体世界里不参与本次会话的资产碎块临时移出, 结束时再放回"""
-    taking = {participant.shard.name for participant in session.participants}
+    taking = {
+        participant.shard.name for participant in session.participants if not _excluded(participant)
+    }
     members = session.world.collection.objects
     for obj in list(members):
         if shards.asset_of(obj) is not None and obj.name not in taking:
@@ -75,18 +91,27 @@ def _exclude_others(session, temp):
             temp.add(lambda obj=obj: members.link(obj))
 
 
-def _static(participant):
-    """整段都不会动的碎块: 锚定的, 以及没有任何起动事件的冻结碎块
+def _excluded(participant):
+    """被区域排除的碎块: 不进刚体世界, 不带动画, 停在静止姿态"""
+    return participant.plan.mode == impulse.EXCLUDED
 
-    它们按被动刚体参与: 与动画控制的刚体一样不可撞动, 但不必每个子步插值与激活, 也不需要动画曲线,
-    碎块多而被波及的少时能省下大部分推进开销
+
+def _static(participant):
+    """整段都不会动的碎块: 被排除的, 锚定的, 以及没有任何起动事件的冻结碎块
+
+    除了被排除的, 其余按被动刚体参与: 与动画控制的刚体一样不可撞动, 但不必每个子步插值与激活,
+    也不需要动画曲线, 碎块多而被波及的少时能省下大部分推进开销
     """
     mode = participant.plan.mode
-    return mode == impulse.ANCHORED or (mode == impulse.FROZEN and not participant.plan.events)
+    return mode in (impulse.ANCHORED, impulse.EXCLUDED) or (
+        mode == impulse.FROZEN and not participant.plan.events
+    )
 
 
 def _set_body(participant, temp):
     """按激活方式设置刚体: 不动的为被动; 冻结先受动画控制; 休眠从休眠开始; 自由直接参与"""
+    if _excluded(participant):
+        return
     body = participant.shard.rigid_body
     mode = participant.plan.mode
     temp.set(body, "enabled", True)
@@ -97,22 +122,10 @@ def _set_body(participant, temp):
     temp.set(body, "use_start_deactivated", sleeping)
 
 
-def _remember_animation(shard, result):
-    """记下碎块原来的动画引用, 失败时恢复; 原来没有动画数据时撤回就是清掉它"""
-    data = shard.animation_data
-    if data is None:
-        result.add(shard.animation_data_clear)
-        return
-    action, slot = data.action, data.action_slot
-    # 先登记槽位再登记动作: 撤回逆序执行, 动作先恢复, 槽位才能属于它
-    result.add(lambda: setattr(data, "action_slot", slot) if slot is not None else None)
-    result.add(lambda: setattr(data, "action", action))
-
-
 def _prepare_shard(participant, pending, session, result):
     """碎块回到静止姿态, 改用四元数旋转, 绑定临时动作并写下起始帧与预先确定的首次交接"""
     shard = participant.shard
-    _remember_animation(shard, result)
+    keys.remember_animation(shard, result)
     result.set(shard, "rotation_mode", "QUATERNION")
     result.set(shard, "matrix_world", participant.rest.copy())
     if _static(participant):
@@ -125,7 +138,8 @@ def _prepare_shard(participant, pending, session, result):
     keys.key_pose(curves, session.frame_start, location, rotation)
     events = participant.plan.events
     if frozen and events:
-        keys.key_handoff(curves, events[0].frame, location, rotation, events[0], session.dt)
+        event = session.walls.first_event(participant)
+        keys.key_handoff(curves, event.frame, location, rotation, event, session.dt)
     participant.curves = curves
 
 
@@ -141,7 +155,9 @@ def _prepare(session, temp, result, tracker):
     for participant in session.participants:
         _set_body(participant, temp)
         _prepare_shard(participant, pending[participant.asset_id], session, result)
-    ordered = [participant.shard for participant in session.participants]
+    ordered = [
+        participant.shard for participant in session.participants if not _excluded(participant)
+    ]
     rigidbody.link(session.world, ordered)
     temp.add(lambda: rigidbody.unlink(session.world, ordered))
     return pending
@@ -171,6 +187,22 @@ def _sample(samples, participant):
     track[1].append(rotation)
 
 
+def _carry_motion(samples, participant, matrix, event, dt):
+    """途中起动的事件叠加在碎块当时的速度上: 下落, 滑动与自转都保留, 事件给的是增量而不是替换
+
+    当前速度取上一帧采样到这一帧的平均值; 还没有采样时事件原样返回
+    """
+    track = samples.get(participant.shard.name)
+    if not track or not track[0]:
+        return event
+    velocity, spin = keys.motion(track[0][-1], track[1][-1], matrix, dt)
+    return replace(
+        event,
+        velocity=tuple(Vector(event.velocity) + velocity),
+        spin=tuple(Vector(event.spin) + spin),
+    )
+
+
 def _run(session):
     """逐帧推进: 先求值这一帧, 再插入到期的再交接, 最后采样; 每帧产出一次进度, 返回 (采样, 再交接次数)"""
     scene = session.scene
@@ -182,7 +214,10 @@ def _run(session):
     for index, frame in enumerate(range(session.frame_start, session.frame_end + 1)):
         scene.frame_set(frame)
         for participant, event in schedule.get(frame, ()):
-            location, rotation, _scale = participant.shard.matrix_world.decompose()
+            matrix = participant.shard.matrix_world
+            event = _carry_motion(samples, participant, matrix, event, session.dt)
+            event = session.walls.limit(participant, matrix, event)
+            location, rotation, _scale = matrix.decompose()
             keys.key_handoff(participant.curves, frame, location, rotation, event, session.dt)
             rehandoffs += 1
         for participant in sampled:
@@ -239,7 +274,7 @@ def _remember_records(session, result):
             result.add(lambda r=root, rec=record, act=action: asset.set_sim_result(r, rec, act))
 
 
-def _commit(session, finals, pending, moved, result):
+def _commit(session, finals, pending, moved, flights, result):
     """写入会话与资产的模拟记录, 删除临时动作, 最后删除各资产的旧成果动作; 返回会话标识
 
     删除动作放在最后: 之前任一步失败都能按写前快照恢复, 旧成果还在
@@ -264,6 +299,8 @@ def _commit(session, finals, pending, moved, result):
     run = {"assets": revisions, **session.signatures, "settings": session.settings}
     asset.add_run(session.scene, run_id, run)
     for action in pending.values():
+        bpy.data.actions.remove(action)
+    for action in flight.stale(flights):
         bpy.data.actions.remove(action)
     for action, asset_id in old_actions:
         stale = action is not None and action not in finals.values()
@@ -295,7 +332,8 @@ def bake_steps(context, roots, values):
         pending = _prepare(session, temp, result, tracker)
         samples, rehandoffs = yield from _run(session)
         finals, moved = _write_results(session, samples, tracker)
-        run_id = _commit(session, finals, pending, moved, result)
+        flights = flight.write(session, tracker, result)
+        run_id = _commit(session, finals, pending, moved, flights, result)
         committed = True
     finally:
         _finish(session, temp, result, tracker, committed, original_frame)
@@ -307,5 +345,16 @@ def bake_steps(context, roots, values):
         moved=sum(moved.values()),
         rehandoffs=rehandoffs,
         clamped=session.clamped,
+        blocked=session.walls.blocked,
+        frozen=sum(
+            1
+            for item in session.participants
+            if item.plan.mode == impulse.FROZEN and not item.plan.events
+        ),
+        excluded=sum(1 for item in session.participants if _excluded(item)),
+        substeps=session.settings["substeps"],
+        raised=session.settings["substeps"] > session.settings["requested"],
+        suggested=session.suggested,
+        capped=session.capped,
         seconds=perf_counter() - started,
     )

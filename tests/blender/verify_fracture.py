@@ -1094,6 +1094,35 @@ def duplicate_asset(root):
     return copy, copies
 
 
+def case_small_sources():
+    """小物体: 切面内缩量, 共面容差与包围盒外扩都随物体尺寸缩放, 块数与体积不随物体变小而丢失
+
+    内缩量是绝对长度, 默认 0.001 在 2 毫米的立方体上会把全部胞体切没; 实际使用的内缩量限制在包围盒对角线的千分之一
+    """
+    counts, ratios = {}, {}
+    for half in (1.0, 0.1, 0.025, 0.005, 0.001):
+        reset()
+        source = cube("S", half=half, location=(0.0, 0.0, half))
+        seeds(source, 8, 0.9 * half, 7)
+        config = {"source": {"VERT_CHILD"}, "first_cut_seeds": 0, "source_noise": 0.0}
+        shards = cut([source], config).shards
+        counts[half] = len(shards)
+        ratios[half] = sum(volume(shard) for shard in shards) / (2.0 * half) ** 3
+    check("各种尺寸切出的块数相同", len(set(counts.values())) == 1, str(counts))
+    check(
+        "小物体的体积保留 96% 以上",
+        min(ratios.values()) > 0.96,
+        str({k: round(v, 4) for k, v in ratios.items()}),
+    )
+    snapshot = SimpleNamespace(diagonal=0.01)
+    check("内缩量不超过对角线的千分之一", cell_builder.effective_margin(0.001, snapshot) == 1e-5)
+    check("内缩量设为 0 时仍是 0", cell_builder.effective_margin(0.0, snapshot) == 0.0)
+    check(
+        "大物体不受限制",
+        cell_builder.effective_margin(0.001, SimpleNamespace(diagonal=3.0)) == 0.001,
+    )
+
+
 def case_asset_identity():
     """资产身份: 新资产, 清单, 解析, 复制与旧数据被拒绝, 重建副本身份, 源物体改名"""
     reset()
@@ -1191,6 +1220,7 @@ CASES = (
     case_batching,
     case_early_limit,
     case_weight_pruning,
+    case_small_sources,
     case_asset_identity,
     # 会重新打开文件, 放在最后
     case_asset_persistence,

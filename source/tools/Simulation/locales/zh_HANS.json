@@ -20,12 +20,23 @@
     "Reset {count} shards to their rest pose": "已把 {count} 块碎块恢复到静止姿态",
     "Settings changed since the last bake": "设置在上次烘焙后改过",
     "{current} of {count} assets have current simulations": "{count} 个资产中有 {current} 个模拟输入未变",
-    "Another simulation is running": "已有模拟正在运行",
     "Apply physics before simulating": "请先应用物理再模拟",
     "Apply physics to \"{name}\" first": "请先为“{name}”应用物理",
     "End Frame must be after Start Frame": "结束帧必须晚于起始帧",
     "Shard \"{name}\" has its own animation; clear it before simulating": "碎块“{name}”带有自己的动画，请先清除再模拟",
-    "Status": "状态"
+    "Status": "状态",
+    "({count} starts were held back by frozen or fixed bodies; Sleeping lets impacts pass on)": "（{count} 次起动被冻结或固定的物体挡住；改用休眠可以让撞击继续传递）",
+    "(Substeps raised to {count} for final quality)": "（为达到终稿质量，每帧子步已提高到 {count}）",
+    "(The suggested substeps are above the limit of {count}; fast shards may still pass through thin ones)": "（建议的每帧子步超过上限 {count}，很快的碎块仍可能穿过薄的碎块）",
+    "Final": "终稿",
+    "Preview": "预览",
+    "Quality": "质量",
+    "Set Quality to Final to use it": "把质量设为终稿即可采用",
+    "Suggested substeps: {count}": "建议每帧子步：{count}",
+    "{count} other assets are moved out of the rigid body world while baking": "烘焙期间有 {count} 个其他资产会临时移出刚体世界",
+    "{assets} assets and {bodies} other rigid bodies take part": "{assets} 个资产与 {bodies} 个其他刚体一起参与",
+    "{assets} assets take part": "{assets} 个资产参与",
+    "Shard \"{name}\" has a parent; unparent it before simulating": "碎块“{name}”有父级，请先解除父级再模拟"
   },
   "tooltips": {
     "Simulate fractured assets with their drivers and bake the motion": "让破碎资产在驱动作用下进行模拟，并烘焙出运动",
@@ -36,6 +47,9 @@
     "Last frame of the simulation.": "模拟的最后一帧。",
     "Simulation steps per frame; more steps keep fast or thin shards from passing through each other, but take longer.": "每帧的模拟步数；步数越多，快速或很薄的碎块越不容易相互穿过，但耗时更长。",
     "Iterations per step for resolving contacts; more is steadier for stacked shards.": "每步求解接触的迭代次数；越多，堆叠的碎块越稳定。",
-    "Speed of the simulation; below 1 gives slow motion. Driver speeds keep their meaning in simulated seconds.": "模拟的快慢；小于 1 为慢动作。驱动的速度仍按模拟时间的每秒计算。"
+    "Speed of the simulation; below 1 gives slow motion. Driver speeds keep their meaning in simulated seconds.": "模拟的快慢；小于 1 为慢动作。驱动的速度仍按模拟时间的每秒计算。",
+    "Preview is for trying things out; Final bakes with enough substeps for the fastest shards.": "预览用于试效果；终稿按最快的碎块所需的子步烘焙。",
+    "Raise the substeps to the suggested value when it is higher, so fast shards are less likely to pass through thin ones.": "建议值更高时把子步提高到建议值，很快的碎块就不容易穿过薄的碎块。",
+    "Use the substeps below as they are; quick to bake.": "按下面设定的子步烘焙，速度快。"
   }
 }

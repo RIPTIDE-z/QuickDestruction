@@ -34,17 +34,17 @@ uv run python scripts/run_tests.py $blender
 ```powershell
 uv run pytest
 & $blender -b --factory-startup --python-exit-code 1 --python tests\blender\verify_dynamics.py
-& $blender --factory-startup --python-exit-code 1 --python tests\blender\verify_ui_draw.py
+& $blender --enable-event-simulate --factory-startup --python-exit-code 1 --python tests\blender\verify_ui_draw.py
 ```
 
 | 测试 | 运行方式 | 覆盖内容 |
 | --- | --- | --- |
-| `tests/unit` | pytest，不需要 Blender | 参数校验与默认值，预设文件与信封，语言文件的覆盖、陈旧与写法，设置项联动，细分名额分配，碎块标记，冲量模型与驱动契约，分层与契约键守卫 |
+| `tests/unit` | pytest，不需要 Blender | 参数校验与默认值，预设文件与信封，语言文件的覆盖、陈旧与写法，设置项联动，细分名额分配，碎块标记，冲量模型（旋涡、区域优先级、质量响应、曲线方向、撞击事件）与驱动契约，弹道（穿越点配对、穿透预算、撞击作用），分层与契约键守卫 |
 | `verify_fracture.py` | 后台 Blender | 体积守恒、可复现、断面收尾、命名与集合结构、失败回滚、输入边界、重设原点、保留父碎块、上限与种子数、孤岛拆分、面合并、种子扰动、材质与数据层、布尔策略、依赖图隔离、分批切割、资产身份与持久性 |
 | `verify_inputs.py` | 后台 Blender | 源网格体检（不封闭与自相交），各种切割种子来源与回退 |
 | `verify_operator.py` | 后台 Blender | 生成算子，预设的保存、读取与删除，注册与失败回滚，挂载参数组，注销失败后的重试 |
-| `verify_dynamics.py` | 后台 Blender | 物理应用（质量、质心、静止姿态、单位与缩放、撤回）、脚本改变换后不刷新直接调用、材料联动、破坏驱动、交接精度（含时间缩放与分数帧率）、冻结与锚定、途中再交接、多资产会话与环境刚体、取消与各阶段失败、过期原因、复位与守卫、确定性、保存重开 |
-| `verify_ui_draw.py` | 真实界面，不能加 `-b` | 全部面板、子面板与弹出面板绘制不抛错，折叠状态正确，绘制期不写 ID 数据，源网格问题对话框，模态烘焙的启动、推进、完成与运行锁释放，烘焙中载入文件与停用插件时的撤回与资源释放 |
+| `verify_dynamics.py` | 后台 Blender | 物理应用（质量、质心、静止姿态、单位与缩放、总质量与穿透阻力记录、撤回）、脚本改变换后不刷新直接调用、材料联动、破坏驱动、交接精度（含时间缩放与分数帧率）、冻结与锚定、驱动角色（旋涡、区域、曲线方向、弹道与飞行动画、质量响应、受影响的碎块与计划预览）、质量档与子步建议、起动受阻（冻结邻块与环境地面挡住，反弹不随子步放大，部分覆盖与多驱动，途中起动）、途中再交接、多资产会话与环境刚体、取消与各阶段失败、过期原因、复位与守卫、确定性、保存重开 |
+| `verify_ui_draw.py` | 真实界面，不能加 `-b`，需要 `--enable-event-simulate` 才能发真实的 Esc | 全部面板、子面板与弹出面板绘制不抛错，折叠状态正确，绘制期不写 ID 数据，源网格问题对话框，模态烘焙的启动、推进、完成与运行锁释放，计划预览的真实绘制，烘焙中按 Esc、载入文件与停用插件时的撤回与资源释放 |
 
 - **单元测试**：只导入不依赖 Blender 的模块。虚拟环境装了类型桩后，`import bpy` 也能成功，这不能当作脱离 Blender 的证明。
 - **Blender 测试**：后台脚本共用 `tests/blender/harness.py`，界面脚本有独立计时和绘制检查。通过需同时满足退出码 0 与 `ALL PASS`。测试覆盖所列场景，不证明所有输入正确。

@@ -103,12 +103,13 @@ def _shard_mass(shard, volume, values, unit_cube):
     return max(MASS_MIN, volume * stretch * unit_cube * values.density)
 
 
-def _record(root, shards, values, log):
-    """写入资产的物理生效记录, 修订号在上一次的基础上加一"""
+def _record(root, shards, values, log, summary):
+    """写入资产的物理生效记录, 修订号在上一次的基础上加一; summary 是 (总质量, 不封闭的碎块数)"""
     previous = asset.physics_record(root)
     record = {key: getattr(values, key) for key in SCHEMA.specs}
     record["rev"] = (previous or {}).get("rev", 0) + 1
     record["shards"] = len(shards)
+    record["mass"], record["open_meshes"] = summary
     if previous is None:
         log.add(lambda: asset.clear_physics_record(root))
     else:
@@ -125,6 +126,7 @@ def _apply_asset(context, world, root, shards, values, log, tally):
     # 不改变世界成员: 原本不在世界里的碎块移出, 撤回时它们的刚体会被整体删除
     rigidbody.unlink(world, outside)
     unit_cube = rigidbody.unit_scale(context.scene) ** 3
+    mass_total, open_total = 0.0, 0
     for shard in shards:
         volume, centroid, closed, degenerate = _measure(shard)
         _move_origin(shard, centroid, log)
@@ -135,7 +137,9 @@ def _apply_asset(context, world, root, shards, values, log, tally):
         tally.mass += mass
         tally.open_meshes += not closed
         tally.degenerate += degenerate
-    _record(root, shards, values, log)
+        mass_total += mass
+        open_total += not closed
+    _record(root, shards, values, log, (mass_total, open_total))
 
 
 def _undo(log, tracker):
@@ -149,6 +153,7 @@ def _undo(log, tracker):
 
 def apply(context, roots, values):
     """对一组资产应用物理, 返回 PhysicsResult; 失败时撤回本次全部改动"""
+    asset.validate(roots)
     rigidbody.check_cache(context.scene)
     # 脚本改过的变换要先求值, 下面读到的 matrix_world 才是最新的
     context.view_layer.update()
@@ -173,6 +178,7 @@ def apply(context, roots, values):
 
 def remove(context, roots):
     """删除资产碎块的刚体数据与物理生效记录, 返回处理的碎块数; 原点与静止姿态保留"""
+    asset.validate(roots)
     shards = [shard for root in roots for shard in asset.shards_of(root)]
     rigidbody.remove_bodies(context, shards)
     for root in roots:
@@ -182,6 +188,7 @@ def remove(context, roots):
 
 def reset_rest(context, roots):
     """把碎块当前的世界矩阵记为新的静止姿态, 物理修订号加一, 依赖它的模拟随之过期; 返回处理的碎块数"""
+    asset.validate(roots)
     for root in roots:
         if asset.physics_record(root) is None:
             raise PhysicsError('Apply physics to "{name}" first', name=root.name)

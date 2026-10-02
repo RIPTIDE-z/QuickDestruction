@@ -13,6 +13,18 @@ CONSTANT = 0
 LINEAR = 1
 
 
+def remember_animation(obj, log):
+    """记下物体原来的动画引用, 失败时恢复; 原来没有动画数据时撤回就是清掉它"""
+    data = obj.animation_data
+    if data is None:
+        log.add(obj.animation_data_clear)
+        return
+    action, slot = data.action, data.action_slot
+    # 先登记槽位再登记动作: 撤回逆序执行, 动作先恢复, 槽位才能属于它
+    log.add(lambda: setattr(data, "action_slot", slot) if slot is not None else None)
+    log.add(lambda: setattr(data, "action", action))
+
+
 def bind(shard, action, kinematic):
     """把动作赋给碎块并建立曲线, 返回 {(路径, 分量): 曲线}; kinematic 为假时不建开关曲线"""
     data = shard.animation_data or shard.animation_data_create()
@@ -56,9 +68,28 @@ def turned(rotation, spin, dt):
     return -result if result.dot(rotation) < 0.0 else result
 
 
+def motion(previous_location, previous_rotation, matrix, dt):
+    """碎块当前的线速度与角速度: 当前位姿与上一帧位姿的差除以 dt, 角速度的约定与 turned 一致
+
+    返回的是上一帧到这一帧的平均速度; 碎块在动画控制下没有动过时为零
+    """
+    location, rotation, _scale = matrix.decompose()
+    velocity = (location - previous_location) / dt
+    delta = rotation @ previous_rotation.inverted()
+    if delta.w < 0.0:
+        # 取较短的那条转动路径
+        delta = -delta
+    axis, angle = delta.to_axis_angle()
+    return velocity, axis * (angle / dt)
+
+
 def key_handoff(curves, frame, location, rotation, event, dt):
-    """从 location 与 rotation 起交接: frame 帧保持, frame + 1 帧按速度移动一个模拟步, frame + 2 帧交还模拟"""
+    """从 location 与 rotation 起交接: frame 帧保持, frame + 1 帧按速度移动一个模拟步, frame + 2 帧交还模拟
+
+    frame + 1 帧也显式写为动画控制: 上一次交接的释放恰好落在这一帧时, 要把它盖掉, 否则第二次交接的位移被丢弃
+    """
     key_kinematic(curves, frame, True)
+    key_kinematic(curves, frame + 1, True)
     key_pose(curves, frame, location, rotation)
     moved = Vector(location) + Vector(event.velocity) * dt
     key_pose(curves, frame + 1, moved, turned(rotation, event.spin, dt))

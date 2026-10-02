@@ -51,7 +51,9 @@
     "Physics is outdated": "物理已过期",
     "Physics was applied again": "物理已重新应用",
     "The simulation record is missing": "找不到这次模拟的记录",
-    "Outdated": "已过期"
+    "Outdated": "已过期",
+    "The source object of \"{name}\" is gone; a projectile needs it to find where it hits": "“{name}”的源物体已被删除，弹道需要它来求出命中位置",
+    "Another simulation is running": "已有模拟正在运行"
   },
   "tooltips": {
     "Name of the preset": "预设名称",

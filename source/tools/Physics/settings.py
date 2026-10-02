@@ -124,6 +124,18 @@ PROPERTY_SPECS = {
             "default": 0.2,
         },
     ),
+    "resistance": (
+        "FloatProperty",
+        {
+            "name": "Penetration Resistance",
+            "description": "How hard it is for a bullet to pierce the material, relative to "
+            "concrete; a bullet spends this much of its penetration per unit of thickness.",
+            "min": 0.01,
+            "max": 100.0,
+            "soft_max": 10.0,
+            "default": 1.0,
+        },
+    ),
     "activation": (
         "EnumProperty",
         {
@@ -132,8 +144,8 @@ PROPERTY_SPECS = {
                 (
                     "FROZEN",
                     "Frozen",
-                    "Shards hold still and cannot be pushed until a driver starts them; "
-                    "best for walls and pillars.",
+                    "Shards hold still until a driver starts them, and stop anything driven into them; "
+                    "use Sleeping when a driver covers only part of the shards.",
                 ),
                 (
                     "SLEEPING",

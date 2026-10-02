@@ -5,6 +5,8 @@ from math import sqrt
 from mathutils import Vector
 from mathutils.geometry import points_in_planes
 
+from ..constants import MARGIN_DIAGONAL_RATIO
+
 # 初始包围盒向外扩出的距离, 保证只有一个种子点时胞体也有界
 BOUNDS_MARGIN = 0.05
 # points_in_planes 默认的共面容差与相交容差
@@ -24,13 +26,22 @@ def _distance_shrink(scale):
     return 2.0 * sqrt(low * high) / (low + high)
 
 
-def _cell_vertices(center, points, base_planes, scale, margin, epsilon):
-    """一个种子点的胞体顶点, 顶点坐标相对种子点; scale 为 None 表示三轴等权"""
+def effective_margin(margin, snapshot):
+    """实际使用的切面内缩量: 设置值, 但不超过源物体包围盒对角线乘 MARGIN_DIAGONAL_RATIO"""
+    return min(margin, snapshot.diagonal * MARGIN_DIAGONAL_RATIO)
+
+
+def _cell_vertices(center, points, base_planes, scale, margin, tolerances):
+    """一个种子点的胞体顶点, 顶点坐标相对种子点; scale 为 None 表示三轴等权
+
+    tolerances 是 (共面容差, 相交容差), 都已按源物体的尺寸缩放
+    """
+    coplanar, epsilon = tolerances
     # 把包围盒面的常数项平移到以此种子点为原点
     planes = [plane.copy() for plane in base_planes]
     for plane in planes:
         plane.w += plane.xyz.dot(center)
-    vertices, _indices = points_in_planes(planes, EPSILON_COPLANAR, epsilon)
+    vertices, _indices = points_in_planes(planes, coplanar, epsilon)
     # 剪枝半径的初值: 还没量出胞体大小, 不做提前收工
     distance_max = float("inf")
     shrink = _distance_shrink(scale)
@@ -53,7 +64,7 @@ def _cell_vertices(center, points, base_planes, scale, margin, epsilon):
         # 中垂面位于连线中点; 切面内缩量让平面再往里挪, 相邻碎块之间留出缝隙
         plane.w = -length / 2.0 + margin
         planes.append(plane)
-        vertices, indices = points_in_planes(planes, EPSILON_COPLANAR, epsilon)
+        vertices, indices = points_in_planes(planes, coplanar, epsilon)
         if not vertices:
             break
         if len(indices) != len(planes):
@@ -70,8 +81,10 @@ def points_as_bmesh_cells(points, scale, margin, snapshot):
 
     points 已去重, snapshot 提供源物体的世界包围盒与尺度
     """
-    lo = [value - BOUNDS_MARGIN for value in snapshot.minimum]
-    hi = [value + BOUNDS_MARGIN for value in snapshot.maximum]
+    # 外扩距离与两个容差都是绝对长度, 小物体上会比物体本身还大, 所以随尺度缩小, 但不超过默认值
+    factor = min(1.0, snapshot.diagonal)
+    lo = [value - BOUNDS_MARGIN * factor for value in snapshot.minimum]
+    hi = [value + BOUNDS_MARGIN * factor for value in snapshot.maximum]
     # 半空间用四分量向量表示: 前三维是法线, w 是常数项, 法线与坐标点积加 w 不大于 0 为内侧
     base_planes = [
         Vector((1, 0, 0, -hi[0])),
@@ -83,11 +96,10 @@ def points_as_bmesh_cells(points, scale, margin, snapshot):
     ]
     # 三轴权重相等时不改变平面构造, 走等轴快路径
     weights = None if scale[0] == scale[1] == scale[2] else tuple(scale)
-    # 相交容差是绝对长度, 小物体上会误删细小的胞体, 因此随尺度缩小, 但不超过默认值
-    epsilon = EPSILON_ISECT * min(1.0, snapshot.diagonal)
+    tolerances = (EPSILON_COPLANAR * factor, EPSILON_ISECT * factor)
     cells = []
     for center in points:
-        vertices = _cell_vertices(center, points, base_planes, weights, margin, epsilon)
+        vertices = _cell_vertices(center, points, base_planes, weights, margin, tolerances)
         if vertices:
             cells.append((center, list(vertices)))
     return cells

@@ -58,9 +58,11 @@ def run(label, command, marker="ALL PASS"):
 
 
 def blender_command(blender, script, *, background):
-    """Blender 的命令行: 出厂设置, Python 出错时以非零状态退出"""
+    """Blender 的命令行: 出厂设置, Python 出错时以非零状态退出; 界面测试要发真实的键盘事件, 需要开启事件模拟"""
     command = [blender, "--factory-startup", "--python-exit-code", "1", "--python", str(script)]
-    return [command[0], "-b", *command[1:]] if background else command
+    if background:
+        return [command[0], "-b", *command[1:]]
+    return [command[0], "--enable-event-simulate", *command[1:]]
 
 
 def main(argv):

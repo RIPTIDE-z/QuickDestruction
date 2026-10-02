@@ -18,11 +18,13 @@
     - 交互调用生成算子: 源网格有问题时先弹出确认框, 确认之前不切割 (后台模式没有窗口, 只能在这里测)
     - 交互调用烘焙算子: 立即进入模态并持有运行锁, 之后由定时器逐帧推进到完成, 运行锁与状态栏都被释放,
       资产的模拟状态为输入未变 (模态任务需要事件循环, 后台模式无法运行)
+    - 计划预览: 打开后真实窗口里绘制回调算出线段并建好批次, 没有记下错误
+    - 烘焙进行中按 Esc (真实的事件): 烘焙被取消, 运行锁, 计时器与载入回调都被释放, 没有成果与动画
     - 烘焙进行中载入文件: 运行锁, 计时器与载入回调都被释放
     - 烘焙进行中停用插件 (Blender 注销算子时不调用 cancel): 场景回到烘焙之前, 运行锁, 计时器与载入回调
       都被释放, 之后能重新启用
 运行方式 (仓库根目录, 不能加 -b):
-    <Blender 可执行文件> --factory-startup --python-exit-code 1 --python tests\\blender\\verify_ui_draw.py
+    <Blender 可执行文件> --enable-event-simulate --factory-startup --python-exit-code 1 --python tests\\blender\\verify_ui_draw.py
 实测环境: Blender 5.2.2 (Python 3.13)
 """
 
@@ -381,6 +383,48 @@ def check_bake():
         check("烘焙结束后模拟状态为输入未变", state == CURRENT, state)
 
 
+def enable_preview():
+    """打开计划预览并重绘: 绘制回调第一次执行时算出线段与批次"""
+    bpy.context.scene.qd_settings.drivers.show_preview = True
+    redraw()
+
+
+def check_preview():
+    """预览的绘制回调在真实窗口里跑过: 建好了批次, 没有记下错误"""
+    from source.tools.Drivers import preview
+
+    check(
+        "计划预览建好了批次", preview.STATE["batch"] is not None, str(len(preview.STATE["lines"]))
+    )
+    check("计划预览绘制没有出错", preview.STATE["error"] == "", preview.STATE["error"])
+    check("预览的线段不止一条", len(preview.STATE["lines"]) > 1)
+
+
+def start_escape():
+    """启动一个帧数很多的烘焙, 交给随后的定时器发 Esc"""
+    started, root, shards, operator = invoke_bake(90.0, LONG_FRAMES)
+    BAKE["escape"] = SimpleNamespace(started=started, root=root, shards=shards, operator=operator)
+
+
+def send_escape():
+    """向窗口发一个真实的 Esc 按下事件, 由模态算子的 modal 处理"""
+    bpy.context.window.event_simulate(type="ESC", value="PRESS")
+
+
+def check_escape():
+    """按 Esc 之后: 烘焙被取消, 资源释放, 场景回到烘焙之前"""
+    run = BAKE["escape"]
+    check("按 Esc 前烘焙以模态方式进行中", run.started == {"RUNNING_MODAL"})
+    check_released("按 Esc 取消", run)
+    check("按 Esc 后没有模拟成果", asset.sim_record(run.root) is None)
+    animated = [s.name for s in run.shards if s.animation_data and s.animation_data.action]
+    check("按 Esc 后碎块不带动画", not animated, str(animated[:3]))
+    gap = max(
+        (s.matrix_world.translation - asset.rest_matrix(s).translation).length for s in run.shards
+    )
+    check("按 Esc 后碎块在静止姿态", gap < 1e-6, f"{gap:.2e}")
+
+
 def has_load_handler():
     """载入回调是否还登记着; 按名字找, 不导入工具的私有函数"""
     return any(
@@ -438,13 +482,12 @@ def interrupt_by_disable():
 
 
 def check_main():
-    """侧栏, 绘制入口与完整烘焙的判据; 之后启动载入文件的中断用例"""
+    """侧栏, 绘制入口与完整烘焙的判据"""
     check_sidebar()
     check_bake()
     check("驱动面板被执行", bool(RESULTS))
     for entry, error, calls in RESULTS:
         check_entry(entry, error, calls)
-    start_interrupted("load")
 
 
 def finish():
@@ -464,9 +507,15 @@ if bpy.app.background:
 
 bpy.app.timers.register(start, first_interval=1.0)
 bpy.app.timers.register(start_bake, first_interval=2.0)
+bpy.app.timers.register(enable_preview, first_interval=3.0)
 bpy.app.timers.register(check_main, first_interval=3.5)
+bpy.app.timers.register(check_preview, first_interval=3.6)
+bpy.app.timers.register(start_escape, first_interval=3.8)
+bpy.app.timers.register(send_escape, first_interval=4.2)
+bpy.app.timers.register(check_escape, first_interval=4.5)
 # 之后的定时器要跨过载入文件, 必须是 persistent, 否则载入时被移除
-bpy.app.timers.register(interrupt_by_load, first_interval=3.8, persistent=True)
-bpy.app.timers.register(lambda: start_interrupted("disable"), first_interval=4.1, persistent=True)
-bpy.app.timers.register(interrupt_by_disable, first_interval=4.4, persistent=True)
-bpy.app.timers.register(finish, first_interval=4.7, persistent=True)
+bpy.app.timers.register(lambda: start_interrupted("load"), first_interval=4.7, persistent=True)
+bpy.app.timers.register(interrupt_by_load, first_interval=4.8, persistent=True)
+bpy.app.timers.register(lambda: start_interrupted("disable"), first_interval=5.1, persistent=True)
+bpy.app.timers.register(interrupt_by_disable, first_interval=5.4, persistent=True)
+bpy.app.timers.register(finish, first_interval=5.7, persistent=True)

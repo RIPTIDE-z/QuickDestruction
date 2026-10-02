@@ -7,7 +7,7 @@ from mathutils import Vector
 from ....common.blender_context import mesh_edit
 from ..constants import WELD_TO_JITTER_RATIO
 from . import cleanup, sampling, shard_objects
-from .cells import points_as_bmesh_cells
+from .cells import effective_margin, points_as_bmesh_cells
 
 
 def _create_debug_points(points, batch):
@@ -95,7 +95,8 @@ def build_cells(context, obj, snapshot, points, settings, batch, rng):
     jitter_half = weld_dist / WELD_TO_JITTER_RATIO
     if settings.use_debug_points:
         _create_debug_points(points, batch)
-    cells = points_as_bmesh_cells(points, settings.cell_scale, settings.margin, snapshot)
+    margin = effective_margin(settings.margin, snapshot)
+    cells = points_as_bmesh_cells(points, settings.cell_scale, margin, snapshot)
     created = []
     for center, cell_points in cells:
         mesh = _convex_cell_mesh(cell_points, weld_dist, jitter_half, settings, batch, rng)

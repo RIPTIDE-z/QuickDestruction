@@ -111,20 +111,26 @@ def drivers_signature(scene):
     return drivers.digest([drivers.snapshot(obj) for obj in drivers.driver_objects(scene)])
 
 
-def _run_partners_changed(run):
-    """会话里任一参与资产不在了, 或它的物理修订号与会话记录不同"""
+def _run_partners_changed(run, run_id):
+    """会话里任一参与资产不在了, 物理修订号与会话记录不同, 或已不再保留这次会话的成果
+
+    最后一条: 同一会话的资产互相碰撞过, 其中一个被复位或单独重新烘焙后, 另一个的成果就和它对不上了
+    """
     index = asset.roots_by_id()
     for asset_id, revision in run["assets"].items():
         roots = index.get(asset_id)
         record = asset.physics_record(roots[0]) if roots else None
         if record is None or record.get("rev") != revision:
             return True
+        result = asset.sim_record(roots[0])
+        if result is None or result.get("run") != run_id:
+            return True
     return False
 
 
-def _run_status(run, scene):
+def _run_status(run, run_id, scene):
     """会话层面的过期判定: 参与资产, 驱动, 环境刚体与场景设置"""
-    if _run_partners_changed(run):
+    if _run_partners_changed(run, run_id):
         return Status(OUTDATED, PARTNER_MESSAGE)
     if run["drivers"] != drivers_signature(scene):
         return Status(OUTDATED, DRIVERS_MESSAGE)
@@ -147,4 +153,4 @@ def simulation_status(root, scene):
     run = asset.runs(scene).get(record.get("run"))
     if run is None:
         return Status(OUTDATED, RUN_MISSING_MESSAGE)
-    return _run_status(run, scene)
+    return _run_status(run, record.get("run"), scene)
