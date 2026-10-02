@@ -10,7 +10,7 @@
     每条判据输出 [PASS] 或 [FAIL], 有失败时以非零状态结束
 运行方式 (仓库根目录, 需要 -b 后台模式):
     <Blender 可执行文件> -b --factory-startup --python-exit-code 1 --python tests\\blender\\verify_inputs.py
-实测环境: Blender 5.2.2 (Python 3.13) 与 Blender 4.2.23 (Python 3.11)
+实测环境: Blender 5.2.2 (Python 3.13)
 """
 
 import sys

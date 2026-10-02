@@ -6,12 +6,13 @@
     2. 预设算子: 保存, 覆盖保护, 载入, 删除, 坏文件与不合规文件的报告, 失败时参数保持不变
        首次切割种子数与碎块总数上限: 界面上改动一方时另一方跟着调整, 预设违反顺序时被拒绝
     3. 注册: 注销后干净, 重复注册被拒绝, 任一步失败都整体回滚, 不合规的工具声明在改动 Blender 之前被拒绝
+    4. 挂载参数组: 驱动参数挂到物体上, 注销后移除; 注销中途失败时失败的逆操作留在记录里, 再次注销能清理干净
 测试过程:
     在后台 Blender 里注册插件, 用 bpy.ops 调用算子, 用 RuntimeError 的文字检查报告;
     预设目录换成临时目录; 每条判据输出 [PASS] 或 [FAIL], 有失败时以非零状态结束
 运行方式 (仓库根目录, 需要 -b 后台模式):
     <Blender 可执行文件> -b --factory-startup --python-exit-code 1 --python tests\\blender\\verify_operator.py
-实测环境: Blender 5.2.2 (Python 3.13) 与 Blender 4.2.23 (Python 3.11)
+实测环境: Blender 5.2.2 (Python 3.13)
 """
 
 import json
@@ -367,6 +368,51 @@ def case_registration_checks():
     check("恢复注册", registered())
 
 
+def case_attachments():
+    """挂载参数组: 注册后每个物体都有驱动参数, 注销后移除, 再注册恢复"""
+    check("注册后物体带驱动参数", "qd_driver" in bpy.types.Object.bl_rna.properties)
+    obj = bpy.data.objects.new("Probe", None)
+    check("驱动参数默认不是驱动", obj.qd_driver.role == "NONE")
+    registration.unregister()
+    check("注销后驱动参数被移除", "qd_driver" not in bpy.types.Object.bl_rna.properties)
+    registration.register()
+    check("再注册后驱动参数恢复", "qd_driver" in bpy.types.Object.bl_rna.properties)
+    bpy.data.objects.remove(obj)
+
+
+def case_unregister_retry():
+    """注销中途失败时失败的逆操作留在记录里, 修复后再次注销能清理干净, 之后可以重新注册"""
+    original = bpy.utils.unregister_class
+    failed = []
+
+    def flaky(cls):
+        """第一次注销预设菜单时失败"""
+        if cls.__name__ == "QD_MT_presets" and not failed:
+            failed.append(cls)
+            raise RuntimeError("injected unregister failure")
+        return original(cls)
+
+    bpy.utils.unregister_class = flaky
+    try:
+        registration.unregister()
+        check("注销失败会抛出", False)
+    except RuntimeError as error:
+        check("注销失败会抛出", "injected" in str(error), str(error))
+    finally:
+        bpy.utils.unregister_class = original
+    check(
+        "失败的逆操作留在记录里",
+        len(registration._undo_steps) == 1,
+        str(len(registration._undo_steps)),
+    )
+    check("其余步骤已经撤销", "qd_settings" not in bpy.types.Scene.bl_rna.properties)
+    registration.unregister()
+    check("再次注销后记录清空", not registration._undo_steps)
+    check("再次注销后菜单类已移除", not hasattr(bpy.types, "QD_MT_presets"))
+    registration.register()
+    check("清理干净后可以重新注册", registered())
+
+
 def main():
     """注册插件, 预设目录换成临时目录, 运行全部场景, 最后清理"""
     registration.register()
@@ -385,6 +431,8 @@ CASES = (
     case_registration,
     case_registration_rollback,
     case_registration_checks,
+    case_attachments,
+    case_unregister_retry,
 )
 
 main()

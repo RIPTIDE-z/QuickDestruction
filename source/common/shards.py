@@ -1,6 +1,10 @@
-"""碎块契约 - 生成碎块的工具写入这些标记, 其他工具据此识别碎块, 不必导入生成它的工具"""
+"""碎块契约 - 生成碎块的工具写入这些标记, 其他工具据此识别碎块, 不必导入生成它的工具
 
-# 碎块来自哪个源物体, 记录源物体名
+碎块身份 = 资产标识 + 路径; 名字只用于显示, 不作为身份
+本模块只读写下标访问的标记, 不依赖 Blender, 单元测试可以用字典充当物体
+"""
+
+# 碎块来自哪个源物体, 记录生成时的源物体名, 只用于显示
 SOURCE_MARK = "_qd_source"
 # 切割层级, 1 为首次切割, 等于路径长度
 LEVEL_MARK = "_qd_level"
@@ -8,29 +12,61 @@ LEVEL_MARK = "_qd_level"
 PATH_MARK = "_qd_path"
 # 已被细分但保留下来的父碎块, 与子块几何重叠, 不算作碎块
 PARENT_MARK = "_qd_parent"
+# 所属资产的标识, 与资产根集合上的同名标记相同
+ASSET_MARK = "_qd_asset"
+# 静止姿态: 首次应用物理时记录的世界矩阵, 按行展开的 16 个浮点数
+REST_MARK = "_qd_rest"
 
 
-def mark(shard, source_name, path):
-    """给碎块写入来源, 层级与路径; 下划线开头的自定义属性在界面中隐藏"""
+def mark(shard, source_name, path, asset_id):
+    """给碎块写入来源, 层级, 路径与所属资产; 下划线开头的自定义属性在界面中隐藏"""
     shard[SOURCE_MARK] = source_name
     shard[LEVEL_MARK] = len(path)
     shard[PATH_MARK] = list(path)
+    shard[ASSET_MARK] = asset_id
 
 
 def mark_parent(shard):
-    """把已被细分的碎块标记为父碎块, 它保留来源, 层级与路径"""
+    """把已被细分的碎块标记为父碎块, 它保留来源, 层级, 路径与所属资产"""
     shard[PARENT_MARK] = True
+
+
+def is_parent(shard):
+    """是否为保留下来的父碎块"""
+    return bool(shard.get(PARENT_MARK, False))
+
+
+def asset_of(item):
+    """碎块或资产根集合所属的资产标识, 没有标记时为 None"""
+    return item.get(ASSET_MARK)
+
+
+def path_of(shard):
+    """碎块的路径元组, 也是它在资产内的身份"""
+    return tuple(shard[PATH_MARK])
 
 
 def parent_path(shard):
     """碎块的父碎块路径; 首次切割的碎块返回空元组, 表示父级是源物体"""
-    return tuple(shard[PATH_MARK])[:-1]
+    return path_of(shard)[:-1]
 
 
 def shards_of(objects, source_name):
     """筛选出某个源物体生成的全部碎块, 不含保留下来的父碎块"""
-    return [
-        obj
-        for obj in objects
-        if obj.get(SOURCE_MARK) == source_name and not obj.get(PARENT_MARK, False)
-    ]
+    return [obj for obj in objects if obj.get(SOURCE_MARK) == source_name and not is_parent(obj)]
+
+
+def rest_of(shard):
+    """碎块的静止姿态, 按行展开的 16 个浮点数; 还没有记录时为 None"""
+    values = shard.get(REST_MARK)
+    return tuple(values) if values is not None else None
+
+
+def set_rest(shard, values):
+    """记录碎块的静止姿态, values 是按行展开的 16 个浮点数"""
+    shard[REST_MARK] = [float(value) for value in values]
+
+
+def clear_rest(shard):
+    """移除碎块的静止姿态记录"""
+    shard.pop(REST_MARK, None)

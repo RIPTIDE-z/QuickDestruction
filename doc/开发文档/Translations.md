@@ -4,8 +4,11 @@
 
 | 模块 | 位置 | 翻译上下文 |
 | --- | --- | --- |
-| 框架 | `source/framework/locales/<locale>.json` | `QuickDestruction` |
+| 框架与 common | `source/framework/locales/<locale>.json` | `QuickDestruction` |
 | 工具 | `source/tools/<Tool>/locales/<locale>.json` | `QuickDestruction.<tool_id>` |
+
+- **common 的文字**：`common` 里的报错消息与状态原因，按框架上下文翻译，写在框架的语言文件里。
+- **挂在物体上的参数规格**：例如驱动参数 `common/drivers.py` 的 `DRIVER_SCHEMA`，翻译上下文是对应工具的上下文。它的文字写在该工具的语言文件里，工具的 `settings.OBJECT_SCHEMAS` 列出这些规格。
 
 ## 文件格式
 
@@ -35,7 +38,7 @@
 
 - **结构**：没有重复键，`locale` 与文件名一致，译文非空，占位符一致，各模块的 `tooltips` 译法不冲突。
 - **覆盖与陈旧**：
-  - 必须有译文的文字：参数规格的名称与说明，以及用 AST 从源码中提取的界面文字；
+  - 必须有译文的文字：参数规格（`settings.SCHEMA` 与 `settings.OBJECT_SCHEMAS`）的名称与说明，以及用 AST 从源码中提取的界面文字；
   - 提取范围：`bl_label`、`bl_description`、字面量 `text=`、`tr` 和 `tr_report` 的字面量消息、领域异常的消息、模块级 `*_MESSAGE` 常量、`ParamGroup` 的标题、`*Property` 的 `name` 与 `description`；
   - 语言文件里不能有代码已经不用的键。
 - **写法**：
@@ -46,5 +49,5 @@
 ## 常见操作
 
 - **新语言**：为框架和每个工具各复制一份 JSON，改文件名、`locale` 与译文。
-- **新工具或新文字**：运行 `uv run pytest`，按报出的缺失项补齐。
+- **新工具或新文字**：运行 `uv run pytest`，按报出的缺失项补齐；字段名作为面板子标题时，避免字段标签与子标题重复。
 - **代码取词**：界面文字用 `tr(CONTEXT, message, **values)`，报告用 `tr_report(CONTEXT, message, **values)`。后者遵守 Blender 独立的"翻译报告"开关。

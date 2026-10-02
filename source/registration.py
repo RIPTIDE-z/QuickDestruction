@@ -1,4 +1,4 @@
-"""扩展装配 - 汇总工具声明, 生成参数组, 校验唯一性, 按顺序注册并在失败或停用时逆序回滚"""
+"""扩展装配 - 汇总工具声明, 生成场景参数组与挂载参数组, 校验唯一性, 按顺序注册并在失败或停用时逆序回滚"""
 
 import re
 import traceback
@@ -10,11 +10,13 @@ from bpy.types import Operator, PropertyGroup
 from .common.localization import DEFAULT_CONTEXT, build_translations
 from .framework import presets
 from .framework.constants import CONTEXT, LOCALES, SIDEBAR_CATEGORY
+from .tools.Drivers.tool import TOOL as DRIVERS
 from .tools.MeshFracture.tool import TOOL as MESH_FRACTURE
-from .tools.PhysicalSettings.tool import TOOL as PHYSICAL_SETTINGS
+from .tools.Physics.tool import TOOL as PHYSICS
+from .tools.Simulation.tool import TOOL as SIMULATION
 
 # 工具清单: 元组顺序即注册顺序, 也就是侧栏里面板的上下顺序
-TOOLS = (MESH_FRACTURE, PHYSICAL_SETTINGS)
+TOOLS = (MESH_FRACTURE, PHYSICS, DRIVERS, SIMULATION)
 
 # 已完成的注册步骤的逆操作, 停用时逆序执行
 _undo_steps = []
@@ -36,6 +38,33 @@ def _settings_classes():
     return (*groups.values(), type("QD_PG_settings", (PropertyGroup,), {"__annotations__": fields}))
 
 
+def _attachment_classes():
+    """按各工具的挂载声明生成属性组, 返回 [(挂载声明, 属性组类), ...]"""
+    result = []
+    for tool in TOOLS:
+        for attachment in tool.attachments:
+            # 类名由工具标识与去掉 qd_ 前缀的属性名组成, 例如 QD_PG_drivers_driver
+            name = f"QD_PG_{tool.tool_id}_{attachment.attribute.removeprefix('qd_')}"
+            annotations = attachment.schema.definitions()
+            result.append(
+                (attachment, type(name, (PropertyGroup,), {"__annotations__": annotations}))
+            )
+    return result
+
+
+def _check_attachments():
+    """挂载属性名以 qd_ 开头, 同一类型上不能重名"""
+    seen = set()
+    for tool in TOOLS:
+        for attachment in tool.attachments:
+            if not attachment.attribute.startswith("qd_"):
+                raise ValueError(f"Attachment {attachment.attribute} must use the qd_ prefix")
+            key = (attachment.owner, attachment.attribute)
+            if key in seen:
+                raise ValueError(f"Duplicate attachment: {attachment.attribute}")
+            seen.add(key)
+
+
 def _idname(cls):
     """类的 bl_idname; 未显式声明时 Blender 取类名, 继承来的不算"""
     return cls.__dict__.get("bl_idname", cls.__name__)
@@ -53,6 +82,7 @@ def _check_prefix(cls, class_prefix, operator_prefix):
 
 def _check(framework_classes):
     """在改动 Blender 状态之前拒绝不合规的工具声明, 缺少前缀与重名的类"""
+    _check_attachments()
     for tool in TOOLS:
         # 工具标识同时是场景字段名, 预设目录名与类名前缀
         if not re.fullmatch(r"[a-z][a-z0-9_]*", tool.tool_id):
@@ -92,8 +122,17 @@ def _class_step(cls):
     return lambda: bpy.utils.register_class(cls), lambda: bpy.utils.unregister_class(cls)
 
 
+def _attach_step(attachment, cls):
+    """把挂载参数组挂到目标类型上的步骤与它的逆操作"""
+    return (
+        lambda: setattr(attachment.owner, attachment.attribute, PointerProperty(type=cls)),
+        lambda: delattr(attachment.owner, attachment.attribute),
+    )
+
+
 def _release(applied):
-    """尽量完成所有逆操作, 返回第一个错误供调用方报告"""
+    """尽量完成所有逆操作, 返回 (失败的逆操作, 第一个错误); 失败的逆操作按原顺序返回, 供下次重试"""
+    failed = []
     first_error = None
     # 逆序执行: 最后完成的步骤最先撤销, 翻译最后注销
     for undo in reversed(applied):
@@ -102,9 +141,11 @@ def _release(applied):
         except Exception as error:
             # 单条逆操作失败不能中断其余清理
             traceback.print_exc()
+            failed.append(undo)
             if first_error is None:
                 first_error = error
-    return first_error
+    failed.reverse()
+    return failed, first_error
 
 
 def register():
@@ -113,8 +154,10 @@ def register():
     if _undo_steps:
         raise RuntimeError("QuickDestruction is already registered")
     settings = _settings_classes()
-    _check((*settings, *presets.CLASSES))
-    classes = (*settings, *presets.CLASSES, *(cls for tool in TOOLS for cls in tool.classes))
+    attached = _attachment_classes()
+    groups = (*settings, *(cls for _attachment, cls in attached))
+    _check((*groups, *presets.CLASSES))
+    classes = (*groups, *presets.CLASSES, *(cls for tool in TOOLS for cls in tool.classes))
     preset_tools = {tool.tool_id: tool.schema for tool in TOOLS if tool.presets}
     translations = _translations()
     steps = (
@@ -128,6 +171,8 @@ def register():
             lambda: setattr(bpy.types.Scene, "qd_settings", PointerProperty(type=settings[-1])),
             lambda: delattr(bpy.types.Scene, "qd_settings"),
         ),
+        # 挂载参数组的类已在上面注册, 这里再把指针挂到目标类型上
+        *(_attach_step(attachment, cls) for attachment, cls in attached),
         (lambda: presets.SCHEMAS.update(preset_tools), presets.SCHEMAS.clear),
     )
     applied = []
@@ -137,16 +182,19 @@ def register():
             action()
             applied.append(undo)
     except Exception:
-        _release(applied)
+        # 回滚中仍失败的逆操作留在记录里, 停用插件时会再试一次
+        failed, _error = _release(applied)
+        _undo_steps.extend(failed)
         raise
     _undo_steps.extend(applied)
 
 
 def unregister():
     """按注册的逆序撤销全部步骤"""
-    # 先复制再清空: 逆操作可能抛错, 但模块状态必须立刻复位, 否则下次注册会误判
+    # 先取出全部记录再执行: 失败的逆操作放回记录, 下次停用时重试, 不会因为一次失败而丢失
     applied = list(_undo_steps)
     _undo_steps.clear()
-    error = _release(applied)
+    failed, error = _release(applied)
+    _undo_steps.extend(failed)
     if error is not None:
         raise error

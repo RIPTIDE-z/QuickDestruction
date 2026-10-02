@@ -39,12 +39,11 @@ def _annotation_points(scene):
     当前帧取帧号不大于当前帧的最近一帧, 与注解保持上一帧的显示规则一致
     不读图层的 active_frame: 它是视口重绘时才刷新的缓存, 脚本调用时会是旧帧或空
     """
-    # 注解入口改过名: 4.2 及更早是 grease_pencil, 4.3 起是 annotation
-    annotation = getattr(scene, "grease_pencil", None) or getattr(scene, "annotation", None)
+    annotation = scene.annotation
     if annotation is None:
         return []
     layers = annotation.layers
-    # 活动层用 active_index 取, 各版本都有; 新建的图层会成为活动层
+    # 活动层用 active_index 取; 新建的图层会成为活动层
     if not 0 <= layers.active_index < len(layers):
         return []
     held = [

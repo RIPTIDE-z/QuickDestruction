@@ -1,13 +1,18 @@
-"""阶段入口 - generate_fragments 接受显式输入并隔离 Blender 交互状态, 返回只读结果对象; source_issues 做切割前体检"""
+"""阶段入口 - generate_fragments 接受显式输入并隔离 Blender 交互状态, 返回只读结果对象; source_issues 做切割前体检
+
+make_asset_unique 给复制出来的资产换一个新标识, 让其他工具可以分别处理原资产与副本
+"""
 
 import random
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from ...common import asset
 from ...common.blender_context import preserve_selection
 from .core import diagnosis
 from .core.pipeline import run
+from .errors import MeshFractureError
 from .settings import SCHEMA
 
 
@@ -19,6 +24,8 @@ class MeshFractureResult:
     shards: tuple
     # 源物体到它名下碎块的只读映射
     source_to_shards: Mapping
+    # 源物体到它的资产根集合的只读映射, 后续工具按资产工作
+    source_to_asset: Mapping
     # 编排耗时, 不含此后的界面刷新与选择恢复
     seconds: float
 
@@ -49,5 +56,16 @@ def generate_fragments(context, sources, config, *, rng=None):
     # 固定输入快照: 后续 Blender 算子改变选择时不会改变阶段输入
     sources = tuple(sources)
     with preserve_selection(context):
-        shards, by_source, seconds = run(context, sources, settings, rng)
-    return MeshFractureResult(tuple(shards), MappingProxyType(by_source), seconds)
+        shards, by_source, by_asset, seconds = run(context, sources, settings, rng)
+    return MeshFractureResult(
+        tuple(shards), MappingProxyType(by_source), MappingProxyType(by_asset), seconds
+    )
+
+
+def make_asset_unique(obj):
+    """obj 所在的资产与别的集合共用标识时, 给 obj 所在的那份换一个新标识, 返回它的根集合"""
+    root = asset.duplicated_root(obj)
+    if root is None:
+        raise MeshFractureError("The active object is not part of a duplicated asset")
+    asset.make_unique(root)
+    return root

@@ -16,9 +16,14 @@
     - 每个驱动入口不抛异常并至少产生一个控件, 包括子面板与弹出面板的内容
     - 顶层面板提供本工具的算子入口; 标题栏预设入口经布局上下文写入工具标识; 预设菜单请求到全部预设算子
     - 交互调用生成算子: 源网格有问题时先弹出确认框, 确认之前不切割 (后台模式没有窗口, 只能在这里测)
+    - 交互调用烘焙算子: 立即进入模态并持有运行锁, 之后由定时器逐帧推进到完成, 运行锁与状态栏都被释放,
+      资产的模拟状态为输入未变 (模态任务需要事件循环, 后台模式无法运行)
+    - 烘焙进行中载入文件: 运行锁, 计时器与载入回调都被释放
+    - 烘焙进行中停用插件 (Blender 注销算子时不调用 cancel): 场景回到烘焙之前, 运行锁, 计时器与载入回调
+      都被释放, 之后能重新启用
 运行方式 (仓库根目录, 不能加 -b):
     <Blender 可执行文件> --factory-startup --python-exit-code 1 --python tests\\blender\\verify_ui_draw.py
-实测环境: Blender 5.2.2 (Python 3.13) 与 Blender 4.2.23 (Python 3.11)
+实测环境: Blender 5.2.2 (Python 3.13)
 """
 
 import os
@@ -35,7 +40,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from source import registration  # noqa: E402
+from source.common import asset, drivers  # noqa: E402
+from source.common.status import CURRENT, simulation_status  # noqa: E402
 from source.framework import preset_files, presets  # noqa: E402
+from source.tools.Drivers.api import add_driver  # noqa: E402
+from source.tools.MeshFracture.api import generate_fragments  # noqa: E402
+from source.tools.Physics.api import apply_physics  # noqa: E402
+from source.tools.Simulation.core import task  # noqa: E402
 
 # 隔离的预设目录: 预设菜单要有预设才会绘制列表分支, 这里不碰用户目录
 PRESET_ROOT = REPO_ROOT / "tmp" / "output_tmp" / "ui_draw_preset"
@@ -52,6 +63,10 @@ DRAWN = {}
 ORIGINAL_DRAWS = {}
 # 驱动结果: (入口, 异常, 调用记录)
 RESULTS = []
+# 模态烘焙的启动结果与它作用的资产
+BAKE = {}
+# 中断用例的烘焙: 帧数足够多, 中断时一定还在进行
+LONG_FRAMES = 400
 
 
 def check(label, condition, detail=""):
@@ -319,13 +334,122 @@ def check_dialog():
     check("确认之前没有切割", len(bpy.data.objects) == before)
 
 
-def finish():
-    """汇总判据; 定时器里无法传退出码, 失败时直接以非零状态结束进程"""
+def invoke_bake(x, frame_end):
+    """在 x 处切出小资产, 应用物理并放爆炸驱动, 只选中一块碎块后以界面方式调用烘焙
+
+    返回 (启动结果, 根集合, 碎块列表, 算子实例); 没有进入模态时算子实例为 None
+    """
+    scene = bpy.context.scene
+    scene.frame_start, scene.frame_end = 1, frame_end
+    bpy.ops.mesh.primitive_cube_add(size=2.0, location=(x, 0.0, 1.0))
+    source = bpy.context.active_object
+    result = generate_fragments(bpy.context, [source], {"recursion": 0})
+    root = result.source_to_asset[source]
+    apply_physics(bpy.context, [root], {})
+    add_driver(bpy.context, drivers.EXPLOSION, location=(x, 0.0, 1.0), frame=3)
+    for obj in bpy.context.view_layer.objects.selected:
+        obj.select_set(False)
+    result.shards[0].select_set(True)
+    bpy.context.view_layer.objects.active = result.shards[0]
+    area = next(a for a in bpy.context.screen.areas if a.type == "VIEW_3D")
+    region = next(r for r in area.regions if r.type == "WINDOW")
+    with bpy.context.temp_override(area=area, region=region):
+        started = bpy.ops.qd_simulation.bake("INVOKE_DEFAULT")
+    # 运行锁里登记的是算子的取消函数, 由它找到算子实例, 之后核对计时器是否释放
+    operator = task.RUNNING[0].__self__ if task.RUNNING else None
+    return started, root, result.shards, operator
+
+
+def start_bake():
+    """以界面方式调用一次完整烘焙; 结果在 check_main 里核对"""
+    started, root, _shards, _operator = invoke_bake(30.0, 12)
+    BAKE["started"] = started
+    BAKE["busy"] = task.busy()
+    BAKE["root"] = root
+
+
+def check_bake():
+    """模态烘焙: 启动时进入模态并持有运行锁, 结束后锁已释放, 成果与状态正确"""
+    check("烘焙以模态方式启动", BAKE.get("started") == {"RUNNING_MODAL"}, str(BAKE.get("started")))
+    check("烘焙进行中持有运行锁", BAKE.get("busy") is True)
+    root = BAKE.get("root")
+    check("烘焙结束后释放运行锁", not task.busy())
+    done = root is not None and asset.sim_action(root) is not None
+    check("烘焙结束后有成果动作", done)
+    if done:
+        state = simulation_status(root, bpy.context.scene).state
+        check("烘焙结束后模拟状态为输入未变", state == CURRENT, state)
+
+
+def has_load_handler():
+    """载入回调是否还登记着; 按名字找, 不导入工具的私有函数"""
+    return any(
+        getattr(func, "__name__", "") == "_abort_on_load" for func in bpy.app.handlers.load_pre
+    )
+
+
+def timer_released(operator):
+    """算子实例上的计时器是否已释放
+
+    算子被 Blender 释放后实例的 RNA 指针失效, 按属性读取会报错; 自定义属性存在实例字典里,
+    用 object.__getattribute__ 绕过 RNA 直接读字典
+    """
+    return object.__getattribute__(operator, "__dict__").get("_timer") is None
+
+
+def start_interrupted(key):
+    """启动一个帧数很多的烘焙, 交给随后的定时器中断; 结果记在 BAKE[key]"""
+    started, root, shards, operator = invoke_bake(60.0, LONG_FRAMES)
+    BAKE[key] = SimpleNamespace(started=started, root=root, shards=shards, operator=operator)
+
+
+def check_released(label, run):
+    """中断之后: 运行锁, 载入回调与算子的计时器都已释放"""
+    check(f"{label}后释放运行锁", not task.busy())
+    check(f"{label}后移除载入回调", not has_load_handler())
+    operator = run.operator
+    check(f"{label}后释放计时器", operator is not None and timer_released(operator))
+
+
+def interrupt_by_load():
+    """烘焙进行中载入文件: 载入回调取消烘焙, 旧窗口的处理器随后被移除"""
+    run = BAKE["load"]
+    check("载入文件前烘焙以模态方式进行中", run.started == {"RUNNING_MODAL"} and task.busy())
+    bpy.ops.wm.read_homefile(use_empty=True)
+    check_released("载入文件", run)
+
+
+def interrupt_by_disable():
+    """烘焙进行中停用插件: 场景回到烘焙之前, 资源都被释放, 之后能重新启用"""
+    run = BAKE["disable"]
+    check("停用插件前烘焙以模态方式进行中", run.started == {"RUNNING_MODAL"} and task.busy())
+    registration.unregister()
+    check_released("停用插件", run)
+    check("停用插件后没有模拟成果", asset.sim_record(run.root) is None)
+    animated = [shard.name for shard in run.shards if shard.animation_data is not None]
+    check("停用插件后碎块不带动画数据", not animated, str(animated[:3]))
+    gap = max(
+        (shard.matrix_world.translation - asset.rest_matrix(shard).translation).length
+        for shard in run.shards
+    )
+    check("停用插件后碎块回到静止姿态", gap < 1e-6, f"{gap:.2e}")
+    registration.register()
+    check("停用后能重新启用", hasattr(bpy.types, "QD_SIMULATION_OT_bake"))
+
+
+def check_main():
+    """侧栏, 绘制入口与完整烘焙的判据; 之后启动载入文件的中断用例"""
     check_sidebar()
-    check_dialog()
+    check_bake()
     check("驱动面板被执行", bool(RESULTS))
     for entry, error, calls in RESULTS:
         check_entry(entry, error, calls)
+    start_interrupted("load")
+
+
+def finish():
+    """汇总判据; 定时器里无法传退出码, 失败时直接以非零状态结束进程"""
+    check_dialog()
     shutil.rmtree(PRESET_ROOT, ignore_errors=True)
     print("ALL PASS" if not FAILURES else f"失败 {len(FAILURES)} 项: {FAILURES}", flush=True)
     if FAILURES:
@@ -339,4 +463,10 @@ if bpy.app.background:
     raise SystemExit(1)
 
 bpy.app.timers.register(start, first_interval=1.0)
-bpy.app.timers.register(finish, first_interval=3.5)
+bpy.app.timers.register(start_bake, first_interval=2.0)
+bpy.app.timers.register(check_main, first_interval=3.5)
+# 之后的定时器要跨过载入文件, 必须是 persistent, 否则载入时被移除
+bpy.app.timers.register(interrupt_by_load, first_interval=3.8, persistent=True)
+bpy.app.timers.register(lambda: start_interrupted("disable"), first_interval=4.1, persistent=True)
+bpy.app.timers.register(interrupt_by_disable, first_interval=4.4, persistent=True)
+bpy.app.timers.register(finish, first_interval=4.7, persistent=True)

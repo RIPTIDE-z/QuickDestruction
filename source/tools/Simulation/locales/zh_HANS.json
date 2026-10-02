@@ -1,0 +1,41 @@
+{
+  "locale": "zh_HANS",
+  "interface": {
+    "Simulation": "模拟烘焙",
+    "Bake Simulation": "烘焙模拟",
+    "Reset Simulation": "重置模拟",
+    "Frame Range": "帧范围",
+    "Solver": "求解",
+    "Use Scene Range": "使用场景帧范围",
+    "Start Frame": "起始帧",
+    "End Frame": "结束帧",
+    "Substeps": "每帧子步",
+    "Solver Iterations": "求解迭代",
+    "Time Scale": "时间缩放",
+    "Baking, press Esc to cancel": "正在烘焙，按 Esc 取消",
+    "Baking frame {done} of {total}, press Esc to cancel": "正在烘焙第 {done} / {total} 帧，按 Esc 取消",
+    "Bake cancelled; the scene was restored": "已取消烘焙，场景已恢复",
+    "Baked {frames} frames for {count} shards in {seconds:.1f} s; {moved} of them moved": "已为 {count} 块碎块烘焙 {frames} 帧，用时 {seconds:.1f} 秒，其中 {moved} 块发生了运动",
+    "({count} start frames were moved to the frame after Start Frame)": "（{count} 个起动帧早于起始帧之后的第一帧，已推迟到该帧）",
+    "Reset {count} shards to their rest pose": "已把 {count} 块碎块恢复到静止姿态",
+    "Settings changed since the last bake": "设置在上次烘焙后改过",
+    "{current} of {count} assets have current simulations": "{count} 个资产中有 {current} 个模拟输入未变",
+    "Another simulation is running": "已有模拟正在运行",
+    "Apply physics before simulating": "请先应用物理再模拟",
+    "Apply physics to \"{name}\" first": "请先为“{name}”应用物理",
+    "End Frame must be after Start Frame": "结束帧必须晚于起始帧",
+    "Shard \"{name}\" has its own animation; clear it before simulating": "碎块“{name}”带有自己的动画，请先清除再模拟",
+    "Status": "状态"
+  },
+  "tooltips": {
+    "Simulate fractured assets with their drivers and bake the motion": "让破碎资产在驱动作用下进行模拟，并烘焙出运动",
+    "Simulate the selected assets together and bake their motion into keyframes; press Esc to cancel and restore the scene": "把所选资产放在一起模拟，并把运动烘焙成关键帧；按 Esc 可取消并恢复场景",
+    "Delete the baked motion of the selected assets and put the shards back to their rest pose": "删除所选资产烘焙出的运动，并把碎块放回静止姿态",
+    "Bake from the start to the end frame of the scene; turn off to set the range here.": "从场景的起始帧烘焙到结束帧；关闭后可在这里自行设置范围。",
+    "First frame of the simulation; shards are at rest on this frame.": "模拟的第一帧；碎块在这一帧处于静止姿态。",
+    "Last frame of the simulation.": "模拟的最后一帧。",
+    "Simulation steps per frame; more steps keep fast or thin shards from passing through each other, but take longer.": "每帧的模拟步数；步数越多，快速或很薄的碎块越不容易相互穿过，但耗时更长。",
+    "Iterations per step for resolving contacts; more is steadier for stacked shards.": "每步求解接触的迭代次数；越多，堆叠的碎块越稳定。",
+    "Speed of the simulation; below 1 gives slow motion. Driver speeds keep their meaning in simulated seconds.": "模拟的快慢；小于 1 为慢动作。驱动的速度仍按模拟时间的每秒计算。"
+  }
+}

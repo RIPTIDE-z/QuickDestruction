@@ -9,16 +9,16 @@ from dataclasses import dataclass
 
 import bpy
 
-from ....common import shards
+from ....common import asset, shards
 
 # 切割期临时名的前缀, 最终名字由 apply_names 统一分配
 TEMP_NAME_PREFIX = "QDTMP_"
 # 源物体集合下各集合名的后缀
 SHARDS_SUFFIX = "_Shards"
 PARENTS_SUFFIX = "_Parents"
-# 名字里源物体名最多占的 UTF-8 字节数: 默认后缀与序号下, 五层以内的碎块网格名不超过 Blender 4.2 的 63 字节上限
+# 名字里源物体名最多占的 UTF-8 字节数: Blender 5.2 的数据块名上限是 255 字节, 留足后缀与逐层序号的空间
 # 超出时 Blender 会截断名字, 截断后撞名由 Blender 加后缀区分
-SOURCE_NAME_BYTES = 32
+SOURCE_NAME_BYTES = 64
 
 
 @dataclass(frozen=True)
@@ -47,16 +47,18 @@ class ShardBatch:
         return obj
 
     def number(self, cells):
-        """按顺序给本批碎块编号, 在被切物体的路径后追加序号并写入碎块标记"""
+        """按顺序给本批碎块编号, 在被切物体的路径后追加序号并写入碎块标记与资产标识"""
         for index, cell in enumerate(cells, 1):
-            shards.mark(cell, self.naming.source_name, (*self.path, index))
+            naming = self.naming
+            shards.mark(cell, naming.source_name, (*self.path, index), naming.asset_id)
 
 
 class NamingPlan:
     """一个源物体的命名与集合 - 最终碎块都在碎块集合里, 保留的父碎块按层收纳"""
 
-    def __init__(self, source_name, collection, settings, tracker):
-        """记录命名参数, 在输出集合下建立源物体集合与碎块集合"""
+    def __init__(self, source, collection, settings, tracker):
+        """记录命名参数, 在输出集合下建立源物体集合与碎块集合, 并把源物体集合登记为资产根"""
+        source_name = source.name
         # 源物体名在首次切割前固定, 标记里记录完整名
         self.source_name = source_name
         # 名字里用的源物体名, 按 UTF-8 字节截短, 不截断多字节字符
@@ -71,6 +73,8 @@ class NamingPlan:
         self.temp_counter = 0
         # 源物体集合, 本源的全部产物都在它下面; 调试几何也放在这里
         self.root = self._new_collection(self.label, collection)
+        # 资产标识: 源物体集合就是资产根, 切割间隙是切面内缩量的 2 倍
+        self.asset_id = asset.create_asset(self.root, source, 2.0 * settings.margin)
         # 碎块集合, 切割中与最终的碎块都在这里
         self.shards = self._new_collection(f"{self.label}{SHARDS_SUFFIX}", self.root)
         # 新建的碎块落进的集合, 默认是碎块集合; 递归期间隔离模块会临时改指工作集合

@@ -4,12 +4,13 @@ from typing import ClassVar
 
 from bpy.types import Operator, Panel
 
+from ...common import asset
 from ...common.blender_context import restore_selection
 from ...common.translate import tr, tr_report
 from ...framework.contract import scene_settings
 from ...framework.operators import ToolOperator
 from ...framework.ui import CheckGrid, ParamGroup, ToolPanel, label_row, parameter_panels
-from .api import generate_fragments, source_issues
+from .api import generate_fragments, make_asset_unique, source_issues
 from .constants import CONTEXT, TOOL_ID
 from .core.diagnosis import NOT_CLOSED, SELF_INTERSECTING
 from .settings import ACTIVE_WHEN, SCHEMA
@@ -152,6 +153,35 @@ class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
         )
 
 
+class QD_MESH_FRACTURE_OT_make_unique(ToolOperator, Operator):
+    """给复制出来的资产换一个新标识, 原资产保持不变"""
+
+    bl_idname = "qd_mesh_fracture.make_unique"
+    bl_label = "Make Asset Unique"
+    bl_description = (
+        "Give the duplicated asset of the active object its own identity; its physics and "
+        "simulation results are cleared and must be applied again"
+    )
+    bl_translation_context = CONTEXT
+    bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
+
+    def run(self, context):
+        """改写活动物体所在资产的标识"""
+        root = make_asset_unique(context.active_object)
+        return tr_report(CONTEXT, 'Asset "{name}" now has its own identity', name=root.name)
+
+
+def _draw_duplicate_warning(layout, context):
+    """活动物体所在的资产被复制过时, 提示原因并给出改正按钮; 其他时候不占位置"""
+    root = asset.duplicated_root(context.active_object)
+    if root is None:
+        return
+    box = layout.box()
+    box.label(text="This asset was duplicated", text_ctxt=CONTEXT, icon="ERROR")
+    box.label(text="Other tools refuse to work on it until it is unique", text_ctxt=CONTEXT)
+    box.operator(QD_MESH_FRACTURE_OT_make_unique.bl_idname, icon="DUPLICATE")
+
+
 class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
     """网格破碎的侧栏主面板 - 生成按钮, 预设入口在标题栏, 全部参数在子面板"""
 
@@ -173,6 +203,7 @@ class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
             layout.label(
                 text="Select editable mesh objects in Object Mode", text_ctxt=CONTEXT, icon="INFO"
             )
+        _draw_duplicate_warning(layout, context)
 
 
 # 参数子面板与弹出面板: 子面板挂在主面板下按分组顺序排列, 弹出按钮并排在最底部

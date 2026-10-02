@@ -3,7 +3,7 @@
 from mathutils.bvhtree import BVHTree
 
 from ....common.blender_context import evaluated_mesh, mesh_edit
-from .boolean import is_not_closed
+from ....common.geometry import is_not_closed
 
 # 有开放边, 多面共边或仅顶点处相接: 网格没有明确的内外, 碎块可能出现缺口或开口
 NOT_CLOSED = "NOT_CLOSED"

@@ -7,7 +7,8 @@
     4. 写法约束: 字面量 text= 必须带 text_ctxt 或 translate=False, 字面量消息的 tr 调用传 CONTEXT,
        带 bl_label 的类必须写 bl_description, 否则 Blender 会把中文文档字符串当作悬停提示
 测试过程:
-    工具按 source/tools/*/tool.py 发现; 参数规格从 <工具>.settings.SCHEMA 导入;
+    工具按 source/tools/*/tool.py 发现; 参数规格从 <工具>.settings.SCHEMA 导入,
+    挂到其他数据块上的参数规格从 <工具>.settings.OBJECT_SCHEMAS 导入;
     界面文字用 AST 从源码提取, 不需要 Blender
 运行方式 (仓库根目录):
     uv run pytest tests/unit/test_locales.py
@@ -134,17 +135,19 @@ class Extractor:
 
 
 def spec_texts(tool_dir):
-    """工具参数规格里的名称与说明"""
+    """工具参数规格里的名称与说明: 场景参数规格加上挂到其他数据块上的参数规格"""
     if not (tool_dir / "settings.py").exists():
         return set(), set()
-    schema = importlib.import_module(f"source.tools.{tool_dir.name}.settings").SCHEMA
+    module = importlib.import_module(f"source.tools.{tool_dir.name}.settings")
+    schemas = [getattr(module, "SCHEMA", None), *getattr(module, "OBJECT_SCHEMAS", ())]
     names, descriptions = set(), set()
-    for _kind, options in schema.specs.values():
-        names.add(options["name"])
-        descriptions.add(options["description"])
-        for _identifier, name, description in options.get("items", ()):
-            names.add(name)
-            descriptions.add(description)
+    for schema in filter(None, schemas):
+        for _kind, options in schema.specs.values():
+            names.add(options["name"])
+            descriptions.add(options["description"])
+            for _identifier, name, description in options.get("items", ()):
+                names.add(name)
+                descriptions.add(description)
     return names, descriptions
 
 

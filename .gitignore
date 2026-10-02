@@ -16,3 +16,4 @@ uv.lock
 # 本地
 analysis/
 tmp/
+reference/

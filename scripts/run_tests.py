@@ -18,7 +18,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / "tests" / "blender"
 # 后台运行的 Blender 测试
-BACKGROUND_TESTS = ("verify_fracture.py", "verify_inputs.py", "verify_operator.py")
+BACKGROUND_TESTS = (
+    "verify_fracture.py",
+    "verify_inputs.py",
+    "verify_operator.py",
+    "verify_dynamics.py",
+)
 # 需要真实界面的 Blender 测试, 不能加 -b
 UI_TESTS = ("verify_ui_draw.py",)
 # 单个测试的时间上限, 单位秒

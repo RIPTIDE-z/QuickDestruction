@@ -8,6 +8,7 @@ from mathutils import Vector
 
 from ....common.blender_context import evaluated_mesh, mesh_edit
 from ....common.errors import require_finite
+from ....common.geometry import is_not_closed
 from ..constants import WELD_SCALE_RATIO
 from ..errors import NON_FINITE_MESSAGE, IntersectionBoundsError, MeshFractureError
 
@@ -32,13 +33,6 @@ class BooleanSource:
     def weld_distance(self):
         """焊接距离: 胞体阶段与求交阶段共用同一份快照尺度"""
         return self.diagonal * WELD_SCALE_RATIO
-
-
-def is_not_closed(bm):
-    """网格不封闭: 有开放边, 多面共边, 或仅顶点处相接的非流形; 布尔求解策略与用户提示共用这一个判定"""
-    return any(not edge.is_manifold for edge in bm.edges) or any(
-        not vert.is_manifold for vert in bm.verts
-    )
 
 
 def bounds_diagonal(minimum, maximum):

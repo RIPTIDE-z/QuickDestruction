@@ -173,14 +173,14 @@ def _subdivide(context, group, cells, naming, settings, rng, state):
 
 
 def main_object(context, collection, obj, settings, rng, state, done):
-    """对单个源物体做首次切割并按需递归, 最后统一收尾, 返回最终碎块
+    """对单个源物体做首次切割并按需递归, 最后统一收尾, 返回 (最终碎块, 资产根集合)
 
     state 是本次生成的回收账本与依赖图隔离
     done 是之前的源已经生成的碎块数; 碎块总数上限先约束首次切割的种子数, 每轮递归再按剩余预算规划
     每轮开始前先按上界估算这一轮之后的总数, 必然超过硬上限时不再动手
     """
     tracker = state[0]
-    naming = NamingPlan(obj.name, collection, settings, tracker)
+    naming = NamingPlan(obj, collection, settings, tracker)
     first_job = (obj, naming.first_batch(), first_cut_seed_limit(settings))
     (cells,) = _cut_jobs(context, [first_job], settings, rng)
     _check_limit(done + len(cells))
@@ -207,11 +207,11 @@ def main_object(context, collection, obj, settings, rng, state, done):
     # 首次切割丢弃的空胞体, 以及提前结束的轮次留下的待删数据
     tracker.flush()
     _finish(cells, settings, naming)
-    return cells
+    return cells, naming.root
 
 
 def run(context, sources, settings, rng):
-    """按名称排序显式源物体并逐个切割, 返回碎块, 来源映射与耗时; 失败时回收本次新建数据"""
+    """按名称排序显式源物体并逐个切割, 返回碎块, 源到碎块与源到资产的映射, 耗时; 失败时回收本次新建数据"""
     # 固定多源处理顺序, 选择顺序不会改变随机流的分配
     sources = sorted((obj for obj in sources if obj.type == "MESH"), key=lambda obj: obj.name_full)
     _check_sources(context, sources, settings)
@@ -226,18 +226,20 @@ def run(context, sources, settings, rng):
         collection = _output_collection(context, settings.collection_name, tracker)
         cells = []
         source_to_shards = {}
+        source_to_asset = {}
         for index, obj in enumerate(sources):
-            created = main_object(context, collection, obj, settings, rng, state, len(cells))
+            created, root = main_object(context, collection, obj, settings, rng, state, len(cells))
             if not created:
                 raise MeshFractureError('No valid shards were produced for "{name}"', name=obj.name)
             cells.extend(created)
             source_to_shards[obj] = tuple(created)
+            source_to_asset[obj] = root
             context.window_manager.progress_update(index + 1)
         seconds = perf_counter() - started
         # 清理也属于成功路径 - 失败时仍需回收已经生成的数据
         isolation.release()
         context.window_manager.progress_end()
-        return cells, source_to_shards, seconds
+        return cells, source_to_shards, source_to_asset, seconds
     except Exception:
         # 恢复失败不能覆盖原异常或阻止其他收尾动作
         for cleanup_action in (

@@ -1,6 +1,6 @@
 """网格整理 - 求交结果的焊接, 清理与压平, 以及最终碎块的共面面合并
 
-面合并只在全部切割结束后对最终碎块做一次, 原因见 doc/Architecture.md 的 MeshFracture 一节
+面合并只在全部切割结束后对最终碎块做一次, 原因见 doc/开发文档/Architecture.md 的 MeshFracture 一节
 """
 
 import bmesh

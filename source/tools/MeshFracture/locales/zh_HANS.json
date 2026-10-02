@@ -67,7 +67,12 @@
     "Meshes that are not closed have no clear inside:": "不封闭的网格没有明确的内部，",
     "shards can have holes or open faces.": "碎块可能出现缺口或开口。",
     "Self-intersecting parts can make the cut lose geometry.": "自相交的部分可能让切割丢失几何。",
-    "Close holes or use Voxel Remesh first for clean results.": "建议先补洞或用体素重构修复，结果会更干净。"
+    "Close holes or use Voxel Remesh first for clean results.": "建议先补洞或用体素重构修复，结果会更干净。",
+    "Make Asset Unique": "重建副本身份",
+    "Asset \"{name}\" now has its own identity": "资产“{name}”已拥有独立身份",
+    "This asset was duplicated": "此资产被复制过",
+    "Other tools refuse to work on it until it is unique": "在重建身份之前，其他工具不会处理它",
+    "The active object is not part of a duplicated asset": "活动物体不属于被复制过的资产"
   },
   "tooltips": {
     "Where the cut seeds come from; several sources can be combined. Without any point, the source mesh vertices are used.": "切割种子的来源，可多选组合；没有找到任何点时使用源网格的顶点。",
@@ -106,6 +111,7 @@
     "Redraw after every cell and show the cut object as wireframe. Much slower; no effect in background mode.": "每生成一个胞体就重绘，并把被切物体显示为线框。会慢很多；后台模式下无效。",
     "Keep the Boolean modifiers on the convex cells instead of applying them. Skips recursion, island splitting, face merging and interior finishing.": "在凸胞体上保留布尔修改器而不应用。跳过递归、孤岛拆分、面合并和断面收尾。",
     "Generate fragments from selected editable meshes; source objects are kept": "将选中的可编辑网格生成碎块，保留源物体",
-    "Cut selected meshes into fragments with a Voronoi pattern": "按 Voronoi 图案把选中的网格切成碎块"
+    "Cut selected meshes into fragments with a Voronoi pattern": "按 Voronoi 图案把选中的网格切成碎块",
+    "Give the duplicated asset of the active object its own identity; its physics and simulation results are cleared and must be applied again": "为活动物体所在的副本资产生成独立身份；它的物理与模拟结果会被清除，需要重新应用"
   }
 }

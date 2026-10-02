@@ -25,12 +25,15 @@
     19. 分批切割: 每批父块数不同结果完全一致, 待删数据批量删除后不留孤儿数据, 孤岛都被拆开
     20. 提前预判硬上限: 每轮开始前按上界估算总数, 必然超限时这一轮不动手
     21. 非等轴权重剪枝: 胞体与不剪枝时一致, 并且确实少试了邻居
+    22. 资产身份: 每次切割都是新资产, 清单齐全, 从碎块与源物体都能解析到资产; 复制资产, 复制碎块,
+        旧版本碎块与未知格式都被拒绝, 重建副本身份后原资产与副本各自可用; 源物体改名后引用仍有效
+    23. 资产持久性: 保存并重新打开文件后, 资产标识, 源物体引用与碎块标记都还在
 测试过程:
     每个场景先清空数据, 建立源物体与子物体种子, 经 MeshFracture.api.generate_fragments 切割,
     不注册插件界面; 每条判据输出 [PASS] 或 [FAIL]
 运行方式 (仓库根目录, 需要 -b 后台模式):
     <Blender 可执行文件> -b --factory-startup --python-exit-code 1 --python tests\\blender\\verify_fracture.py
-实测环境: Blender 5.2.2 (Python 3.13) 与 Blender 4.2.23 (Python 3.11)
+实测环境: Blender 5.2.2 (Python 3.13)
 """
 
 import random
@@ -49,13 +52,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness
 from harness import check, cube, reset, seeds, select, volume
 
-from source.common import created_data
+from source.common import asset, created_data
 from source.common import shards as shard_contract
 from source.common.blender_context import mesh_edit
 from source.common.errors import InvalidParameterError
-from source.tools.MeshFracture.api import generate_fragments
+from source.tools.MeshFracture.api import generate_fragments, make_asset_unique
 from source.tools.MeshFracture.core import boolean, cleanup, interior, intersect, pipeline
 from source.tools.MeshFracture.core import cells as cell_builder
+from source.tools.MeshFracture.core.naming import SOURCE_NAME_BYTES
 from source.tools.MeshFracture.errors import IntersectionBoundsError, MeshFractureError
 
 # 子物体顶点做种子, 关闭种子扰动与内缩, 其余按场景覆盖
@@ -638,7 +642,7 @@ def case_naming():
 
     def placed(shard):
         """碎块只在 输出集合/<源>/<源>_Shards 里, <源> 是按字节截短的源物体名"""
-        label = shard["_qd_source"].encode("utf-8")[:32].decode("utf-8", "ignore")
+        label = shard["_qd_source"].encode("utf-8")[:SOURCE_NAME_BYTES].decode("utf-8", "ignore")
         holder = bpy.data.collections.get(f"{label}_Shards")
         return (
             label in output.children
@@ -1067,6 +1071,101 @@ def close(first, second):
     )
 
 
+def asset_error(objects):
+    """解析资产时期望失败, 返回报错的消息键; 没有失败时返回 None"""
+    try:
+        asset.resolve(objects)
+    except asset.AssetError as error:
+        return error.message
+    return None
+
+
+def duplicate_asset(root):
+    """模拟在大纲里复制资产集合: 根集合的自定义属性与其中的物体都被复制, 物体是新的副本"""
+    copy = bpy.data.collections.new(f"{root.name}_copy")
+    bpy.context.scene.collection.children.link(copy)
+    for key in root.keys():
+        copy[key] = root[key]
+    copies = []
+    for obj in root.all_objects:
+        twin = obj.copy()
+        copy.objects.link(twin)
+        copies.append(twin)
+    return copy, copies
+
+
+def case_asset_identity():
+    """资产身份: 新资产, 清单, 解析, 复制与旧数据被拒绝, 重建副本身份, 源物体改名"""
+    reset()
+    source = cube("Src")
+    seeds(source, 6, 0.9, 3)
+    first = cut([source], {}, "Out")
+    second = cut([source], {}, "Out")
+    root_a, root_b = first.source_to_asset[source], second.source_to_asset[source]
+    check("同一源切两次得到两个资产", asset.shards_of(root_a) != asset.shards_of(root_b))
+    check("两个资产的标识不同", root_a["_qd_asset"] != root_b["_qd_asset"])
+    check("清单格式版本为 1", root_a.get(asset.FORMAT_MARK) == asset.FORMAT)
+    check("源物体引用指向源物体", asset.source_of(root_a) == source)
+    check("切割间隙等于 2 倍切面内缩量", abs(asset.gap_of(root_a) - 2 * 0.001) < 1e-9)
+    shard = first.shards[0]
+    check("从碎块解析到它的资产", asset.resolve([shard]) == [root_a])
+    check(
+        "碎块按路径排序且与本次结果一致",
+        asset.shards_of(root_a) == sorted(first.shards, key=lambda item: tuple(item["_qd_path"])),
+    )
+    check("一个源对应两个资产时拒绝猜测", "Several assets" in (asset_error([source]) or ""))
+    check("没有资产时报错", "Select shards" in (asset_error([cube("Plain")]) or ""))
+    source.name = "Renamed"
+    check("源物体改名后引用仍有效", asset.source_of(root_a) == source)
+    copy, twins = duplicate_asset(root_a)
+    check("复制的资产被拒绝", "was duplicated" in (asset_error([twins[0]]) or ""))
+    check("复制之后原资产同样被拒绝", "was duplicated" in (asset_error([shard]) or ""))
+    fixed = make_asset_unique(twins[0])
+    check("重建身份作用在副本上", fixed == copy)
+    check("重建后副本可以解析", asset.resolve([twins[0]]) == [copy])
+    check("重建后原资产也可以解析", asset.resolve([shard]) == [root_a])
+    check("副本与原资产的标识不同", copy["_qd_asset"] != root_a["_qd_asset"])
+    twin = shard.copy()
+    root_a.children[0].objects.link(twin)
+    check(
+        "资产里有复制出来的碎块时拒绝",
+        "copied shards" in str(capture(lambda: asset.shards_of(root_a))),
+    )
+    bpy.data.objects.remove(twin)
+    legacy = second.shards[0]
+    legacy.pop("_qd_asset")
+    check("旧版本碎块被拒绝", "older version" in (asset_error([legacy]) or ""))
+    root_b[asset.FORMAT_MARK] = 99
+    check("未知格式被拒绝", "unknown format" in (asset_error([second.shards[1]]) or ""))
+
+
+def capture(call):
+    """执行 call, 返回它抛出的异常; 没有抛出时返回 None"""
+    try:
+        call()
+    except Exception as error:
+        return error
+    return None
+
+
+def case_asset_persistence():
+    """保存并重新打开文件后, 资产标识, 源物体引用与碎块标记都还在"""
+    reset()
+    source = cube("Keep")
+    seeds(source, 5, 0.9, 4)
+    result = cut([source], {}, "Out")
+    root = result.source_to_asset[source]
+    asset_id, root_name, count = root["_qd_asset"], root.name, len(result.shards)
+    path = Path(tempfile.mkdtemp(prefix="qd_asset_")) / "asset.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(path), copy=True)
+    bpy.ops.wm.open_mainfile(filepath=str(path))
+    reopened = bpy.data.collections[root_name]
+    check("重开后资产标识不变", reopened["_qd_asset"] == asset_id)
+    check("重开后源物体引用仍指向源物体", asset.source_of(reopened) == bpy.data.objects["Keep"])
+    check("重开后碎块数不变", len(asset.shards_of(reopened)) == count)
+    check("重开后可以从碎块解析资产", asset.resolve(asset.shards_of(reopened)[:1]) == [reopened])
+
+
 CASES = (
     case_volume,
     case_torus,
@@ -1092,6 +1191,9 @@ CASES = (
     case_batching,
     case_early_limit,
     case_weight_pruning,
+    case_asset_identity,
+    # 会重新打开文件, 放在最后
+    case_asset_persistence,
 )
 
 
