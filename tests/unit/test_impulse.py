@@ -328,7 +328,10 @@ def test_curve_flow_follows_the_tangent():
 
 
 def test_curve_flow_wave_runs_along_the_curve():
-    """冲击波沿曲线推进: 起动延迟按碎块最近点的累计长度算, 5 米 / 12 米每秒 / (1/24 秒每帧) = 10 帧"""
+    """冲击波沿曲线推进: 起动延迟按碎块最近点的累计长度算
+
+    5 米 / 12 米每秒 / (1/24 秒每帧) = 10 帧
+    """
     wave = curve(wave_speed=12.0)
     event = impulse.driver_event(wave, shard("a/1", (5.0, 1.0, 0.0)), TIMING)
     assert event.frame == 20

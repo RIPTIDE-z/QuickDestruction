@@ -11,8 +11,13 @@ from . import cleanup
 
 
 def _island_sort_key(obj):
-    """孤岛结果的稳定排序键: 只用几何本身, 位置优先, 再比包围盒与顶点数"""
+    """孤岛结果的稳定排序键: 只用几何本身, 位置优先, 再比包围盒与顶点数
+
+    obj 碎块物体
+    返回 可比较的元组 (最小角, 最大角, 顶点数), 坐标取 6 位小数
+    """
     flat = vertex_coordinates(obj.data)
+    # 没有顶点的碎块没有几何可比, 排在最前
     if not flat:
         return ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0)
     axes = (flat[0::3], flat[1::3], flat[2::3])
@@ -24,7 +29,11 @@ def _island_sort_key(obj):
 
 
 def _keep_faces(mesh, keep):
-    """只保留下标在 keep 里的面, 其余的面连同只被它们使用的边与顶点一起删除"""
+    """只保留下标在 keep 里的面, 其余的面连同只被它们使用的边与顶点一起删除
+
+    mesh 网格数据, 原地修改
+    keep 要保留的面下标集合
+    """
     with mesh_edit(mesh) as bm:
         bm.faces.ensure_lookup_table()
         bmesh.ops.delete(
@@ -34,7 +43,12 @@ def _keep_faces(mesh, keep):
 
 
 def _split_cell(cell, tracker):
-    """把一个碎块的每个孤岛拆成独立物体, 返回全部孤岛物体, 第一个是原物体"""
+    """把一个碎块的每个孤岛拆成独立物体
+
+    cell 含多个孤岛的碎块
+    tracker 回收账本
+    返回 全部孤岛物体, 第一个是原物体
+    """
     with mesh_edit(cell.data) as bm:
         groups = [{face.index for face in part} for part in cleanup.face_components(bm)]
     pieces = [cell]
@@ -53,7 +67,13 @@ def _split_cell(cell, tracker):
 
 
 def split_islands(cells, multi, tracker):
-    """把 multi 里的碎块按孤岛拆开, 返回全部碎块按几何排序的列表; multi 是已知含多个孤岛的碎块"""
+    """把 multi 里的碎块按孤岛拆开
+
+    cells 全部碎块
+    multi 已知含多个孤岛的碎块集合, 其余碎块不检查
+    tracker 回收账本
+    返回 全部碎块, 按几何排序保证可复现
+    """
     pieces = []
     for cell in cells:
         pieces.extend(_split_cell(cell, tracker) if cell in multi else [cell])

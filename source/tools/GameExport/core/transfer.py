@@ -1,7 +1,8 @@
 """动画换算 - 把碎块的世界轨迹换成骨架上每根骨骼的姿态关键帧
 
 设 B 为骨骼的 matrix_local (纯平移), M0 为碎块的静止世界矩阵, Mt 为第 t 帧的世界矩阵
-蒙皮后顶点的世界位置 = 骨骼姿态空间矩阵 · B⁻¹ · 静止顶点, 要让它等于 Mt · M0⁻¹ · 静止顶点, 姿态基矩阵就是
+蒙皮后顶点的世界位置 = 骨骼姿态空间矩阵 · B⁻¹ · 静止顶点, 要让它等于 Mt · M0⁻¹ · 静止顶点,
+姿态基矩阵就是
     basis = B⁻¹ · Mt · M0⁻¹ · B
 位置取它的平移, 旋转取它的四元数并保持相邻帧同一符号; 只写会动的骨骼
 """
@@ -16,22 +17,35 @@ LINEAR = 1
 
 
 def _pose_path(bone_name, channel):
-    """姿态骨骼某个变换通道的属性路径"""
+    """姿态骨骼某个变换通道的属性路径
+
+    bone_name 骨骼名
+    channel 通道名, location 或 rotation_quaternion
+    返回 动画曲线的 data_path
+    """
     return f'pose.bones["{bone_name}"].{channel}'
 
 
 def basis_samples(track, rest):
-    """一块碎块每帧的姿态基矩阵分解结果 ([位置], [四元数]); rest 是它的静止世界矩阵"""
+    """求一块碎块每帧的姿态基矩阵分解结果
+
+    track 碎块的轨迹
+    rest 碎块的静止世界矩阵
+    返回 ([位置], [四元数]), 与轨迹的帧一一对应, 四元数相邻帧保持同一符号
+    """
+    # B 是骨骼的 matrix_local: 头部在静止质心的纯平移
     head = Matrix.Translation(rest.translation)
     inverse_head = head.inverted()
     inverse_rest = rest.inverted()
     scale = rest.to_scale()
     locations, rotations = [], []
     for location, rotation in zip(track.locations, track.rotations, strict=True):
+        # 第 t 帧的世界矩阵: 轨迹给出位置与朝向, 缩放沿用静止姿态
         world = Matrix.LocRotScale(location, rotation, scale)
         basis_location, basis_rotation, _scale = (
             inverse_head @ world @ inverse_rest @ head
         ).decompose()
+        # q 与 -q 同一朝向; 相邻帧取同一符号, 线性插值才不会绕远路
         if rotations and basis_rotation.dot(rotations[-1]) < 0.0:
             basis_rotation = -basis_rotation
         locations.append(basis_location)
@@ -40,10 +54,19 @@ def basis_samples(track, rest):
 
 
 def _write_channel(action, armature, path, frames, values, size):
-    """一个变换通道的全部分量曲线, 每条曲线一次批量写入线性关键帧"""
+    """写一个变换通道的全部分量曲线, 每条曲线一次批量写入线性关键帧
+
+    action 动作
+    armature 骨架物体, 动作已赋给它
+    path 通道的 data_path
+    frames 帧号列表
+    values 每帧的值, 位置或四元数
+    size 分量数, 位置为 3, 四元数为 4
+    """
     for axis in range(size):
         curve = action.fcurve_ensure_for_datablock(armature, path, index=axis)
         curve.keyframe_points.add(len(frames))
+        # 平铺成 [帧, 值, 帧, 值, ...] 一次写入, 比逐个插入关键帧快得多
         flat = []
         for frame, value in zip(frames, values, strict=True):
             flat.extend((frame, value[axis]))
@@ -53,14 +76,19 @@ def _write_channel(action, armature, path, frames, values, size):
 
 
 def write_action(tracker, armature, animated):
-    """为骨架建动作并写入; animated 是 [(骨骼名, 轨迹, 静止世界矩阵), ...]; 返回动作
+    """为骨架建动作并写入
 
     动作先赋给骨架再建曲线, 槽位随之自动建立并分配
+    tracker 创建账本
+    armature 骨架物体
+    animated [(骨骼名, 轨迹, 静止世界矩阵), ...], 只含会动的碎块
+    返回 动作
     """
     action = tracker.track("actions", bpy.data.actions.new(ACTION_PREFIX + armature.name))
     armature.animation_data_create().action = action
     for bone_name, track, rest in animated:
         pose_bone = armature.pose.bones[bone_name]
+        # 四元数旋转才有 rotation_quaternion 通道可写
         pose_bone.rotation_mode = "QUATERNION"
         locations, rotations = basis_samples(track, rest)
         _write_channel(

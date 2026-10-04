@@ -6,15 +6,18 @@ engine 必须排在轴向与缩放之前: 预设载入与回滚都按规格顺�
 from ...common.schema import Schema
 from .constants import CONTEXT, ENGINE_FIELDS, ENGINE_PRESETS
 
-# 判断轴向字段是否被手动改过时允许的误差
-EDIT_TOLERANCE = 1e-6
 # FBX 轴向的取值, 与 Blender 导出插件一致
 AXES = ("X", "Y", "Z", "-X", "-Y", "-Z")
 
 
 def _load_engine(owner, _context):
-    """选择引擎时把它的轴向与缩放写进各字段; 选择自定义时不改动"""
+    """选择引擎时把它的轴向与缩放写进各字段; 选择自定义时不改动
+
+    owner 参数组
+    _context Blender 传入的上下文, 不使用
+    """
     values = ENGINE_PRESETS.get(owner.engine)
+    # 自定义引擎不在预设表里: 保持用户已有的轴向与缩放
     if values is None:
         return
     for key, value in zip(ENGINE_FIELDS, values, strict=True):
@@ -22,40 +25,41 @@ def _load_engine(owner, _context):
 
 
 def engine_values(engine):
-    """引擎对应的字段字典; 自定义引擎返回空字典"""
+    """引擎对应的轴向与缩放字段
+
+    engine 引擎标识
+    返回 字段字典; 自定义引擎返回空字典
+    """
     values = ENGINE_PRESETS.get(engine)
     return dict(zip(ENGINE_FIELDS, values, strict=True)) if values is not None else {}
 
 
 def complete_config(config):
-    """补全阶段 API 的配置: 先叠引擎的取值, 再叠调用方显式给出的字段, 与界面上的联动一致"""
+    """补全阶段 API 的配置: 先叠引擎的取值, 再叠调用方显式给出的字段, 与界面上的联动一致
+
+    config 调用方给出的字段字典
+    返回 补全后的字典, 不改动 config
+    """
     engine = config.get("engine", PROPERTY_SPECS["engine"][1]["default"])
+    # 引擎值不是字符串时交给后面的校验报参数错误
     if not isinstance(engine, str):
         return dict(config)
     return {**engine_values(engine), **config}
 
 
-def engine_edited(owner):
-    """所选引擎的轴向与缩放是否被手动改过; 自定义引擎总是返回 False"""
-    values = ENGINE_PRESETS.get(owner.engine)
-    if values is None:
-        return False
-    return any(
-        (abs(getattr(owner, key) - value) > EDIT_TOLERANCE)
-        if isinstance(value, float)
-        else getattr(owner, key) != value
-        for key, value in zip(ENGINE_FIELDS, values, strict=True)
-    )
-
-
 def _axis_item(axis):
-    """轴向枚举项: 标识, 名称与说明"""
+    """生成轴向枚举项
+
+    axis 轴向, 如 -Z
+    返回 (标识, 名称, 说明)
+    """
     sign = "negative " if axis.startswith("-") else ""
     return (axis, axis, f"The {sign}{axis.lstrip('-')} axis.")
 
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 PROPERTY_SPECS = {
+    # 目标引擎, 选择后自动填入下面的轴向与缩放
     "engine": (
         "EnumProperty",
         {
@@ -82,6 +86,7 @@ PROPERTY_SPECS = {
             "still be edited afterwards.",
         },
     ),
+    # 导出文件的前向轴
     "axis_forward": (
         "EnumProperty",
         {
@@ -91,6 +96,7 @@ PROPERTY_SPECS = {
             "description": "Axis that points forward in the exported file.",
         },
     ),
+    # 导出文件的上方向轴, 必须与前向轴不在同一条轴上
     "axis_up": (
         "EnumProperty",
         {
@@ -101,6 +107,7 @@ PROPERTY_SPECS = {
             "the forward axis.",
         },
     ),
+    # 缩放写入文件的方式
     "apply_scale": (
         "EnumProperty",
         {
@@ -119,6 +126,7 @@ PROPERTY_SPECS = {
             "description": "How the scale is written into the file.",
         },
     ),
+    # 额外施加在全部内容上的缩放
     "global_scale": (
         "FloatProperty",
         {
@@ -130,6 +138,7 @@ PROPERTY_SPECS = {
             "default": 1.0,
         },
     ),
+    # 不动判定的位移阈值, Blender 单位
     "static_distance": (
         "FloatProperty",
         {
@@ -144,6 +153,7 @@ PROPERTY_SPECS = {
             "unit": "LENGTH",
         },
     ),
+    # 不动判定的转角阈值, 弧度, 默认约 0.5 度
     "static_angle": (
         "FloatProperty",
         {
@@ -155,6 +165,7 @@ PROPERTY_SPECS = {
             "subtype": "ANGLE",
         },
     ),
+    # 一段蒙皮网格最多使用的骨骼数, 0 表示不限
     "max_bones_per_mesh": (
         "IntProperty",
         {
@@ -165,6 +176,7 @@ PROPERTY_SPECS = {
             "default": 0,
         },
     ),
+    # 一个骨架最多的骨骼数, 0 表示不限
     "max_bones_total": (
         "IntProperty",
         {
@@ -175,6 +187,7 @@ PROPERTY_SPECS = {
             "default": 0,
         },
     ),
+    # 断面 UV 的处理方式
     "interior_uv": (
         "EnumProperty",
         {
@@ -192,6 +205,7 @@ PROPERTY_SPECS = {
             "them in the engine.",
         },
     ),
+    # 盒投影时每单位距离对应的 UV 长度
     "interior_uv_scale": (
         "FloatProperty",
         {
@@ -202,6 +216,7 @@ PROPERTY_SPECS = {
             "default": 1.0,
         },
     ),
+    # 导出文件名, 不含扩展名; {asset} 换成源物体名
     "file_name": (
         "StringProperty",
         {
@@ -211,6 +226,7 @@ PROPERTY_SPECS = {
             "default": "{asset}",
         },
     ),
+    # 导出目录, // 表示 blend 文件所在目录
     "directory": (
         "StringProperty",
         {
@@ -227,7 +243,11 @@ PROPERTY_SPECS = {
 
 
 def _box_projection(values):
-    """UV 缩放只在盒投影时生效"""
+    """UV 缩放只在盒投影时生效
+
+    values 参数组
+    返回 生效为真
+    """
     return values.interior_uv == "BOX"
 
 

@@ -11,6 +11,7 @@ from .interaction import CLASSES
 from .preview import start, stop
 from .settings import SCHEMA
 
+# 工具声明: 驱动参数以挂载参数组的形式挂到物体上, 预览的绘制回调经钩子在注册时挂上, 注销时摘下
 TOOL = ToolSpec(
     tool_id=TOOL_ID,
     locales=Path(__file__).with_name("locales"),

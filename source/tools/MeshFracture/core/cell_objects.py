@@ -11,7 +11,11 @@ from .cells import effective_margin, points_as_bmesh_cells
 
 
 def _create_debug_points(points, batch):
-    """建立 DebugPoints 诊断几何, 显示扰动后实际用于切割的种子点"""
+    """建立 DebugPoints 诊断几何, 显示扰动后实际用于切割的种子点
+
+    points 扰动后的种子点
+    batch ShardBatch, 提供回收账本与落点集合
+    """
     tracker = batch.naming.tracker
     mesh = tracker.track("meshes", bpy.data.meshes.new("DebugPoints"))
     mesh.from_pydata(points, [], [])
@@ -21,13 +25,23 @@ def _create_debug_points(points, batch):
 
 
 def _convex_cell_mesh(cell_points, weld_dist, jitter_half, settings, batch, rng):
-    """把一个胞体的顶点表变成凸包网格; 顶点不足或凸包失败时返回 None"""
+    """把一个胞体的顶点表变成凸包网格
+
+    cell_points 胞体的顶点
+    weld_dist 焊接距离
+    jitter_half 顶点抖动半幅
+    settings 参数值
+    batch ShardBatch
+    rng 局部随机流
+    返回 网格数据; 顶点不足或凸包失败时为 None
+    """
     with mesh_edit() as bm:
         # 轻微抖动有助焊接重合点; 每个顶点都先取随机数, 保证随机流的消费次序固定
         for point in cell_points:
             jitter = Vector(tuple(rng.uniform(-jitter_half, jitter_half) for _ in range(3)))
             bm.verts.new(point + jitter)
         bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
+        # 少于 4 个点围不成体
         if len(bm.verts) < 4:
             return None
         try:
@@ -48,7 +62,11 @@ def _convex_cell_mesh(cell_points, weld_dist, jitter_half, settings, batch, rng)
 
 
 def _copy_source_layers(mesh, source_mesh):
-    """复制材质槽与 UV, 颜色层; 布尔求交本身也会合并这些层, 预先建好才能保持活动层与材质槽一致"""
+    """复制材质槽与 UV, 颜色层; 布尔求交本身也会合并这些层, 预先建好才能保持活动层与材质槽一致
+
+    mesh 胞体的网格数据
+    source_mesh 源物体的网格数据
+    """
     for material in source_mesh.materials:
         mesh.materials.append(material)
     for layer in source_mesh.uv_layers:
@@ -67,6 +85,7 @@ def _copy_source_layers(mesh, source_mesh):
         mesh.color_attributes.active_color_index = mesh.color_attributes.find(
             colors.active_color.name
         )
+    # 渲染用的颜色属性按索引记录, 越界时 (没有颜色属性) 不处理
     if 0 <= colors.render_color_index < len(colors):
         mesh.color_attributes.render_color_index = mesh.color_attributes.find(
             colors[colors.render_color_index].name
@@ -74,7 +93,11 @@ def _copy_source_layers(mesh, source_mesh):
 
 
 def _sync_slot_links(source_object, cell):
-    """让胞体的材质槽链接方式与来源一致"""
+    """让胞体的材质槽链接方式与来源一致
+
+    source_object 源物体
+    cell 胞体物体
+    """
     # 槽位刚由网格材质拷贝而来, 两侧长度一致; strict=False 只是不因数量差异中断切割
     for source_slot, target_slot in zip(
         source_object.material_slots, cell.material_slots, strict=False
@@ -87,6 +110,14 @@ def build_cells(context, obj, snapshot, points, settings, batch, rng):
     """由种子点建凸胞体物体; 随机流在采样之后按种子扰动, 顶点抖动的次序消费
 
     不刷新视图层: 调用方挂上求交修改器之后统一刷新一次, 一批胞体的布尔才能一起并行求值
+    context Blender 上下文
+    obj 源物体或被细分的父碎块
+    snapshot BooleanSource
+    points 世界坐标的种子点
+    settings 参数值
+    batch ShardBatch
+    rng 局部随机流
+    返回 胞体物体列表
     """
     if not points:
         return []
@@ -100,12 +131,14 @@ def build_cells(context, obj, snapshot, points, settings, batch, rng):
     created = []
     for center, cell_points in cells:
         mesh = _convex_cell_mesh(cell_points, weld_dist, jitter_half, settings, batch, rng)
+        # 退化的胞体被跳过, 不中断整次切割
         if mesh is None:
             continue
         _copy_source_layers(mesh, obj.data)
         cell = batch.new_object(mesh, center)
         created.append(cell)
         _sync_slot_links(obj, cell)
+        # 实时重绘: 每建一个胞体就刷新视口, 便于观察过程, 代价是明显变慢
         if settings.use_debug_redraw:
             context.view_layer.update()
             shard_objects.redraw()

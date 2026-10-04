@@ -11,7 +11,14 @@ from . import boolean, cleanup, islands, shard_objects
 
 
 def _add_intersection(cell, obj, snapshot, hide_faces):
-    """给胞体加布尔求交修改器; hide_faces 时把胞体面全部标记为隐藏, 返回修改器"""
+    """给胞体加布尔求交修改器
+
+    cell 胞体物体
+    obj 被切的物体
+    snapshot BooleanSource
+    hide_faces 为真时把胞体面全部标记为隐藏, 用来识别内部断面
+    返回 布尔修改器
+    """
     modifier = cell.modifiers.new(name="Boolean", type="BOOLEAN")
     modifier.object = obj
     boolean.configure_intersection(modifier, snapshot)
@@ -23,20 +30,37 @@ def _add_intersection(cell, obj, snapshot, hide_faces):
 
 
 def _bake_intersection(cell, modifier, snapshot, depsgraph, tracker):
-    """取布尔求值结果替换胞体网格并移除修改器, 返回新网格; 旧网格登记为待删"""
+    """取布尔求值结果替换胞体网格并移除修改器; 旧网格登记为待删
+
+    cell 胞体物体
+    modifier 它的布尔修改器
+    snapshot BooleanSource
+    depsgraph 求值用的依赖图
+    tracker 回收账本
+    返回 新网格
+    """
     with boolean.validated_evaluation(cell, modifier, snapshot, depsgraph) as evaluated:
         # 直接复制依赖图里已求值的网格, 避免按全部数据层重新求值修改器栈
         mesh = tracker.track("meshes", bpy.data.meshes.new_from_object(evaluated))
     old_mesh = cell.data
     cell.data = mesh
     cell.modifiers.remove(modifier)
+    # 旧网格没有使用者了才登记待删
     if old_mesh.users == 0:
         tracker.bury(old_mesh)
     return mesh
 
 
 def attach(obj, snapshot, cells, settings, batch):
-    """给每个胞体挂上与被切物体求交的修改器, 返回修改器列表; 还需要刷新视图层才会求值"""
+    """给每个胞体挂上与被切物体求交的修改器; 还需要刷新视图层才会求值
+
+    obj 被切的物体
+    snapshot BooleanSource
+    cells 胞体物体列表
+    settings 参数值
+    batch ShardBatch
+    返回 修改器列表, 与 cells 同序
+    """
     if uses_interior(settings) and batch.first:
         # 首次切割先清掉源物体原有的面隐藏标记, 内部断面判定要从干净的起点开始
         obj.data.polygons.foreach_set("hide", [False] * len(obj.data.polygons))
@@ -48,7 +72,14 @@ def attach(obj, snapshot, cells, settings, batch):
 def collect(snapshot, cells, modifiers, settings, batch, depsgraph):
     """取回求值结果得到贴合表面的碎块; 只做焊接, 清理与压平, 不合并面
 
-    depsgraph 必须是刷新视图层之后取到的; 空交集的胞体被丢弃, 需要时再拆分孤岛
+    空交集的胞体被丢弃, 需要时再拆分孤岛
+    snapshot BooleanSource
+    cells 胞体物体列表
+    modifiers attach 返回的修改器列表, 与 cells 同序
+    settings 参数值
+    batch ShardBatch
+    depsgraph 必须是刷新视图层之后取到的依赖图
+    返回 碎块物体列表
     """
     tracker = batch.naming.tracker
     bake = bakes_booleans(settings)
@@ -61,6 +92,7 @@ def collect(snapshot, cells, modifiers, settings, batch, depsgraph):
                 # 求交为空说明胞体落在源物体之外
                 shard_objects.discard_object(tracker, cell)
                 continue
+            # 含多个互不连通部分的碎块记下来, 之后统一拆分孤岛
             if parts > 1:
                 multi.add(cell)
         else:

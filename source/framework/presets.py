@@ -26,18 +26,32 @@ PACKAGE = __package__.rpartition(".")[0]
 
 
 def current_preset_property():
-    """场景参数组上的当前预设名字段: 只记录界面显示的最近使用的预设名, 不属于预设参数"""
+    """场景参数组上的当前预设名字段: 只记录界面显示的最近使用的预设名, 不属于预设参数
+
+    返回 StringProperty 定义
+    """
     return StringProperty(name="Preset", translation_context=CONTEXT)
 
 
 def preset_directory(tool_id, create=False):
-    """工具的预设目录, 位于扩展用户目录下"""
+    """工具的预设目录, 位于扩展用户目录下
+
+    tool_id 工具标识
+    create 为真时目录不存在则创建
+    返回 目录路径
+    """
     return Path(bpy.utils.extension_path_user(PACKAGE, path=f"presets/{tool_id}", create=create))
 
 
 def _remember(context, owner, name):
-    """记下最近使用的预设名, 并重绘面板让名称立刻更新"""
+    """记下最近使用的预设名, 并重绘面板让名称立刻更新
+
+    context Blender 上下文
+    owner 工具的参数组
+    name 最近使用的预设名, 空串表示没有
+    """
     owner.preset_name = name
+    # 没有区域时 (例如后台脚本调用) 无需重绘
     if context.area:
         context.area.tag_redraw()
 
@@ -50,22 +64,36 @@ class PresetOperator(ToolOperator):
 
     @property
     def schema(self):
-        """目标工具的参数规格, 工具没有登记预设时为 None"""
+        """目标工具的参数规格
+
+        返回 Schema; 工具没有登记预设时为 None
+        """
         return SCHEMAS.get(self.tool_id)
 
     def target(self, context):
-        """目标工具在当前场景的参数组"""
+        """目标工具在当前场景的参数组
+
+        context Blender 上下文
+        返回 参数组; 工具没有登记预设时抛 PresetError
+        """
+        # 工具标识不在登记表里: 注销后残留的菜单, 或被篡改的标识
         if self.schema is None:
             raise preset_files.PresetError("The preset target is unavailable")
         return scene_settings(context, self.tool_id)
 
     def filepath(self):
-        """本次操作的预设文件"""
+        """本次操作的预设文件, 名字取自子类声明的 name 属性
+
+        返回 预设文件路径
+        """
         return preset_files.preset_filepath(preset_directory(self.tool_id), self.name)
 
 
 def _operator_name_property():
-    """预设算子的名称属性: 本次操作要保存, 载入或删除的预设名; 每次调用都新建一份属性定义"""
+    """预设算子的名称属性: 本次操作要保存, 载入或删除的预设名
+
+    返回 每次调用都新建的 StringProperty 定义, 多个算子类不能共用同一份
+    """
     return StringProperty(
         name="Name",
         description="Name of the preset",
@@ -94,16 +122,28 @@ class QD_OT_preset_save(PresetOperator, Operator):
     }
 
     def invoke(self, context, _event):
-        """打开填写预设名的对话框"""
+        """打开填写预设名的对话框
+
+        context Blender 上下文
+        _event 触发事件, 不使用
+        返回 对话框的算子返回集合
+        """
         return context.window_manager.invoke_props_dialog(self, width=360)
 
     def draw(self, _context):
-        """绘制预设名与覆盖开关"""
+        """绘制预设名与覆盖开关
+
+        _context Blender 上下文, 不使用
+        """
         self.layout.prop(self, "name")
         self.layout.prop(self, "overwrite")
 
     def run(self, context):
-        """读出目标参数, 加上信封后写入本工具的预设目录"""
+        """读出目标参数, 加上信封后写入本工具的预设目录
+
+        context Blender 上下文
+        返回 报告文字
+        """
         owner = self.target(context)
         data = preset_files.encode(self.tool_id, self.schema.read(owner))
         directory = preset_directory(self.tool_id, create=True)
@@ -124,7 +164,11 @@ class QD_OT_preset_load(PresetOperator, Operator):
     __annotations__ = {"name": _operator_name_property()}
 
     def run(self, context):
-        """读取并核对信封, 校验通过后整体写回; 缺字段保留界面现值"""
+        """读取并核对信封, 校验通过后整体写回; 缺字段保留界面现值
+
+        context Blender 上下文
+        返回 报告文字
+        """
         owner = self.target(context)
         path = self.filepath()
         values = preset_files.decode(self.tool_id, preset_files.read_preset(path))
@@ -144,14 +188,24 @@ class QD_OT_preset_remove(PresetOperator, Operator):
     __annotations__ = {"name": _operator_name_property()}
 
     def invoke(self, context, event):
-        """删除不可撤销, 先弹确认对话框"""
+        """删除不可撤销, 先弹确认对话框
+
+        context Blender 上下文
+        event 触发事件
+        返回 确认对话框的算子返回集合
+        """
         return context.window_manager.invoke_confirm(self, event)
 
     def run(self, context):
-        """删除预设文件; 删掉的正好是当前预设时清空显示的名称"""
+        """删除预设文件; 删掉的正好是当前预设时清空显示的名称
+
+        context Blender 上下文
+        返回 报告文字
+        """
         owner = self.target(context)
         path = self.filepath()
         preset_files.remove_preset(path)
+        # 面板标题栏显示的是最近使用的预设名, 文件没了名字也要清掉
         if owner.preset_name == path.stem:
             _remember(context, owner, "")
         return tr_report(CONTEXT, 'Removed preset "{name}"', name=path.stem)
@@ -167,7 +221,11 @@ class QD_OT_preset_open_directory(PresetOperator, Operator):
     bl_options: ClassVar[set[str]] = {"INTERNAL"}
 
     def run(self, context):
-        """目录不存在时先创建再打开"""
+        """目录不存在时先创建再打开
+
+        context Blender 上下文
+        """
+        # 先核对目标工具: 工具没有登记预设时不创建目录
         self.target(context)
         bpy.ops.wm.path_open(filepath=str(preset_directory(self.tool_id, create=True)))
 
@@ -181,13 +239,18 @@ class QD_MT_presets(Menu):
     bl_translation_context = CONTEXT
 
     def draw(self, context):
-        """目标工具由绘制方经布局上下文传入, 读不出目录时说明原因而不是显示成没有预设"""
+        """绘制菜单项; 目标工具由绘制方经布局上下文传入, 读不出目录时说明原因而不是显示成没有预设
+
+        context Blender 上下文, 布局上下文里带有目标工具标识
+        """
         layout = self.layout
         tool_id = getattr(context, TOOL_MEMBER, "")
+        # 标识缺失或工具没有登记预设时, 说明原因而不是显示空菜单
         if tool_id not in SCHEMAS:
             layout.label(text="The preset target is unavailable", text_ctxt=CONTEXT, icon="ERROR")
             return
         owner = scene_settings(context, tool_id)
+        # 保存需要弹出对话框, 所以这一行用 INVOKE_DEFAULT 调用
         row = layout.row()
         row.operator_context = "INVOKE_DEFAULT"
         save = row.operator(
@@ -195,6 +258,7 @@ class QD_MT_presets(Menu):
         )
         save.tool_id, save.name = tool_id, owner.preset_name
         layout.separator()
+        # 目录读取失败 (权限, 路径) 时给出原因, 与"没有预设"区分开
         try:
             names = preset_files.list_presets(preset_directory(tool_id))
         except (OSError, ValueError) as error:
@@ -212,6 +276,7 @@ class QD_MT_presets(Menu):
             remove_row.operator_context = "INVOKE_DEFAULT"
             remove = remove_row.operator(QD_OT_preset_remove.bl_idname, text="", icon="X")
             remove.tool_id, remove.name = tool_id, name
+        # 读取成功但目录里没有文件: 提示还没有预设
         if not names:
             layout.label(text="No presets yet", text_ctxt=CONTEXT)
         layout.separator()
@@ -220,7 +285,12 @@ class QD_MT_presets(Menu):
 
 
 def draw_presets(layout, tool_id, owner):
-    """预设入口: 预设下拉菜单加一个快捷保存按钮, 用于面板标题栏"""
+    """预设入口: 预设下拉菜单加一个快捷保存按钮, 用于面板标题栏
+
+    layout 要绘制到的布局
+    tool_id 工具标识
+    owner 工具的参数组, 提供最近使用的预设名
+    """
     # 工具标识经布局上下文交给同一布局上的菜单, 绘制期不写任何 ID 数据
     layout.context_string_set(TOOL_MEMBER, tool_id)
     row = layout.row(align=True)
@@ -231,6 +301,7 @@ def draw_presets(layout, tool_id, owner):
     save.tool_id, save.name = tool_id, owner.preset_name
 
 
+# 预设界面需要注册的全部类, 由装配层按顺序注册
 CLASSES = (
     QD_OT_preset_save,
     QD_OT_preset_load,

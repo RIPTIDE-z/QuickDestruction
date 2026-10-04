@@ -12,15 +12,25 @@ SELF_INTERSECTING = "SELF_INTERSECTING"
 
 
 def _self_intersecting(bm):
-    """用 BVH 找互相重叠的面对; 共享顶点的相邻面会被误报为重叠, 因此排除"""
+    """用 BVH 找互相重叠的面对; 共享顶点的相邻面会被误报为重叠, 因此排除
+
+    bm 要检查的 BMesh
+    返回 有自相交为真
+    """
     bm.faces.ensure_lookup_table()
     tree = BVHTree.FromBMesh(bm)
     faces = bm.faces
+    # 树与自身求交会得到所有重叠面对; 没有公共顶点的才是真正互相穿插
     return any(not set(faces[a].verts) & set(faces[b].verts) for a, b in tree.overlap(tree))
 
 
 def mesh_issues(obj, depsgraph):
-    """按求值后的网格检查一个源物体, 与切割使用的几何一致; 返回问题集合, 没有问题时为空"""
+    """按求值后的网格检查一个源物体, 与切割使用的几何一致
+
+    obj 源物体
+    depsgraph 求值用的依赖图
+    返回 问题集合 (NOT_CLOSED, SELF_INTERSECTING), 没有问题时为空
+    """
     with evaluated_mesh(obj, depsgraph) as (_evaluated, mesh), mesh_edit(mesh) as bm:
         issues = set()
         if is_not_closed(bm):

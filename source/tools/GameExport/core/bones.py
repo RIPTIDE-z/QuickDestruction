@@ -19,36 +19,56 @@ BONE_LENGTH_RATIO = 0.25
 
 @contextmanager
 def edit_mode(context, obj):
-    """让物体成为活动物体并进入编辑模式, 无论如何退出时回到物体模式; 选择与活动物体由调用方还原"""
+    """让物体成为活动物体并进入编辑模式, 无论如何退出时回到物体模式
+
+    选择与活动物体由调用方还原
+    context Blender 上下文
+    obj 要编辑的骨架物体, 必须在当前视图层里
+    """
     context.view_layer.objects.active = obj
     bpy.ops.object.mode_set(mode="EDIT")
     try:
         yield
     finally:
+        # 退出时可能已经不在编辑模式 (例如块内出错前就退出了), 只在需要时切换
         if obj.mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
 
 
 def bone_length(shard):
-    """碎块对应的骨骼长度: 碎块最小尺寸的四分之一, 不小于下限"""
+    """碎块对应的骨骼长度: 碎块最小尺寸的四分之一, 不小于下限
+
+    shard 碎块物体
+    返回 骨骼长度, Blender 单位
+    """
     return max(MIN_BONE_LENGTH, BONE_LENGTH_RATIO * min(shard.dimensions))
 
 
 def make_armature(context, tracker, name, collection, bones, root_length):
-    """建一个骨架物体并链接进 collection; bones 是 [(骨骼名, 头部位置, 长度), ...]
+    """建一个骨架物体并链接进 collection
 
-    返回骨架物体; 数据与物体都登记在创建账本里, 失败时由账本回收
+    数据与物体都登记在创建账本里, 失败时由账本回收
+    context Blender 上下文
+    tracker 创建账本
+    name 骨架物体与数据的名字
+    collection 要链接进的集合, 必须已在场景里
+    bones [(骨骼名, 头部位置, 长度), ...], 头部位置是世界坐标
+    root_length root 骨骼的长度
+    返回 骨架物体
     """
     data = tracker.track("armatures", bpy.data.armatures.new(name))
     obj = tracker.track("objects", bpy.data.objects.new(name, data))
     collection.objects.link(obj)
+    # 骨骼只能在编辑模式下创建
     with edit_mode(context, obj):
+        # root 在世界原点, 其余骨骼都挂在它下面
         root = data.edit_bones.new(ROOT_BONE)
         root.head = Vector((0.0, 0.0, 0.0))
         root.tail = Vector((0.0, root_length, 0.0))
         for bone_name, head, length in bones:
             bone = data.edit_bones.new(bone_name)
             bone.head = Vector(head)
+            # 尾部沿 +Y 只是为了让骨骼有长度, 保证 matrix_local 是纯平移
             bone.tail = Vector(head) + Vector((0.0, length, 0.0))
             bone.parent = root
     return obj

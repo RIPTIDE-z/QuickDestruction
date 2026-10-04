@@ -11,8 +11,9 @@ CONTEXT = tool_context(TOOL_ID)
 STAGE = "simulate"
 # 推进期间使用的临时动作的阶段标记
 PENDING_STAGE = "simulate_pending"
-# 成果动作与临时动作的名字前缀, 后接资产名; 名字只用于显示
+# 成果动作的名字前缀, 后接资产名; 名字只用于显示
 RESULT_PREFIX = "QD_Sim_"
+# 临时动作的名字前缀, 后接资产名
 PENDING_PREFIX = "QD_Pending_"
 
 # 每帧子步的上限, 与参数规格里的最大值一致
@@ -21,8 +22,11 @@ SUBSTEP_LIMIT = 200
 # 整段位移与转角都不超过它的碎块视为没有动, 不写关键帧, 停在静止姿态
 STATIC_EPSILON = 1e-6
 
-# 预设地面: 物体名, 厚度与最小半边长 (米, 按场景单位换算), 以及半边长相对资产最大水平尺寸的倍数
+# 预设地面的物体名
 GROUND_NAME = "QD_Ground"
+# 预设地面的厚度, 米, 按场景单位换算
 GROUND_THICKNESS = 1.0
+# 预设地面水平半边长的下限, 米, 按场景单位换算
 GROUND_MIN_HALF = 10.0
+# 预设地面水平半边长相对资产最大水平尺寸的倍数
 GROUND_EXTENT_RATIO = 3.0

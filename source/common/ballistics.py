@@ -1,6 +1,7 @@
 """弹道 - 把路径与源物体求得的穿越点编译成入口坑, 通道与出口坑的撞击作用; 纯计算, 不依赖 Blender
 
-求交由调用方完成, 这里只处理几何关系: 穿越点按沿路径的累计长度排序, 每个点带有路径在该处的方向与表面外法线
+求交由调用方完成, 这里只处理几何关系: 穿越点按沿路径的累计长度排序,
+每个点带有路径在该处的方向与表面外法线
 穿越点按"进入, 离开"配对成实心段; 每一段按穿透预算判断是否打穿
 穿透预算以混凝土的厚度计: 打穿一段需要的预算是它的厚度乘资产的相对穿透阻力, 金属等硬材料消耗得更快
 """
@@ -45,7 +46,11 @@ class Flight:
 
 
 def path_lengths(path):
-    """折线各顶点的累计长度, 第一个顶点为 0"""
+    """折线各顶点的累计长度
+
+    path 折线的各顶点, 每个点是三元组
+    返回 与 path 等长的累计长度列表, 第一个顶点为 0
+    """
     lengths = [0.0]
     for start, end in pairwise(path):
         lengths.append(lengths[-1] + impulse.length(impulse.sub(end, start)))
@@ -53,54 +58,84 @@ def path_lengths(path):
 
 
 def point_at(path, lengths, arc):
-    """折线上累计长度为 arc 处的点与该处的单位方向; arc 超出范围时取端点"""
+    """求折线上累计长度为 arc 处的点与该处的单位方向
+
+    path 折线的各顶点
+    lengths path 的累计长度, 来自 path_lengths
+    arc 沿折线的累计长度, 超出范围时取端点
+    返回 (点, 单位方向); 退化线段的方向取世界 Z 轴
+    """
     arc = min(max(arc, 0.0), lengths[-1])
+    # 找到 arc 所在的线段; 最后一段兜底, 浮点误差下 arc 不会落到所有线段之外
     for index in range(len(path) - 1):
         if arc <= lengths[index + 1] or index == len(path) - 2:
             size = lengths[index + 1] - lengths[index]
             along = 0.0 if size <= impulse.TINY else (arc - lengths[index]) / size
             edge = impulse.sub(path[index + 1], path[index])
             point = impulse.add(path[index], impulse.scale(edge, along))
+            # 退化线段没有方向, 退回世界 Z 轴避免除零
             return point, impulse.normalize(edge) or (0.0, 0.0, 1.0)
     return path[0], (0.0, 0.0, 1.0)
 
 
 def reflect(direction, normal):
-    """方向关于表面的镜面反射: d - 2 (d . n) n"""
+    """方向关于表面的镜面反射: d - 2 (d . n) n
+
+    direction 入射方向
+    normal 表面单位法线
+    返回 反射方向
+    """
     return impulse.sub(direction, impulse.scale(normal, 2.0 * impulse.dot(direction, normal)))
 
 
 def solid_segments(crossings, path):
-    """把穿越点配成实心段, 返回 [(入口, 出口)]; 出口为 None 表示路径在实体内结束
+    """把穿越点配成实心段
 
     用方向与外法线的点积判断进出: 小于零是进入, 大于零是离开; 擦过表面的点被排除
     路径起点就在实体内部时, 第一段补一个没有法线的隐含入口
+    crossings 按累计长度排序的穿越点
+    path 弹道折线的各顶点, 隐含入口取它的第一个点
+    返回 [(入口, 出口)]; 出口为 None 表示路径在实体内结束
     """
     segments = []
     entry = None
     first = True
     for crossing in crossings:
         facing = impulse.dot(crossing.direction, crossing.normal)
+        # 几乎平行于表面的点是擦过, 进出判断不可靠
         if abs(facing) < TANGENT_EPSILON:
             continue
         if facing < 0.0:
             # 已经在实体内又遇到进入的点, 说明网格不封闭或自相交, 忽略它
             entry = entry or crossing
         elif entry is not None:
+            # 离开点与前面的进入点配成一段
             segments.append((entry, crossing))
             entry = None
         elif first:
+            # 第一个有效点就是离开点: 路径起点在实体内部, 补一个隐含入口
             start = Crossing(0.0, path[0], crossing.direction, None)
             segments.append((start, crossing))
         first = False
+    # 路径走完仍在实体内: 最后一段没有出口
     if entry is not None:
         segments.append((entry, None))
     return segments
 
 
 def _strikes(driver, entry, end_point, end_arc, direction, exit_crossing):
-    """一个实心段产生的撞击作用: 入口坑, 通道, 以及打穿时的出口坑"""
+    """一个实心段产生的撞击作用: 入口坑, 通道, 以及打穿时的出口坑
+
+    driver 发出子弹的驱动快照, 提供各撞击的半径, 速度与锥角
+    entry 入口穿越点
+    end_point 通道的终点
+    end_arc 通道终点沿路径的累计长度
+    direction 弹道方向
+    exit_crossing 出口穿越点, 没有打穿时为 None
+    返回 撞击作用列表
+    """
     strikes = []
+    # 隐含入口 (路径起点在实体内) 没有表面法线, 也就没有入口坑
     if entry.normal is not None:
         strikes.append(
             Strike(
@@ -115,6 +150,7 @@ def _strikes(driver, entry, end_point, end_arc, direction, exit_crossing):
                 driver,
             )
         )
+    # 通道长度为零 (入口处即停下) 时没有通道
     if end_arc > entry.arc:
         strikes.append(
             Strike(
@@ -129,6 +165,7 @@ def _strikes(driver, entry, end_point, end_arc, direction, exit_crossing):
                 driver,
             )
         )
+    # 打穿才有出口坑, 出口用自己的随机锥角 exit_spread
     if exit_crossing is not None:
         strikes.append(
             Strike(
@@ -149,23 +186,32 @@ def _strikes(driver, entry, end_point, end_arc, direction, exit_crossing):
 def plan_flight(driver, crossings, resistance, path):
     """一发子弹的计划: 逐个实心段按穿透预算判断打穿或停下
 
-    打穿一段消耗的预算是它的厚度乘 resistance; 预算不够时子弹停在预算能走到的深度, 只留入口坑与到那里的通道
+    打穿一段消耗的预算是它的厚度乘 resistance
+    预算不够时子弹停在预算能走到的深度, 只留入口坑与到那里的通道
     子弹停下后不再处理后面的实心段
+    driver 发出子弹的驱动快照, 提供穿透力与各撞击参数
+    crossings 按累计长度排序的穿越点
+    resistance 资产的相对穿透阻力, 1 表示与混凝土相同
+    path 弹道折线的各顶点
+    返回 Flight
     """
     budget = driver.penetration
     total = path_lengths(path)[-1]
     strikes = []
     pierced = 0
     for entry, leave in solid_segments(crossings, path):
+        # 出口为 None 表示路径在实体内结束, 厚度算到路径末端
         exit_arc = total if leave is None else leave.arc
         thickness = max(0.0, exit_arc - entry.arc)
         need = thickness * resistance
         direction = entry.direction
+        # 预算足够打穿: 记下入口, 通道与出口, 扣除预算后继续下一段
         if leave is not None and budget + BUDGET_EPSILON >= need:
             strikes += _strikes(driver, entry, leave.point, leave.arc, direction, leave)
             budget -= need
             pierced += 1
             continue
+        # 预算不够: 子弹停在预算能走到的深度, 之后的实心段都不再处理
         depth = min(thickness, budget / max(resistance, impulse.TINY))
         stop_arc = entry.arc + depth
         end_point = impulse.add(entry.point, impulse.scale(direction, depth))
@@ -175,5 +221,11 @@ def plan_flight(driver, crossings, resistance, path):
 
 
 def arrival_frame(driver, arc, dt):
-    """子弹到达累计长度 arc 处的帧, 与撞击事件的时刻同一个换算"""
+    """子弹到达累计长度 arc 处的帧, 与撞击事件的时刻同一个换算
+
+    driver 发出子弹的驱动快照, 提供发射帧与弹速
+    arc 沿路径的累计长度
+    dt 每帧经过的模拟秒
+    返回 帧号, 不早于发射帧
+    """
     return driver.frame + max(0, math.ceil(arc / driver.bullet_speed / dt - impulse.CEIL_SLACK))

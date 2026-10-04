@@ -12,7 +12,8 @@ from itertools import pairwise
 
 from .schema import Schema
 
-# 驱动参数的翻译上下文, 与破坏驱动工具 tool_context("drivers") 的结果相同; common 不能导入 framework, 这里直接写出
+# 驱动参数的翻译上下文, 与破坏驱动工具 tool_context("drivers") 的结果相同
+# common 不能导入 framework, 所以这里直接写出
 CONTEXT = "QuickDestruction.drivers"
 # 驱动参数挂在物体上的属性名
 ATTRIBUTE = "qd_driver"
@@ -79,6 +80,7 @@ ROLE_FIELDS = {
 
 # 驱动参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 DRIVER_SPECS = {
+    # 驱动角色, NONE 表示这个物体不是驱动
     "role": (
         "EnumProperty",
         {
@@ -115,6 +117,7 @@ DRIVER_SPECS = {
             "description": "What the driver does to the shards in its range.",
         },
     ),
+    # 是否参与模拟, 关闭后驱动留在场景里但不起作用
     "enabled": (
         "BoolProperty",
         {
@@ -124,6 +127,7 @@ DRIVER_SPECS = {
             "default": True,
         },
     ),
+    # 起动帧: 范围内的碎块这一帧保持原位, 从下一帧开始运动
     "frame": (
         "IntProperty",
         {
@@ -134,6 +138,7 @@ DRIVER_SPECS = {
             "default": 10,
         },
     ),
+    # 全强度速度, 每模拟秒
     "speed": (
         "FloatProperty",
         {
@@ -146,6 +151,7 @@ DRIVER_SPECS = {
             "unit": "VELOCITY",
         },
     ),
+    # 强度随距离衰减的方式
     "falloff": (
         "EnumProperty",
         {
@@ -164,6 +170,7 @@ DRIVER_SPECS = {
             "description": "How the speed drops from the core to the edge of the range.",
         },
     ),
+    # 全速核心占范围的比例, 0 到 1
     "core_ratio": (
         "FloatProperty",
         {
@@ -176,6 +183,7 @@ DRIVER_SPECS = {
             "subtype": "FACTOR",
         },
     ),
+    # 方向随机锥角, 弧度, 默认 15 度
     "spread": (
         "FloatProperty",
         {
@@ -187,6 +195,7 @@ DRIVER_SPECS = {
             "subtype": "ANGLE",
         },
     ),
+    # 爆炸的向上偏置, 0 为纯径向
     "lift": (
         "FloatProperty",
         {
@@ -198,6 +207,7 @@ DRIVER_SPECS = {
             "default": 0.2,
         },
     ),
+    # 全强度时每秒的最大转角, 弧度, 默认 360 度每秒
     "max_spin": (
         "FloatProperty",
         {
@@ -211,6 +221,7 @@ DRIVER_SPECS = {
             "subtype": "ANGLE",
         },
     ),
+    # 冲击波速度, 0 表示范围内同时起动
     "wave_speed": (
         "FloatProperty",
         {
@@ -223,6 +234,7 @@ DRIVER_SPECS = {
             "unit": "VELOCITY",
         },
     ),
+    # 质量响应指数, 0 表示全部碎块速度相同
     "mass_response": (
         "FloatProperty",
         {
@@ -235,6 +247,7 @@ DRIVER_SPECS = {
             "subtype": "FACTOR",
         },
     ),
+    # 旋涡朝轴收拢的速度比例, 负值向外
     "inward": (
         "FloatProperty",
         {
@@ -247,6 +260,7 @@ DRIVER_SPECS = {
             "subtype": "FACTOR",
         },
     ),
+    # 旋涡沿轴的附加速度, 每模拟秒
     "rise": (
         "FloatProperty",
         {
@@ -261,6 +275,7 @@ DRIVER_SPECS = {
             "unit": "VELOCITY",
         },
     ),
+    # 曲线方向的作用管半径, 0 表示取曲线的倒角深度
     "tube_radius": (
         "FloatProperty",
         {
@@ -274,6 +289,7 @@ DRIVER_SPECS = {
             "unit": "LENGTH",
         },
     ),
+    # 曲线方向把碎块拉向曲线的速度比例
     "attraction": (
         "FloatProperty",
         {
@@ -285,6 +301,7 @@ DRIVER_SPECS = {
             "subtype": "FACTOR",
         },
     ),
+    # 区域内碎块的处理方式
     "zone_action": (
         "EnumProperty",
         {
@@ -305,6 +322,7 @@ DRIVER_SPECS = {
             "description": "What happens to the shards whose center is inside the zone.",
         },
     ),
+    # 弹道的弹速, 决定路径上各处何时被命中
     "bullet_speed": (
         "FloatProperty",
         {
@@ -317,6 +335,7 @@ DRIVER_SPECS = {
             "unit": "VELOCITY",
         },
     ),
+    # 弹道能穿透的混凝土等效厚度
     "penetration": (
         "FloatProperty",
         {
@@ -330,6 +349,7 @@ DRIVER_SPECS = {
             "unit": "LENGTH",
         },
     ),
+    # 入口坑的作用半径
     "entry_radius": (
         "FloatProperty",
         {
@@ -342,6 +362,7 @@ DRIVER_SPECS = {
             "unit": "LENGTH",
         },
     ),
+    # 通道的作用半径
     "channel_radius": (
         "FloatProperty",
         {
@@ -355,6 +376,7 @@ DRIVER_SPECS = {
             "unit": "LENGTH",
         },
     ),
+    # 出口坑的作用半径
     "exit_radius": (
         "FloatProperty",
         {
@@ -367,6 +389,7 @@ DRIVER_SPECS = {
             "unit": "LENGTH",
         },
     ),
+    # 入口坑抛回碎块的速度
     "entry_speed": (
         "FloatProperty",
         {
@@ -378,6 +401,7 @@ DRIVER_SPECS = {
             "unit": "VELOCITY",
         },
     ),
+    # 通道推动碎块的速度
     "channel_speed": (
         "FloatProperty",
         {
@@ -389,6 +413,7 @@ DRIVER_SPECS = {
             "unit": "VELOCITY",
         },
     ),
+    # 出口坑抛出碎块的速度
     "exit_speed": (
         "FloatProperty",
         {
@@ -400,6 +425,7 @@ DRIVER_SPECS = {
             "unit": "VELOCITY",
         },
     ),
+    # 出口坑的随机锥角, 弧度, 默认 35 度
     "exit_spread": (
         "FloatProperty",
         {
@@ -411,6 +437,7 @@ DRIVER_SPECS = {
             "subtype": "ANGLE",
         },
     ),
+    # 推力是否只推箭头前方的碎块
     "front_only": (
         "BoolProperty",
         {
@@ -419,6 +446,7 @@ DRIVER_SPECS = {
             "default": False,
         },
     ),
+    # 随机种子, 不移动驱动也能换一组随机方向与自转
     "seed": (
         "IntProperty",
         {
@@ -488,55 +516,85 @@ class DriverSnapshot:
     bullet_speed: float = 400.0
     # 弹道: 混凝土等效的可穿透厚度
     penetration: float = 0.3
-    # 弹道: 入口坑, 通道与出口坑的作用半径
+    # 弹道: 入口坑的作用半径
     entry_radius: float = 0.15
+    # 弹道: 通道的作用半径
     channel_radius: float = 0.05
+    # 弹道: 出口坑的作用半径
     exit_radius: float = 0.4
-    # 弹道: 入口坑, 通道与出口坑给碎块的速度
+    # 弹道: 入口坑给碎块的速度
     entry_speed: float = 3.0
+    # 弹道: 通道给碎块的速度
     channel_speed: float = 10.0
+    # 弹道: 出口坑给碎块的速度
     exit_speed: float = 15.0
     # 弹道: 出口锥角, 弧度
     exit_spread: float = math.radians(35.0)
 
 
 def is_driver(obj):
-    """物体是否是启用中的驱动"""
+    """判断物体是否是启用中的驱动
+
+    obj 物体
+    返回 是启用中的驱动为真
+    """
     params = getattr(obj, ATTRIBUTE, None)
     return params is not None and params.role != NONE and params.enabled
 
 
 def driver_objects(scene):
-    """场景里启用中的驱动物体, 按名字排序"""
+    """场景里启用中的驱动物体
+
+    scene 场景
+    返回 按名字排序的物体列表, 顺序稳定才能让摘要与随机结果可复现
+    """
     return sorted((obj for obj in scene.objects if is_driver(obj)), key=lambda obj: obj.name)
 
 
 def role_of(obj):
-    """物体的驱动角色, 不是驱动时为 NONE"""
+    """物体的驱动角色
+
+    obj 物体, 可以为 None
+    返回 角色; 不是驱动时为 NONE
+    """
     params = getattr(obj, ATTRIBUTE, None) if obj is not None else None
     return params.role if params is not None else NONE
 
 
 def all_drivers(scene):
-    """场景里设了角色的全部驱动物体, 含停用的, 按名字排序"""
+    """场景里设了角色的全部驱动物体, 含停用的
+
+    scene 场景
+    返回 按名字排序的物体列表
+    """
     return sorted((obj for obj in scene.objects if role_of(obj) != NONE), key=lambda obj: obj.name)
 
 
 def display_size(obj):
-    """作用范围的基准尺寸: 空物体用显示尺寸, 其他类型按 1"""
+    """作用范围的基准尺寸
+
+    obj 驱动物体
+    返回 空物体用显示尺寸, 其他类型按 1
+    """
     return obj.empty_display_size if obj.type == "EMPTY" else 1.0
 
 
 def range_radius(obj):
-    """作用范围在世界坐标里的最大半径, 用于界面显示"""
+    """作用范围在世界坐标里的最大半径, 用于界面显示
+
+    obj 驱动物体
+    返回 基准尺寸乘最大的缩放分量
+    """
     return display_size(obj) * max(abs(value) for value in obj.matrix_world.to_scale())
 
 
 def curve_path(obj):
-    """曲线物体第一条样条的世界坐标折线; 没有样条时为空
+    """曲线物体第一条样条的世界坐标折线
 
     贝塞尔按样条的分辨率逐段求值, 多段线取控制点, NURBS 取控制点连线作近似
     求值后的网格在有倒角时是一根管子, 不能当折线用
+    obj 曲线物体
+    返回 点的元组, 每个点是世界坐标三元组; 没有样条时为空元组
     """
     # 延迟导入: 模块顶层要能在 Blender 之外导入
     from mathutils import Vector
@@ -545,19 +603,23 @@ def curve_path(obj):
     splines = obj.data.splines
     if not splines:
         return ()
+    # 只取第一条样条: 一个驱动只有一条路径
     spline = splines[0]
     world = obj.matrix_world
     if spline.type == "BEZIER":
         knots = list(spline.bezier_points)
+        # 闭合曲线补上回到起点的一段
         if spline.use_cyclic_u:
             knots.append(knots[0])
         points = []
+        # 每相邻两个结点之间按分辨率求值; 去掉每段的终点, 避免与下一段起点重复
         for first, second in pairwise(knots):
             points += interpolate_bezier(
                 first.co, first.handle_right, second.handle_left, second.co, spline.resolution_u + 1
             )[:-1]
         points.append(knots[-1].co.copy())
     else:
+        # 多段线与 NURBS: 直接取控制点连线
         points = [Vector(point.co[:3]) for point in spline.points]
         if spline.use_cyclic_u and points:
             points.append(points[0])
@@ -565,32 +627,52 @@ def curve_path(obj):
 
 
 def _path_of(obj, params, center, axis):
-    """路径角色的折线: 曲线物体取样条, 其余沿箭头方向取一段射线"""
+    """路径角色的折线: 曲线物体取样条, 其余沿箭头方向取一段射线
+
+    obj 驱动物体
+    params 驱动参数
+    center 驱动中心的世界坐标
+    axis 驱动的单位轴向
+    返回 点的元组; 不是路径角色时为空元组
+    """
     if params.role not in PATH_ROLES:
         return ()
     if obj.type == "CURVE":
         return curve_path(obj)
+    # 空物体: 从中心沿箭头方向取固定长度的射线
     reach = tuple(center[index] + axis[index] * RAY_LENGTH for index in range(3))
     return (tuple(center), reach)
 
 
 def _tube_radius(obj, params):
-    """作用管半径: 设置值, 否则曲线的倒角深度乘缩放, 都没有时取默认值; 世界单位"""
+    """作用管半径: 设置值, 否则曲线的倒角深度乘缩放, 都没有时取默认值
+
+    obj 驱动物体
+    params 驱动参数
+    返回 管半径, 世界单位
+    """
     if params.tube_radius > 0.0:
         return params.tube_radius
+    # 没有设置时借用曲线的倒角深度, 视口里看到的管就是作用范围
     if obj.type == "CURVE" and obj.data.bevel_depth > 0.0:
         return obj.data.bevel_depth * max(abs(value) for value in obj.matrix_world.to_scale())
     return DEFAULT_TUBE_RADIUS
 
 
 def snapshot(obj):
-    """读取驱动物体当前的世界变换与参数, 返回 DriverSnapshot"""
+    """读取驱动物体当前的世界变换与参数
+
+    obj 驱动物体
+    返回 DriverSnapshot
+    """
     # 延迟导入: 模块顶层要能在 Blender 之外导入
     from mathutils import Matrix, Vector
 
     params = getattr(obj, ATTRIBUTE)
     world = obj.matrix_world
+    # 作用空间 = 世界变换再乘显示尺寸; 它的逆把世界点换到单位球坐标
     inverse = (world @ Matrix.Scale(display_size(obj), 4)).inverted_safe()
+    # 物体局部 Z 轴的世界方向, 推力与旋涡以它为轴
     axis = (world.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
     return DriverSnapshot(
         name=obj.name,
@@ -632,12 +714,19 @@ def quantize(value):
     """签名里的浮点数: 按 1e-6 的绝对精度取整, 负零当作零
 
     不用有效数字: 本该为零的量会带着 1e-17 这样的残差, 按有效数字格式化时与 0 不同, 会误报变化
+    value 浮点数
+    返回 定点格式的字符串
     """
+    # 加 0.0 把 -0.0 归一为 0.0, 否则字符串里会出现 "-0.000000"
     return f"{round(value, 6) + 0.0:.6f}"
 
 
 def _flat(value):
-    """展平嵌套的元组, 路径是点的元组"""
+    """展平嵌套的元组, 路径是点的元组
+
+    value 可能嵌套的元组
+    产出 其中全部非元组的元素
+    """
     for item in value:
         if isinstance(item, tuple):
             yield from _flat(item)
@@ -646,15 +735,21 @@ def _flat(value):
 
 
 def digest(snapshots):
-    """一组驱动快照的摘要: 浮点数先量化, 避免末位误差造成误报的变化"""
+    """一组驱动快照的摘要: 浮点数先量化, 避免末位误差造成误报的变化
+
+    snapshots DriverSnapshot 序列, 顺序影响结果
+    返回 十六进制摘要字符串
+    """
     parts = []
     for item in snapshots:
         for value in astuple(item):
+            # 浮点数量化; 元组 (中心, 轴向, 矩阵, 路径) 逐个数量化; 其余按字符串
             if isinstance(value, float):
                 parts.append(quantize(value))
             elif isinstance(value, tuple):
                 parts.append(",".join(quantize(number) for number in _flat(value)))
             else:
                 parts.append(str(value))
+        # 驱动之间加分隔符, 避免相邻驱动的字段首尾相接后碰撞
         parts.append("|")
     return hashlib.sha1("/".join(parts).encode("utf-8")).hexdigest()

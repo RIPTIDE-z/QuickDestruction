@@ -13,8 +13,13 @@ def redraw():
 
 
 def discard_object(tracker, obj):
-    """丢弃生成的物体: 取消全部链接, 物体与它的网格登记为待删, 由 tracker.flush 统一批量删除"""
+    """丢弃生成的物体: 取消全部链接, 物体与它的网格登记为待删, 由 tracker.flush 统一批量删除
+
+    tracker 回收账本
+    obj 要丢弃的物体
+    """
     mesh = obj.data if obj.type == "MESH" else None
+    # 先取消全部链接: 登记待删的数据不能还挂在场景里
     for collection in list(obj.users_collection):
         collection.objects.unlink(obj)
     tracker.bury(obj)
@@ -23,7 +28,10 @@ def discard_object(tracker, obj):
 
 
 def recenter(cells):
-    """把每个碎块的原点移到顶点平均位置, 即 Blender 重设原点的 MEDIAN 方式, 世界空间几何不动"""
+    """把每个碎块的原点移到顶点平均位置, 即 Blender 重设原点的 MEDIAN 方式, 世界空间几何不动
+
+    cells 碎块物体列表
+    """
     for cell in cells:
         mesh = cell.data
         flat = vertex_coordinates(mesh)

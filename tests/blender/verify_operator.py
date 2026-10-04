@@ -5,8 +5,10 @@
        交互调用时干净的网格直接切割 (有问题的网格弹确认框需要真实窗口, 在 verify_ui_draw.py 里测)
     2. 预设算子: 保存, 覆盖保护, 载入, 删除, 坏文件与不合规文件的报告, 失败时参数保持不变
        首次切割种子数与碎块总数上限: 界面上改动一方时另一方跟着调整, 预设违反顺序时被拒绝
-    3. 注册: 注销后干净, 重复注册被拒绝, 任一步失败都整体回滚, 不合规的工具声明在改动 Blender 之前被拒绝
-    4. 挂载参数组: 驱动参数挂到物体上, 注销后移除; 注销中途失败时失败的逆操作留在记录里, 再次注销能清理干净
+    3. 注册: 注销后干净, 重复注册被拒绝, 任一步失败都整体回滚,
+        不合规的工具声明在改动 Blender 之前被拒绝
+    4. 挂载参数组: 驱动参数挂到物体上, 注销后移除;
+        注销中途失败时失败的逆操作留在记录里, 再次注销能清理干净
 测试过程:
     在后台 Blender 里注册插件, 用 bpy.ops 调用算子, 用 RuntimeError 的文字检查报告;
     预设目录换成临时目录; 每条判据输出 [PASS] 或 [FAIL], 有失败时以非零状态结束
@@ -135,7 +137,10 @@ def case_generate_failures():
 
 
 def case_generate_invoke():
-    """交互调用 (INVOKE_DEFAULT): 干净的网格直接切割; 有问题的网格弹确认框, 需要真实窗口, 见 verify_ui_draw.py"""
+    """交互调用 (INVOKE_DEFAULT): 干净的网格直接切割
+
+    有问题的网格弹确认框, 需要真实窗口, 见 verify_ui_draw.py
+    """
     prepare_scene(4)
     settings().first_cut_seeds = 4
     result = bpy.ops.qd_mesh_fracture.generate("INVOKE_DEFAULT")
@@ -247,7 +252,10 @@ def case_preset_errors():
 
 
 def case_limit_order():
-    """界面上改动首次切割种子数或碎块总数上限时, 另一方跟着调整, 始终满足 首次切割种子数 <= 碎块总数上限"""
+    """界面上改动首次切割种子数或碎块总数上限时, 另一方跟着调整
+
+    始终满足 首次切割种子数 <= 碎块总数上限
+    """
     prepare_scene()
     config = settings()
     config.recursion_clamp = 250

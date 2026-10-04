@@ -41,7 +41,8 @@ NO_REST_MESSAGE = 'Shard "{name}" has no rest pose; apply physics again'
 # 校验失败时的错误
 VERIFY_FAILED_MESSAGE = "The rig failed its checks: {detail}"
 
-# 一个资产构建经过的阶段数: 读取分类, 骨架, 网格, 动画, 校验, 提交
+# 一个资产构建的总阶段数: 读取分类, 骨架, 网格, 动画, 校验, 提交
+# 骨架, 网格与动画在同一步里建成, 所以进度依次是 1, 4, 5, 6
 STAGES = 6
 
 
@@ -62,12 +63,15 @@ class RigResult:
     asset: str
     # 绑定标识
     rig_id: str
-    # 会动的碎块数与不动的碎块数
+    # 会动的碎块数
     moving: int
+    # 不动的碎块数
     static: int
-    # 骨架数, 蒙皮网格数, 骨骼总数
+    # 骨架数
     armatures: int
+    # 蒙皮网格数
     meshes: int
+    # 骨骼总数, 含每个骨架的 root
     bones: int
     # 检查发现的问题
     issues: tuple
@@ -79,8 +83,9 @@ class RigResult:
 class Pending:
     """已构建并校验通过, 等待提交的绑定"""
 
-    # 资产根集合与临时集合
+    # 资产根集合
     root: object
+    # 本次新建的临时集合
     collection: object
     # 旧导出集合, 没有时为 None
     old: object
@@ -89,28 +94,47 @@ class Pending:
 
 
 def build_digest(values):
-    """构建参数的摘要: 记在绑定记录里, 与面板比较得出"设置已改动"; 只含改变产物的字段"""
+    """构建参数的摘要: 记在绑定记录里, 与面板比较得出"设置已改动"; 只含改变产物的字段
+
+    values 参数值或参数组, 按字段名读取
+    返回 [[字段名, 值的字符串], ...]
+    """
     return [[key, repr(getattr(values, key))] for key in BUILD_FIELDS]
 
 
 def _label(root):
-    """导出物体与集合用的名字: 源物体名, 源已删除时用根集合名"""
+    """导出物体与集合用的名字: 源物体名, 源已删除时用根集合名
+
+    root 资产根集合
+    返回 名字
+    """
     return root.get(shards.SOURCE_MARK) or root.name
 
 
 def _numbered(base, index, count):
-    """只有一个时用原名, 多个时加两位序号"""
+    """只有一个时用原名, 多个时加两位序号
+
+    base 基础名
+    index 从 0 开始的序号
+    count 总个数
+    返回 名字
+    """
     return base if count == 1 else f"{base}_{index + 1:02d}"
 
 
 def _read(root):
-    """读出构建输入: 碎块, 静止矩阵, 轨迹; 逐块校验, 不满足时报错"""
+    """读出构建输入, 并逐块校验
+
+    root 资产根集合
+    返回 (模拟记录, 碎块列表, 静止矩阵列表, {碎块名: 轨迹}); 不满足时抛 ExportError
+    """
     result = asset.sim_record(root)
     if result is None or asset.sim_action(root) is None:
         raise ExportError(NO_SIMULATION_MESSAGE, name=root.name)
     items = asset.shards_of(root)
     rests = []
     for shard in items:
+        # 带父物体的碎块世界姿态含父级变换, 与动画里的世界轨迹不一致
         if shard.parent is not None:
             raise ExportError(PARENTED_MESSAGE, name=shard.name)
         rest = asset.rest_matrix(shard)
@@ -121,10 +145,16 @@ def _read(root):
 
 
 def _bone_names(items, moving):
-    """会动的碎块的骨骼名: 路径名, 路径过长或重名时退回顺序号; 返回 [名字, ...] 与它们的映射"""
+    """给会动的碎块起骨骼名: 路径名, 路径过长或重名时退回顺序号
+
+    items 碎块列表
+    moving 会动的碎块在 items 里的序号
+    返回 与 moving 同序的骨骼名列表
+    """
     names, used = [], set()
     for number, index in enumerate(moving):
         name = bone_name(shards.path_of(items[index]))
+        # 路径名超过字节上限, 或与已用的重名时, 用顺序号保证唯一
         if name is None or name in used:
             name = fallback_name(number)
         used.add(name)
@@ -133,29 +163,56 @@ def _bone_names(items, moving):
 
 
 def _make_collection(tracker, name):
-    """建临时集合并链接进场景"""
+    """建临时集合并链接进场景
+
+    tracker 创建账本
+    name 集合名
+    返回 集合
+    """
     collection = tracker.track("collections", bpy.data.collections.new(name))
     bpy.context.scene.collection.children.link(collection)
     return collection
 
 
 def _segment_entries(items, rests, names, moving, segment, statics):
-    """一段网格要合并的碎块: 本段会动的碎块各归自己的骨骼, statics 是要并入这一段的不动碎块"""
+    """一段网格要合并的碎块: 本段会动的碎块各归自己的骨骼, statics 是要并入这一段的不动碎块
+
+    items 碎块列表
+    rests 静止矩阵列表, 与 items 同序
+    names 会动的碎块的骨骼名, 与 moving 同序
+    moving 会动的碎块在 items 里的序号
+    segment 本段包含的会动碎块在 moving 里的位置
+    statics 并入本段的不动碎块在 items 里的序号
+    返回 Entry 列表
+    """
     entries = [
         Entry(items[moving[position]], rests[moving[position]], names[position], moving[position])
         for position in segment
     ]
+    # 不动的碎块全部归 root 顶点组
     entries += [Entry(items[index], rests[index], "root", index) for index in statics]
     return entries
 
 
 def _build_geometry(context, tracker, collection, label, plan, inputs, values, asset_id):
-    """按划分建骨架, 蒙皮网格与动画; 返回 (骨架列表, 网格列表, {骨骼名: 碎块名}, 每个骨架的骨骼名列表)"""
+    """按划分建骨架, 蒙皮网格与动画
+
+    context Blender 上下文
+    tracker 创建账本
+    collection 临时集合, 新物体都链接进它
+    label 物体名用的主干, 含临时前缀
+    plan 划分结果, Armature 列表
+    inputs (碎块, 静止矩阵, 骨骼名, 会动序号, 不动序号, 轨迹) 的元组
+    values 参数值
+    asset_id 资产标识, 写到动作上
+    返回 (骨架列表, 网格列表, {骨骼名: 碎块名}, 每个骨架包含的会动碎块位置列表)
+    """
     items, rests, names, moving, still, tracked = inputs
     armature_objects, mesh_objects, mapping, per_armature = [], [], {}, []
     for armature_index, armature in enumerate(plan):
         members = [position for segment in armature.segments for position in segment]
         armature_name = _numbered(label + RIG_SUFFIX, armature_index, len(plan))
+        # 骨骼头部放在碎块的静止质心
         specs = [
             (
                 names[position],
@@ -177,12 +234,14 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
             statics = still if armature_index == 0 and segment_index == 0 else ()
             entries = _segment_entries(items, rests, names, moving, segment, statics)
             mesh_name = _numbered(label + MESH_SUFFIX, segment_index, len(armature.segments))
+            # 多个骨架时网格名带骨架序号与段序号, 避免不同骨架的网格重名
             if len(plan) > 1:
                 mesh_name = f"{label}{MESH_SUFFIX}_{armature_index + 1:02d}_{segment_index + 1:02d}"
             mesh = merge.build_mesh(context, tracker, mesh_name, collection, entries, obj)
             if values.interior_uv == "BOX":
                 interior.box_project(mesh.data, values.interior_uv_scale)
             mesh_objects.append(mesh)
+    # 动画在全部骨架建好之后写: 写动画不再需要进入编辑模式
     for obj, members in zip(armature_objects, per_armature, strict=True):
         animated = [
             (names[position], tracked[items[moving[position]].name], rests[moving[position]])
@@ -194,20 +253,37 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
 
 
 def _last_start(items, rests, moving, tracked):
-    """全部会动的碎块里最晚的起动帧; 都没有时为 None"""
+    """全部会动的碎块里最晚的起动帧
+
+    items 碎块列表
+    rests 静止矩阵列表
+    moving 会动的碎块序号
+    tracked {碎块名: 轨迹}
+    返回 帧号; 都没有时为 None
+    """
     starts = [tracks.motion_start(tracked[items[i].name], rests[i]) for i in moving]
     starts = [start for start in starts if start is not None]
     return max(starts) if starts else None
 
 
 def _claim_all(collection, asset_id):
-    """把导出集合里的物体标记为本资产的绑定阶段; 集合不能标记, 带资产标识的集合会被当成资产根"""
+    """把导出集合里的物体标记为本资产的绑定阶段; 集合不能标记, 带资产标识的集合会被当成资产根
+
+    collection 导出集合
+    asset_id 资产标识
+    """
     for obj in collection.objects:
         asset.claim(obj, asset_id, asset.RIG_STAGE)
 
 
 def _restore_view(context, selection, active, frame):
-    """还原选择, 活动物体与当前帧"""
+    """还原选择, 活动物体与当前帧
+
+    context Blender 上下文
+    selection 要恢复选中的物体
+    active 要恢复的活动物体
+    frame 要恢复的帧
+    """
     for obj in context.view_layer.objects:
         obj.select_set(obj in selection)
     context.view_layer.objects.active = active
@@ -215,9 +291,18 @@ def _restore_view(context, selection, active, frame):
 
 
 def _build_one(context, root, values, tracker, log):
-    """一个资产的完整构建, 生成器: 每个阶段产出一次 Progress(阶段数, 总数), 返回 RigResult"""
+    """一个资产的完整构建, 生成器: 每个阶段产出一次 Progress
+
+    context Blender 上下文
+    root 资产根集合
+    values 参数值
+    tracker 创建账本
+    log 写前快照
+    返回 Pending, 校验通过但还没有提交
+    """
     started = perf_counter()
     scene = context.scene
+    # 模拟成果必须是当前的: 过期的成果动画与碎块现状对不上
     if simulation_status(root, scene).state != CURRENT:
         raise ExportError(NO_SIMULATION_MESSAGE, name=root.name)
     result, items, rests, tracked = _read(root)
@@ -255,7 +340,7 @@ def _build_one(context, root, values, tracker, log):
         "tolerance": values.static_distance
         + values.static_angle * max((max(shard.dimensions) for shard in items), default=0.0),
     }
-    # 校验需要 root 暂时指向临时集合
+    # 校验函数经资产记录找到导出集合, 所以先让记录暂时指向临时集合, 失败时由写前快照恢复
     previous = (asset.rig_record(root), asset.rig_collection(root))
     asset.set_rig_result(root, record, building)
     log.add(lambda: _restore_rig(root, previous))
@@ -265,6 +350,7 @@ def _build_one(context, root, values, tracker, log):
         detail = tr_report(CONTEXT, check.SKIN_MISMATCH_MESSAGE, error=error, frame=frame)
         raise ExportError(VERIFY_FAILED_MESSAGE, detail=detail)
     yield Progress(5, STAGES)
+    # 逐帧核对刚做过, 这里只做其余的检查
     issues = check.check_rig(context, root, values, sample_frames=0)
     errors = [issue for issue in issues if issue.level == check.ERROR]
     if errors:
@@ -287,7 +373,11 @@ def _build_one(context, root, values, tracker, log):
 
 
 def _restore_rig(root, previous):
-    """把资产的绑定记录与导出集合引用恢复成构建前的样子"""
+    """把资产的绑定记录与导出集合引用恢复成构建前的样子
+
+    root 资产根集合
+    previous (旧记录, 旧导出集合), 旧记录为 None 表示原来没有绑定
+    """
     record, collection = previous
     if record is None:
         asset.clear_rig_result(root)
@@ -296,7 +386,11 @@ def _restore_rig(root, previous):
 
 
 def _stale_items(collection):
-    """导出集合连同其中物体, 物体数据与动作, 供一次批量删除"""
+    """导出集合连同其中物体, 物体数据与动作, 供一次批量删除
+
+    collection 要删除的导出集合
+    返回 数据块列表
+    """
     stale = []
     for obj in collection.objects:
         animation = obj.animation_data.action if obj.animation_data else None
@@ -306,11 +400,16 @@ def _stale_items(collection):
 
 
 def _commit(pending):
-    """全部资产都校验通过后提交: 删除旧导出, 把临时名改成最终名字"""
+    """全部资产都校验通过后提交: 删除旧导出, 把临时名改成最终名字
+
+    pending Pending 列表
+    """
     stale = []
     for item in pending:
+        # 旧导出与新建的临时集合不是同一个才需要删除
         if item.old is not None and item.old != item.collection:
             stale.extend(_stale_items(item.old))
+    # 先删旧的再改名: 否则新旧同名, 改名会得到 .001 后缀
     if stale:
         bpy.data.batch_remove(stale)
     for item in pending:
@@ -325,20 +424,29 @@ def _commit(pending):
 
 
 def build_steps(context, roots, values):
-    """构建的生成器: 返回 [RigResult, ...]; 中途失败或关闭时撤回本次全部改动, 旧导出保留"""
+    """构建的生成器; 中途失败或关闭时撤回本次全部改动, 旧导出保留
+
+    context Blender 上下文
+    roots 资产根集合列表
+    values 参数值
+    返回 生成器, 每个阶段产出 Progress, 返回值是 [RigResult, ...]
+    """
     asset.validate(roots)
     view = context.view_layer
+    # 记下现场: 构建要改选择, 活动物体与当前帧, 结束时无论成败都还原
     selection = [obj for obj in view.objects if obj.select_get()]
     active, frame = view.objects.active, context.scene.frame_current
     tracker, log = CreatedData(), WriteLog()
     committed = False
     try:
         pending = []
+        # 先逐个构建并校验, 全部通过后才统一提交: 多资产时一个失败不能让另一个丢掉旧导出
         for root in roots:
             pending.append((yield from _build_one(context, root, values, tracker, log)))
         _commit(pending)
         committed = True
     finally:
+        # 失败或被取消时撤回对记录的改动并回收新建的数据; 成功时只还原现场
         steps = [] if committed else [log.undo, tracker.rollback]
         steps.append(lambda: _restore_view(context, selection, active, frame))
         for step in steps:

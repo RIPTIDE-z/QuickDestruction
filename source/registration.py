@@ -1,4 +1,7 @@
-"""扩展装配 - 汇总工具声明, 生成场景参数组与挂载参数组, 校验唯一性, 按顺序注册并在失败或停用时逆序回滚"""
+"""扩展装配 - 汇总工具声明, 生成场景参数组与挂载参数组, 校验唯一性
+
+按顺序注册, 并在失败或停用时逆序回滚
+"""
 
 import re
 import traceback
@@ -24,12 +27,17 @@ _undo_steps = []
 
 
 def _settings_classes():
-    """按参数规格生成各工具的参数组, 最后一个是挂到场景上的参数根"""
+    """按参数规格生成各工具的参数组
+
+    返回 类元组, 最后一个是挂到场景上的参数根, 它的字段指向前面各工具的参数组
+    """
     groups = {}
     for tool in TOOLS:
+        # 没有参数规格的工具 (例如只有面板) 没有参数组
         if tool.schema is None:
             continue
         annotations = tool.schema.definitions()
+        # 带预设的工具多一个记录最近预设名的字段, 它不属于预设参数
         if tool.presets:
             annotations["preset_name"] = presets.current_preset_property()
         groups[tool.tool_id] = type(
@@ -40,7 +48,10 @@ def _settings_classes():
 
 
 def _attachment_classes():
-    """按各工具的挂载声明生成属性组, 返回 [(挂载声明, 属性组类), ...]"""
+    """按各工具的挂载声明生成属性组
+
+    返回 [(挂载声明, 属性组类), ...]
+    """
     result = []
     for tool in TOOLS:
         for attachment in tool.attachments:
@@ -54,25 +65,39 @@ def _attachment_classes():
 
 
 def _check_attachments():
-    """挂载属性名以 qd_ 开头, 同一类型上不能重名"""
+    """检查挂载声明: 属性名以 qd_ 开头, 同一类型上不能重名
+
+    不合规时抛 ValueError
+    """
     seen = set()
     for tool in TOOLS:
         for attachment in tool.attachments:
+            # qd_ 前缀避免与 Blender 或其他插件的属性撞名
             if not attachment.attribute.startswith("qd_"):
                 raise ValueError(f"Attachment {attachment.attribute} must use the qd_ prefix")
             key = (attachment.owner, attachment.attribute)
+            # 同一类型上的同名属性会让后挂的顶替先挂的
             if key in seen:
                 raise ValueError(f"Duplicate attachment: {attachment.attribute}")
             seen.add(key)
 
 
 def _idname(cls):
-    """类的 bl_idname; 未显式声明时 Blender 取类名, 继承来的不算"""
+    """类的 bl_idname; 未显式声明时 Blender 取类名, 继承来的不算
+
+    cls 要查询的类
+    返回 标识字符串
+    """
     return cls.__dict__.get("bl_idname", cls.__name__)
 
 
 def _check_prefix(cls, class_prefix, operator_prefix):
-    """类名与算子 ID 必须带规定的前缀, 减少与其他插件撞车"""
+    """类名与算子 ID 必须带规定的前缀, 减少与其他插件撞车
+
+    cls 要检查的类
+    class_prefix 类名必须有的前缀
+    operator_prefix 算子 ID 必须有的前缀, 只对算子类检查
+    """
     if not cls.__name__.startswith(class_prefix):
         raise ValueError(f"Class {cls.__name__} must use the {class_prefix} prefix")
     if issubclass(cls, Operator) and not _idname(cls).startswith(operator_prefix):
@@ -82,12 +107,16 @@ def _check_prefix(cls, class_prefix, operator_prefix):
 
 
 def _check(framework_classes):
-    """在改动 Blender 状态之前拒绝不合规的工具声明, 缺少前缀与重名的类"""
+    """在改动 Blender 状态之前拒绝不合规的工具声明, 缺少前缀与重名的类
+
+    framework_classes 框架自己的类 (参数组与预设界面), 它们用通用前缀
+    """
     _check_attachments()
     for tool in TOOLS:
         # 工具标识同时是场景字段名, 预设目录名与类名前缀
         if not re.fullmatch(r"[a-z][a-z0-9_]*", tool.tool_id):
             raise ValueError(f"Invalid tool_id: {tool.tool_id!r}")
+        # 预设界面靠参数规格读写参数, 没有规格就没有预设
         if tool.presets and tool.schema is None:
             raise ValueError(f"Tool {tool.tool_id} declares presets without a schema")
         # 工具的类名与算子 ID 都带自己的标识, 工具之间不会占用彼此的命名空间
@@ -108,7 +137,10 @@ def _check(framework_classes):
 
 
 def _translations():
-    """合并框架与各工具的语言文件, 侧栏分类名另外登记到默认上下文"""
+    """合并框架与各工具的语言文件, 侧栏分类名另外登记到默认上下文
+
+    返回 {语言: {(上下文, 原文): 译文}}
+    """
     modules = [(CONTEXT, LOCALES), *((tool.context, tool.locales) for tool in TOOLS)]
     translations = build_translations(modules)
     # Blender 在默认上下文里翻译侧栏分类名, 只把这一条单独登记过去, 其余界面文字不外溢
@@ -119,12 +151,21 @@ def _translations():
 
 
 def _class_step(cls):
-    """注册一个类的步骤与它的逆操作"""
+    """注册一个类的步骤与它的逆操作
+
+    cls 要注册的类
+    返回 (注册函数, 注销函数)
+    """
     return lambda: bpy.utils.register_class(cls), lambda: bpy.utils.unregister_class(cls)
 
 
 def _attach_step(attachment, cls):
-    """把挂载参数组挂到目标类型上的步骤与它的逆操作"""
+    """把挂载参数组挂到目标类型上的步骤与它的逆操作
+
+    attachment 挂载声明
+    cls 该声明生成的属性组类
+    返回 (挂上函数, 摘下函数)
+    """
     return (
         lambda: setattr(attachment.owner, attachment.attribute, PointerProperty(type=cls)),
         lambda: delattr(attachment.owner, attachment.attribute),
@@ -132,7 +173,11 @@ def _attach_step(attachment, cls):
 
 
 def _release(applied):
-    """尽量完成所有逆操作, 返回 (失败的逆操作, 第一个错误); 失败的逆操作按原顺序返回, 供下次重试"""
+    """尽量完成所有逆操作
+
+    applied 已完成步骤的逆操作列表, 按完成顺序排列
+    返回 (失败的逆操作, 第一个错误); 失败的逆操作按原顺序返回, 供下次重试
+    """
     failed = []
     first_error = None
     # 逆序执行: 最后完成的步骤最先撤销, 翻译最后注销
@@ -145,6 +190,7 @@ def _release(applied):
             failed.append(undo)
             if first_error is None:
                 first_error = error
+    # 失败列表是逆序收集的, 翻回注册顺序再保存, 下次重试时仍按逆序执行
     failed.reverse()
     return failed, first_error
 
@@ -161,6 +207,7 @@ def register():
     classes = (*groups, *presets.CLASSES, *(cls for tool in TOOLS for cls in tool.classes))
     preset_tools = {tool.tool_id: tool.schema for tool in TOOLS if tool.presets}
     translations = _translations()
+    # 每一步是 (动作, 逆操作) 对, 顺序即注册顺序
     steps = (
         (
             lambda: bpy.app.translations.register(__package__, translations),
@@ -193,7 +240,7 @@ def register():
 
 
 def unregister():
-    """按注册的逆序撤销全部步骤"""
+    """按注册的逆序撤销全部步骤, 有失败的逆操作时抛出第一个错误"""
     # 先取出全部记录再执行: 失败的逆操作放回记录, 下次停用时重试, 不会因为一次失败而丢失
     applied = list(_undo_steps)
     _undo_steps.clear()

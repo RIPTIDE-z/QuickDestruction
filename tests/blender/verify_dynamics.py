@@ -9,11 +9,13 @@
     5. 材料下拉的联动: 选择材料写入物理量, 手改后仍保留材料并提示, 预设载入与回滚时后写的物理量生效
     6. 破坏驱动: 新建驱动的外观, 集合与默认起动帧; 只有空物体能设为驱动; 快照的作用空间与摘要
     7. 交接精度: 普通, 慢动作, 快动作与分数帧率下起动后第一个动力学帧的速度等于计划速度
-    8. 激活方式: 范围外的冻结碎块与锚定碎块全程不动且没有动画; 自由下落的碎块被再交接后速度等于计划值
+    8. 激活方式: 范围外的冻结碎块与锚定碎块全程不动且没有动画;
+        自由下落的碎块被再交接后速度等于计划值
     8a. 驱动角色: 旋涡绕轴转, 区域排除, 锚定与覆盖, 曲线方向的折线与切线速度, 弹道的入口坑, 通道,
         出口坑, 穿透预算, 材料阻力, 事件时刻, 飞行动画与复位, 质量响应, 受影响的碎块与计划预览
     8b. 受阻: 起动被冻结邻块, 锚定碎块或环境地面挡住时, 速度去掉朝向墙的分量, 不再塞进去后被顶出
-        反向的高速; 反弹不随子步数放大; 休眠的邻块是动态刚体, 不受影响; 均匀推力下整面墙同帧同速不互相挡路
+        反向的高速; 反弹不随子步数放大; 休眠的邻块是动态刚体, 不受影响;
+        均匀推力下整面墙同帧同速不互相挡路
     9. 会话: 多个资产一起模拟会相互碰撞, 未参与的资产临时移出并恢复, 环境刚体参与但属性不变
     10. 取消与失败: 推进中取消, 写成果与提交阶段失败, 场景都回到烘焙之前, 上一次的成果保留
     11. 状态: 驱动, 帧率, 重新应用物理, 同会话资产与环境刚体的变化都给出对应的过期原因
@@ -533,7 +535,8 @@ def case_bake_rehandoff_keeps_momentum():
     before = (position(shards[0], 9).z - position(shards[0], 8).z) / dt
     after = (position(shards[0], 15).z - position(shards[0], 14).z) / dt
     check("推之前在下落", before < -2.0, f"{before:.2f}")
-    # 替换语义会把竖直速度重置为零, 之后只剩 5 帧重力: 约 -2.0; 叠加语义保留下落动量, 更慢地不会超过推之前
+    # 替换语义会把竖直速度重置为零, 之后只剩 5 帧重力: 约 -2.0
+    # 叠加语义保留下落动量, 更慢地不会超过推之前
     check(
         "推之后竖直速度没有被重置, 仍在加速下落",
         after < before - 0.5,
@@ -1204,7 +1207,10 @@ def case_physics_summary_and_resistance():
 
 
 def case_bake_partial_and_multi():
-    """部分覆盖与多驱动: 两个驱动先后波及同一面冻结的墙, 不出现凭空的高速; 休眠碎块再被推向冻结的墙时受阻"""
+    """部分覆盖与多驱动: 两个驱动先后波及同一面冻结的墙, 不出现凭空的高速
+
+    休眠碎块再被推向冻结的墙时受阻
+    """
     sim_scene(gravity=False)
     root, shards = physical("Wall", count=14)
     explosion((-1.3, 0.0, 1.0), 1.0, frame=5)
@@ -1227,7 +1233,10 @@ def case_bake_partial_and_multi():
 
 
 def case_ground():
-    """预设地面: 有厚度的静态盒体刚体, 顶面贴齐资产最低点, 重复添加只重新对齐, 失败撤回, 模拟里碎块落在地面上"""
+    """预设地面: 有厚度的静态盒体刚体, 顶面贴齐资产最低点, 重复添加只重新对齐
+
+    失败撤回, 模拟里碎块落在地面上
+    """
     sim_scene(gravity=True, end=48)
     scene = bpy.context.scene
     root, shards = physical("Wall", location=(2.0, 1.0, 3.0), activation="FREE")
@@ -1295,12 +1304,43 @@ def case_ground():
     check("有任务运行时拒绝添加地面", refused)
 
 
+def horizontal_median(shards, frame):
+    """碎块在 frame 帧相对静止位置的水平位移的中位数"""
+    bpy.context.scene.frame_set(frame)
+    moved = []
+    for shard in shards:
+        delta = shard.matrix_world.translation - asset.rest_matrix(shard).translation
+        moved.append(Vector((delta.x, delta.y, 0.0)).length)
+    return sorted(moved)[len(moved) // 2]
+
+
+def case_blast_with_spin():
+    """整块被爆炸覆盖且带自转时, 冻结碎块仍然飞出去: 紧贴的碎块转动扫进彼此不能把平移速度压到零"""
+    results = {}
+    for activation in ("FROZEN", "SLEEPING"):
+        sim_scene(gravity=True, end=48)
+        root, shards = physical("Blast", location=(0.0, 0.0, 1.0), count=40, activation=activation)
+        add_ground(bpy.context, [root])
+        # 默认的随机锥角与最大自转, 不是核对速度时用的零值
+        explosion((0.0, 0.0, 1.0), 4.0, frame=10, spread=0.2617994, max_spin=6.2831853)
+        result = bake(bpy.context, [root], {})
+        results[activation] = horizontal_median(shards, 48)
+        check(f"{activation} 烘焙完成且碎块都动了", result.moved == len(shards), str(result.moved))
+    check("冻结碎块被炸出相当的距离", results["FROZEN"] > 3.0, f"{results['FROZEN']:.2f} m")
+    check(
+        "冻结与休眠的飞出距离同一量级",
+        results["FROZEN"] > 0.5 * results["SLEEPING"],
+        f"{results['FROZEN']:.2f} / {results['SLEEPING']:.2f} m",
+    )
+
+
 def main():
     """注册插件后运行全部场景"""
     registration.register()
     harness.run_cases(CASES)
 
 
+# 全部场景, 按顺序逐个运行; 会重新打开文件的场景放在最后
 CASES = (
     case_physics_apply,
     case_physics_units,
@@ -1333,6 +1373,7 @@ CASES = (
     case_physics_summary_and_resistance,
     case_bake_deterministic,
     case_ground,
+    case_blast_with_spin,
     # 会重新打开文件, 放在最后
     case_bake_persistence,
 )

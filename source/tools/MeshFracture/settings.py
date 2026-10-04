@@ -9,6 +9,7 @@ from .constants import CELL_SCALE_MIN, CONTEXT, MAX_ROUNDS, SHARD_LIMIT
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 # name 与 description 是英文原文, 也是语言文件里的键; 其余关键字原样交给 bpy.props
 PROPERTY_SPECS = {
+    # 种子来源: 顶点, 粒子与注解铅笔, 可多选取并集
     "source": (
         "EnumProperty",
         {
@@ -49,6 +50,7 @@ PROPERTY_SPECS = {
             "Without any point, the source mesh vertices are used.",
         },
     ),
+    # 首次切割的种子数上限, 0 表示跟随碎块总数上限
     "first_cut_seeds": (
         "IntProperty",
         {
@@ -63,6 +65,7 @@ PROPERTY_SPECS = {
             "default": 100,
         },
     ),
+    # 种子扰动强度, 0 到 1
     "source_noise": (
         "FloatProperty",
         {
@@ -75,6 +78,7 @@ PROPERTY_SPECS = {
             "precision": 3,
         },
     ),
+    # 随机种子, 相同种子与相同输入得到相同结果
     "random_seed": (
         "IntProperty",
         {
@@ -87,6 +91,7 @@ PROPERTY_SPECS = {
             "default": 0,
         },
     ),
+    # 三轴胞体权重, 不等时胞体被拉伸
     "cell_scale": (
         "FloatVectorProperty",
         {
@@ -100,6 +105,7 @@ PROPERTY_SPECS = {
             "default": (1.0, 1.0, 1.0),
         },
     ),
+    # 递归细分的轮数
     "recursion": (
         "IntProperty",
         {
@@ -112,6 +118,7 @@ PROPERTY_SPECS = {
             "default": 1,
         },
     ),
+    # 递归时每个父块切成的块数上限
     "sub_cut_pieces": (
         "IntProperty",
         {
@@ -126,6 +133,7 @@ PROPERTY_SPECS = {
             "default": 8,
         },
     ),
+    # 碎块总数上限, 0 表示不限, 受硬上限 SHARD_LIMIT 约束
     "recursion_clamp": (
         "IntProperty",
         {
@@ -139,6 +147,7 @@ PROPERTY_SPECS = {
             "default": 250,
         },
     ),
+    # 每轮被细分的碎块比例, 0 到 1
     "recursion_chance": (
         "FloatProperty",
         {
@@ -149,6 +158,7 @@ PROPERTY_SPECS = {
             "default": 1.0,
         },
     ),
+    # 按比例挑选碎块的方式: 随机, 均匀, 按大小或按到游标的距离
     "recursion_chance_select": (
         "EnumProperty",
         {
@@ -187,6 +197,7 @@ PROPERTY_SPECS = {
             "or Shard Limit cannot fit a full round.",
         },
     ),
+    # 是否把胞体的面设为平滑着色
     "use_smooth_faces": (
         "BoolProperty",
         {
@@ -196,6 +207,7 @@ PROPERTY_SPECS = {
             "default": False,
         },
     ),
+    # 是否把内外交界的边标记为锐边
     "use_sharp_edges": (
         "BoolProperty",
         {
@@ -205,6 +217,7 @@ PROPERTY_SPECS = {
             "default": True,
         },
     ),
+    # 是否把含多个孤岛的碎块拆成独立物体
     "use_island_split": (
         "BoolProperty",
         {
@@ -214,6 +227,7 @@ PROPERTY_SPECS = {
             "default": True,
         },
     ),
+    # 切面内缩量, 相邻碎块之间的缝隙是它的两倍
     "margin": (
         "FloatProperty",
         {
@@ -228,6 +242,7 @@ PROPERTY_SPECS = {
             "unit": "LENGTH",
         },
     ),
+    # 断面使用的材质槽编号
     "material_index": (
         "IntProperty",
         {
@@ -238,6 +253,7 @@ PROPERTY_SPECS = {
             "min": 0,
         },
     ),
+    # 是否建立内部断面顶点组
     "use_interior_vgroup": (
         "BoolProperty",
         {
@@ -247,6 +263,7 @@ PROPERTY_SPECS = {
             "default": False,
         },
     ),
+    # 是否把碎块原点移到顶点平均位置
     "use_recenter": (
         "BoolProperty",
         {
@@ -256,6 +273,7 @@ PROPERTY_SPECS = {
             "default": True,
         },
     ),
+    # 是否保留被细分的父碎块
     "use_keep_parents": (
         "BoolProperty",
         {
@@ -266,6 +284,7 @@ PROPERTY_SPECS = {
             "default": False,
         },
     ),
+    # 输出集合名, 空名表示当前集合
     "collection_name": (
         "StringProperty",
         {
@@ -275,6 +294,7 @@ PROPERTY_SPECS = {
             "default": "cell_collection",
         },
     ),
+    # 碎块名后缀
     "shard_suffix": (
         "StringProperty",
         {
@@ -284,6 +304,7 @@ PROPERTY_SPECS = {
             "default": "cell",
         },
     ),
+    # 碎块名里序号的最小位数
     "shard_index_padding": (
         "IntProperty",
         {
@@ -294,6 +315,7 @@ PROPERTY_SPECS = {
             "default": 3,
         },
     ),
+    # 调试: 显示扰动后的种子点
     "use_debug_points": (
         "BoolProperty",
         {
@@ -303,6 +325,7 @@ PROPERTY_SPECS = {
             "default": False,
         },
     ),
+    # 调试: 每建一个胞体就重绘并以线框显示被切物体, 明显变慢
     "use_debug_redraw": (
         "BoolProperty",
         {
@@ -312,6 +335,7 @@ PROPERTY_SPECS = {
             "default": False,
         },
     ),
+    # 调试: 保留布尔修改器而不应用
     "use_debug_bool": (
         "BoolProperty",
         {
@@ -325,27 +349,47 @@ PROPERTY_SPECS = {
 
 
 def bakes_booleans(values):
-    """是否应用布尔求交; 开启保留布尔修改器时不应用, 递归, 孤岛拆分, 面合并与断面收尾都随之跳过"""
+    """是否应用布尔求交; 开启保留布尔修改器时不应用, 递归, 孤岛拆分, 面合并与断面收尾都随之跳过
+
+    values 参数值或参数组
+    返回 应用为真
+    """
     return not values.use_debug_bool
 
 
 def recursion_rounds(values):
-    """实际执行的递归轮数; values 可以是参数值或参数组"""
+    """实际执行的递归轮数
+
+    values 参数值或参数组
+    返回 轮数; 保留布尔修改器时为 0
+    """
     return values.recursion if bakes_booleans(values) else 0
 
 
 def uses_interior(values):
-    """是否需要区分内部断面: 断面顶点组与锐边都要按面隐藏标记判定断面"""
+    """是否需要区分内部断面: 断面顶点组与锐边都要按面隐藏标记判定断面
+
+    values 参数值或参数组
+    返回 需要为真
+    """
     return values.use_interior_vgroup or values.use_sharp_edges
 
 
 def finishes_interior(values):
-    """是否在最后做断面收尾"""
+    """是否在最后做断面收尾
+
+    values 参数值或参数组
+    返回 需要为真
+    """
     return bakes_booleans(values) and uses_interior(values)
 
 
 def splits_islands(values):
-    """是否拆分孤岛"""
+    """是否拆分孤岛
+
+    values 参数值或参数组
+    返回 拆分为真
+    """
     return bakes_booleans(values) and values.use_island_split
 
 
@@ -353,12 +397,18 @@ def first_cut_seed_limit(values):
     """首次切割的种子上限: 首次切割种子数为 0 时跟随碎块总数上限, 都为 0 表示不限
 
     首次切割种子数不会超过碎块总数上限, 这由 SCHEMA 的顺序约束保证
+    values 参数值或参数组
+    返回 种子上限, 0 表示不限
     """
     return values.first_cut_seeds or values.recursion_clamp
 
 
 def _recursing(values):
-    """参数只被递归阶段读取"""
+    """参数只被递归阶段读取, 递归轮数为 0 时它们不生效
+
+    values 参数值或参数组
+    返回 在递归为真
+    """
     return recursion_rounds(values) > 0
 
 

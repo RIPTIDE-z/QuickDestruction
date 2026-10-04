@@ -14,6 +14,7 @@ from .interaction import (
 )
 from .settings import SCHEMA
 
+# 工具声明: 类的顺序即注册顺序, 也是侧栏里面板的上下顺序; 主面板在前, 子面板按分组顺序跟在后面
 TOOL = ToolSpec(
     tool_id=TOOL_ID,
     locales=Path(__file__).with_name("locales"),

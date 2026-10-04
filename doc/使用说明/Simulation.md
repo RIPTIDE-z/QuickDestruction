@@ -92,6 +92,7 @@ sequenceDiagram
 | 同一帧起动的冻结碎块 | 与起动者一起移动，按相对速度判断 |
 
 - **怎么改**：去掉速度里朝向墙面的分量，沿墙面的分量保留，所以贴着邻块侧面斜着飞的碎块会滑着飞出；贴紧墙、没有路可走的碎块不动，等同于撞上推不动的墙后停住。墙角处最多滑动三轮，仍被挡住就按能走的比例缩减。
+- **自转单独处理**：紧贴的碎块稍一转动，角就会插进邻块。受阻时先看不带自转平移是否畅通，畅通就只削减自转、保持平移速度；平移也受阻时去掉自转再按平移判定。同一帧起动的邻块在判定里只按平移移动。所以整块被爆炸覆盖、碎块带随机自转时，冻结碎块仍会被炸出去，只是被挤在里面的碎块起动时转不起来。
 - **不算挡路的**：休眠与自由的碎块是动态刚体，被推动时有正常的动量传递，不受影响。已经起动过的冻结碎块位置要推进后才知道，不参与判断。
 - **报告**：有起动被改写时，烘焙报告末尾写明次数。次数很多、而你想让撞击传下去，把物理设置的受击前状态改成**休眠**。
 - **耗时**：判断在烘焙开始前一次完成，见下文[耗时](#耗时)。
@@ -170,7 +171,8 @@ print(result.frames, result.moved, result.rehandoffs, result.seconds)
 | --- | --- |
 | `bake(context, roots, config)` | 同步烘焙到底，返回 `SimulationResult(run_id, frames, shards, moved, rehandoffs, clamped, blocked, frozen, excluded, substeps, raised, suggested, capped, seconds)`；失败时场景回到烘焙之前 |
 | `bake_steps(context, roots, config)` | 生成器，每推进一帧产出一次 `Progress(done, total)`，返回值是 `SimulationResult`；中途调用 `close()` 即取消并恢复场景；调用方负责运行锁 |
-| `reset(context, roots)` | 删除烘焙成果，返回处理的碎块数 |
+| `reset(context, roots)` | 删除烘焙成果，返回处理的碎块数；基于旧成果的游戏导出绑定一并删除 |
+| `add_ground(context, roots)` | 在资产最低点下方添加有厚度的静态刚体地面，已有时重新对齐，返回 `GroundResult(ground, created, top, size, thickness)` |
 
 | 字段 | 含义 |
 | --- | --- |

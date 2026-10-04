@@ -9,8 +9,9 @@ from ..constants import MARGIN_DIAGONAL_RATIO
 
 # 初始包围盒向外扩出的距离, 保证只有一个种子点时胞体也有界
 BOUNDS_MARGIN = 0.05
-# points_in_planes 默认的共面容差与相交容差
+# points_in_planes 默认的共面容差
 EPSILON_COPLANAR = 1e-4
+# points_in_planes 默认的相交容差
 EPSILON_ISECT = 1e-6
 
 
@@ -19,6 +20,8 @@ def _distance_shrink(scale):
 
     有效距离 = 欧氏距离乘连线方向与它按权重缩放后的方向夹角的余弦
     由 Kantorovich 不等式, 这个余弦不小于 2 sqrt(ab) / (a + b), a 与 b 是最小与最大权重
+    scale 三轴权重, None 表示等权
+    返回 比值的下界, 不大于 1
     """
     if scale is None:
         return 1.0
@@ -27,14 +30,25 @@ def _distance_shrink(scale):
 
 
 def effective_margin(margin, snapshot):
-    """实际使用的切面内缩量: 设置值, 但不超过源物体包围盒对角线乘 MARGIN_DIAGONAL_RATIO"""
+    """实际使用的切面内缩量: 设置值, 但不超过源物体包围盒对角线乘 MARGIN_DIAGONAL_RATIO
+
+    margin 设置的内缩量
+    snapshot BooleanSource
+    返回 内缩量, 世界单位
+    """
     return min(margin, snapshot.diagonal * MARGIN_DIAGONAL_RATIO)
 
 
 def _cell_vertices(center, points, base_planes, scale, margin, tolerances):
-    """一个种子点的胞体顶点, 顶点坐标相对种子点; scale 为 None 表示三轴等权
+    """求一个种子点的胞体顶点, 顶点坐标相对种子点
 
-    tolerances 是 (共面容差, 相交容差), 都已按源物体的尺寸缩放
+    center 种子点
+    points 全部种子点
+    base_planes 包围盒的六个半空间
+    scale 三轴权重, None 表示三轴等权
+    margin 切面内缩量
+    tolerances (共面容差, 相交容差), 都已按源物体的尺寸缩放
+    返回 顶点列表; 切不出胞体时为空
     """
     coplanar, epsilon = tolerances
     # 把包围盒面的常数项平移到以此种子点为原点
@@ -65,6 +79,7 @@ def _cell_vertices(center, points, base_planes, scale, margin, tolerances):
         plane.w = -length / 2.0 + margin
         planes.append(plane)
         vertices, indices = points_in_planes(planes, coplanar, epsilon)
+        # 平面把胞体切空了: 之后的平面也不会让它重新出现
         if not vertices:
             break
         if len(indices) != len(planes):
@@ -77,9 +92,13 @@ def _cell_vertices(center, points, base_planes, scale, margin, tolerances):
 
 
 def points_as_bmesh_cells(points, scale, margin, snapshot):
-    """为每个种子点求出胞体, 返回 [(种子点, 顶点列表), ...]; 切不出胞体的种子点被丢弃
+    """为每个种子点求出胞体; 切不出胞体的种子点被丢弃
 
-    points 已去重, snapshot 提供源物体的世界包围盒与尺度
+    points 已去重的世界坐标种子点
+    scale 三轴权重
+    margin 切面内缩量
+    snapshot BooleanSource, 提供源物体的世界包围盒与尺度
+    返回 [(种子点, 顶点列表), ...]
     """
     # 外扩距离与两个容差都是绝对长度, 小物体上会比物体本身还大, 所以随尺度缩小, 但不超过默认值
     factor = min(1.0, snapshot.diagonal)

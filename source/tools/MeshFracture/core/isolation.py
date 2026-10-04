@@ -1,7 +1,9 @@
 """依赖图隔离 - 递归期间把已完成的碎块移出依赖图, 每批细分只让当前一批父块与新碎块留在里面
 
-Blender 每次刷新视图层都要按视图层里的物体总数重建依赖图关系, 碎块越多每次切割越慢, 总耗时随碎块数二次方增长
-被排除的集合里的物体不在依赖图里, 不能求值也不能选中, 所以当前一批父块要先临时链接进工作集合, 新碎块也先落在那里
+Blender 每次刷新视图层都要按视图层里的物体总数重建依赖图关系, 碎块越多每次切割越慢,
+总耗时随碎块数二次方增长
+被排除的集合里的物体不在依赖图里, 不能求值也不能选中,
+所以当前一批父块要先临时链接进工作集合, 新碎块也先落在那里
 """
 
 from contextlib import contextmanager
@@ -10,7 +12,12 @@ import bpy
 
 
 def _layer_node(layer, collection):
-    """在视图层的集合树里找到集合对应的节点, 找不到时返回 None"""
+    """在视图层的集合树里找到集合对应的节点
+
+    layer 视图层集合节点, 从根开始递归
+    collection 要找的集合
+    返回 节点; 找不到时为 None
+    """
     if layer.collection == collection:
         return layer
     for child in layer.children:
@@ -24,7 +31,13 @@ class Isolation:
     """一次生成期间的依赖图隔离; enabled 为假时所有操作都不做, 结果与不隔离完全一致"""
 
     def __init__(self, context, tracker, enabled):
-        """enabled 为假的典型情形是实时重绘: 那时要让人看到已完成的碎块"""
+        """记录上下文与回收账本
+
+        enabled 为假的典型情形是实时重绘: 那时要让人看到已完成的碎块
+        context Blender 上下文
+        tracker 回收账本
+        enabled 是否启用隔离
+        """
         self.context = context
         self.tracker = tracker
         self.enabled = enabled
@@ -34,14 +47,20 @@ class Isolation:
         self.work = None
 
     def _work_collection(self):
-        """工作集合, 挂在场景根集合下并登记到回收账本"""
+        """工作集合, 挂在场景根集合下并登记到回收账本
+
+        返回 集合, 第一次调用时新建
+        """
         if self.work is None:
             self.work = self.tracker.track("collections", bpy.data.collections.new("QD_Work"))
             self.context.scene.collection.children.link(self.work)
         return self.work
 
     def _hide(self, collection):
-        """把集合排除出视图层; 已经排除或没有可排除的节点时什么也不做"""
+        """把集合排除出视图层; 已经排除或没有可排除的节点时什么也不做
+
+        collection 要排除的集合, 可以为 None
+        """
         if collection is None or collection in self.hidden:
             return
         node = _layer_node(self.context.view_layer.layer_collection, collection)
@@ -51,7 +70,12 @@ class Isolation:
 
     @contextmanager
     def around(self, parents, naming):
-        """细分一批父块的作用域: 父块与新碎块都在工作集合里, 离开时新碎块进入已排除的碎块集合"""
+        """细分一批父块的作用域: 父块与新碎块都在工作集合里, 离开时新碎块进入已排除的碎块集合
+
+        parents 这一批要细分的父块
+        naming NamingPlan, 提供落点集合
+        """
+        # 隔离没有启用时什么也不做
         if not self.enabled:
             yield
             return
@@ -79,6 +103,7 @@ class Isolation:
         if not self.enabled:
             return
         for collection in self.hidden:
+            # 集合可能已被失败回滚删除, 访问它会抛 ReferenceError
             try:
                 node = _layer_node(self.context.view_layer.layer_collection, collection)
             except ReferenceError:

@@ -11,6 +11,7 @@ def register():
 
 def unregister():
     """停用扩展时按注册的逆序注销"""
+    # 同样延迟导入: 注销只会发生在已经注册之后, 此时模块已在缓存里
     from . import registration
 
     registration.unregister()

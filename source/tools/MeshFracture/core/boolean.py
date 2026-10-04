@@ -19,8 +19,9 @@ class BooleanSource:
 
     # 源物体名, 只用于错误消息
     name: str
-    # 世界空间包围盒的最小与最大角点
+    # 世界空间包围盒的最小角点
     minimum: tuple
+    # 世界空间包围盒的最大角点
     maximum: tuple
     # 包围盒体对角线长度, 即本次切割的整体尺度
     diagonal: float
@@ -31,18 +32,32 @@ class BooleanSource:
 
     @property
     def weld_distance(self):
-        """焊接距离: 胞体阶段与求交阶段共用同一份快照尺度"""
+        """焊接距离: 胞体阶段与求交阶段共用同一份快照尺度
+
+        返回 焊接距离, 世界单位
+        """
         return self.diagonal * WELD_SCALE_RATIO
 
 
 def bounds_diagonal(minimum, maximum):
-    """包围盒的体对角线长度, 交给 mathutils 计算, 与 Blender 的浮点精度一致"""
+    """包围盒的体对角线长度, 交给 mathutils 计算, 与 Blender 的浮点精度一致
+
+    minimum 最小角点
+    maximum 最大角点
+    返回 对角线长度
+    """
     return Vector(tuple(maximum[i] - minimum[i] for i in range(3))).length
 
 
 def inspect_source(obj, depsgraph):
-    """求值一次源物体, 量出本次切割共用的包围盒, 尺度, 容差与求解策略"""
+    """求值一次源物体, 量出本次切割共用的包围盒, 尺度, 容差与求解策略
+
+    obj 源物体
+    depsgraph 求值用的依赖图
+    返回 BooleanSource; 源没有面或含非有限坐标时抛 MeshFractureError
+    """
     with evaluated_mesh(obj, depsgraph) as (evaluated, mesh):
+        # 没有面的网格无法求交
         if mesh is None or not mesh.vertices or not mesh.polygons:
             raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
         vertices = tuple(evaluated.matrix_world @ vertex.co for vertex in mesh.vertices)
@@ -60,7 +75,11 @@ def inspect_source(obj, depsgraph):
 
 
 def configure_intersection(modifier, source):
-    """显式选 Exact 求交, 只有开放或非流形输入启用 Hole Tolerant"""
+    """显式选 Exact 求交, 只有开放或非流形输入启用 Hole Tolerant
+
+    modifier 布尔修改器
+    source BooleanSource
+    """
     modifier.operation = "INTERSECT"
     modifier.solver = "EXACT"
     modifier.use_self = False
@@ -68,7 +87,14 @@ def configure_intersection(modifier, source):
 
 
 def validate_intersection(mesh, matrix_world, source):
-    """交集不得明显超出源包围盒; 这是必要条件, 不证明凹形体内包含"""
+    """交集不得明显超出源包围盒; 这是必要条件, 不证明凹形体内包含
+
+    mesh 求交结果的网格
+    matrix_world 结果物体的世界矩阵
+    source BooleanSource
+    超出时抛 IntersectionBoundsError, 含非有限坐标时抛 MeshFractureError
+    """
+    # 空结果 (胞体与源没有交集) 合法, 之后由调用方丢弃
     if not mesh.polygons:
         return
     for vertex in mesh.vertices:
@@ -78,6 +104,7 @@ def validate_intersection(mesh, matrix_world, source):
                 'Boolean intersection for "{name}" contains non-finite coordinates',
                 name=source.name,
             )
+        # 允许一点容差, 浮点误差不应被判成越界
         if any(
             value < source.minimum[i] - source.tolerance
             or value > source.maximum[i] + source.tolerance
@@ -91,7 +118,14 @@ def validate_intersection(mesh, matrix_world, source):
 
 @contextmanager
 def validated_evaluation(cell, modifier, source, depsgraph):
-    """校验临时求值结果, 越界时开启一次自交处理重算同一对操作数, 成功后交给调用方使用"""
+    """校验临时求值结果, 越界时开启一次自交处理重算同一对操作数, 成功后交给调用方使用
+
+    cell 带布尔修改器的胞体物体
+    modifier 它的布尔修改器
+    source BooleanSource
+    depsgraph 求值用的依赖图
+    产出 求值后的物体, 离开作用域时临时网格自动释放
+    """
     for attempt in range(2):
         evaluated = cell.evaluated_get(depsgraph)
         try:

@@ -8,12 +8,21 @@ from .constants import CONTEXT
 
 
 def tool_context(tool_id):
-    """工具的翻译上下文: 各工具互不干扰, 同一英文可以有不同译法"""
+    """工具的翻译上下文: 各工具互不干扰, 同一英文可以有不同译法
+
+    tool_id 工具标识
+    返回 形如 QuickDestruction.<tool_id> 的上下文字符串
+    """
     return f"{CONTEXT}.{tool_id}"
 
 
 def scene_settings(context, tool_id):
-    """取工具在当前场景的参数组"""
+    """取工具在当前场景的参数组
+
+    context Blender 上下文
+    tool_id 工具标识, 同时是场景参数根上的字段名
+    返回 该工具的参数组
+    """
     return getattr(context.scene.qd_settings, tool_id)
 
 
@@ -50,5 +59,8 @@ class ToolSpec:
 
     @property
     def context(self):
-        """本工具的翻译上下文"""
+        """本工具的翻译上下文
+
+        返回 由 tool_id 派生的上下文字符串
+        """
         return tool_context(self.tool_id)

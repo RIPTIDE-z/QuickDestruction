@@ -35,7 +35,13 @@ LIMIT_MESSAGE = (
 
 
 def _check_sources(context, sources, settings):
-    """动手之前完成全部前置检查, 参数非法时不会留下半成品"""
+    """动手之前完成全部前置检查, 参数非法时不会留下半成品
+
+    context Blender 上下文
+    sources 已排序的网格源物体
+    settings 参数值
+    不满足时抛 MeshFractureError
+    """
     if context.mode != "OBJECT" or not sources:
         raise MeshFractureError("Select editable mesh objects in Object Mode")
     index = settings.material_index
@@ -49,6 +55,7 @@ def _check_sources(context, sources, settings):
             )
         if not obj.data.polygons:
             raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
+        # 材质槽编号 0 总是合法 (没有材质时也行), 其余必须在源物体的槽位范围内
         if index > 0 and index >= len(obj.material_slots):
             raise MeshFractureError(
                 'Material slot {index} does not exist on "{name}"', index=index, name=obj.name
@@ -56,10 +63,19 @@ def _check_sources(context, sources, settings):
 
 
 def _visible_collection(context, collection):
-    """集合在当前视图层里是否可见; 视图层的集合树与 bpy.data 是两套结构, 必须按层节点判断"""
+    """集合在当前视图层里是否可见; 视图层的集合树与 bpy.data 是两套结构, 必须按层节点判断
+
+    context Blender 上下文
+    collection 要判断的集合
+    返回 可见为真
+    """
 
     def visit(layer):
-        """递归查找目标集合对应的层节点, 命中即可短路"""
+        """递归查找目标集合对应的层节点, 命中即可短路
+
+        layer 视图层集合节点
+        返回 找到可见的节点为真
+        """
         return (layer.collection == collection and layer.is_visible) or any(
             visit(child) for child in layer.children
         )
@@ -68,12 +84,19 @@ def _visible_collection(context, collection):
 
 
 def _output_collection(context, name, tracker):
-    """解析输出集合: 空名用当前集合, 否则按名查找, 找不到时在当前集合下新建"""
+    """解析输出集合: 空名用当前集合, 否则按名查找, 找不到时在当前集合下新建
+
+    context Blender 上下文
+    name 集合名, 空串表示当前集合
+    tracker 回收账本, 新建的集合登记在里面
+    返回 集合; 不可编辑或不可见时抛 MeshFractureError
+    """
     collection = bpy.data.collections.get(name) if name else context.collection
     if collection is None:
         collection = tracker.track("collections", bpy.data.collections.new(name))
         context.collection.children.link(collection)
         context.view_layer.update()
+    # 链接库里的集合不可写; 不可见的集合里新建的物体无法选中与求值
     if collection.library or not _visible_collection(context, collection):
         raise MeshFractureError(
             "Output collection must be editable and visible in the current view layer"
@@ -82,13 +105,24 @@ def _output_collection(context, name, tracker):
 
 
 def _check_limit(count):
-    """碎块数超过硬上限时报错, 由 run 回收已经生成的数据"""
+    """碎块数超过硬上限时报错, 由 run 回收已经生成的数据
+
+    count 碎块数或它的上界
+    """
     if count > SHARD_LIMIT:
         raise MeshFractureError(LIMIT_MESSAGE, limit=SHARD_LIMIT)
 
 
 def _prepare(context, job, settings, rng, depsgraph):
-    """一个被切物体的准备: 求值快照, 取种子, 建胞体并挂上求交修改器; 还没有求值任何布尔"""
+    """一个被切物体的准备: 求值快照, 取种子, 建胞体并挂上求交修改器; 还没有求值任何布尔
+
+    context Blender 上下文
+    job (物体, 批次, 种子上限)
+    settings 参数值
+    rng 局部随机流
+    depsgraph 求值用的依赖图
+    返回 (快照, 胞体列表, 修改器列表)
+    """
     obj, batch, limit = job
     # 求值快照每次切割只取一次, 胞体构造与布尔求交共用
     snapshot = boolean.inspect_source(obj, depsgraph)
@@ -101,10 +135,16 @@ def _prepare(context, job, settings, rng, depsgraph):
 
 
 def _cut_jobs(context, jobs, settings, rng):
-    """一批物体一起切, 返回每个物体按路径编号的碎块列表; jobs 是 [(物体, 批次, 种子上限), ...]
+    """一批物体一起切
 
-    先逐个准备并挂上修改器, 再统一刷新一次视图层, 这一批的布尔在这一次里并行求值, 最后逐个取回结果
+    先逐个准备并挂上修改器, 再统一刷新一次视图层
+    这一批的布尔在这一次里并行求值, 最后逐个取回结果
     随机流按物体顺序消费, 与逐个切割时完全相同; 显示方式与面隐藏状态无论成败都还原
+    context Blender 上下文
+    jobs [(物体, 批次, 种子上限), ...]
+    settings 参数值
+    rng 局部随机流
+    返回 每个物体按路径编号的碎块列表, 顺序与 jobs 一致
     """
     saved = []
     for obj, batch, _limit in jobs:
@@ -132,6 +172,7 @@ def _cut_jobs(context, jobs, settings, rng):
             outcomes.append(cells)
         return outcomes
     finally:
+        # 无论成败都还原显示方式与面隐藏标记: 源物体不应留下任何改动
         for obj, display, hidden in saved:
             obj.display_type = display
             if hidden is not None:
@@ -140,8 +181,14 @@ def _cut_jobs(context, jobs, settings, rng):
 
 
 def _finish(cells, settings, naming):
-    """全部切割结束后的收尾: 合并共面面, 统一命名与断面标记; 保留的父碎块一并处理"""
+    """全部切割结束后的收尾: 合并共面面, 统一命名与断面标记; 保留的父碎块一并处理
+
+    cells 最终碎块
+    settings 参数值
+    naming NamingPlan
+    """
     objects = cells + naming.parents
+    # 只有烘焙了布尔结果才有网格可合并; 保留修改器时网格还是胞体
     if objects and bakes_booleans(settings):
         cleanup.dissolve_final_shards(objects)
     naming.apply_names(objects)
@@ -152,7 +199,14 @@ def _finish(cells, settings, naming):
 def _subdivide(context, group, cells, naming, settings, rng, state):
     """细分一批父块: 子块加入碎块列表, 父块离开列表并按设置丢弃或移进父碎块集合
 
-    group 是 [(父块, 种子上限), ...]; 没有产出的父块保留
+    没有产出的父块保留
+    context Blender 上下文
+    group [(父块, 种子上限), ...]
+    cells 当前碎块列表, 原地修改
+    naming NamingPlan
+    settings 参数值
+    rng 局部随机流
+    state (回收账本, 依赖图隔离)
     """
     tracker, isolation = state
     with isolation.around([parent for parent, _limit in group], naming):
@@ -160,6 +214,7 @@ def _subdivide(context, group, cells, naming, settings, rng, state):
         for (parent, _limit), children in zip(
             group, _cut_jobs(context, jobs, settings, rng), strict=True
         ):
+            # 没有产出子块 (切出的全是空交集): 父块保留为最终碎块
             if not children:
                 continue
             cells.extend(children)
@@ -173,11 +228,18 @@ def _subdivide(context, group, cells, naming, settings, rng, state):
 
 
 def main_object(context, collection, obj, settings, rng, state, done):
-    """对单个源物体做首次切割并按需递归, 最后统一收尾, 返回 (最终碎块, 资产根集合)
+    """对单个源物体做首次切割并按需递归, 最后统一收尾
 
-    state 是本次生成的回收账本与依赖图隔离
-    done 是之前的源已经生成的碎块数; 碎块总数上限先约束首次切割的种子数, 每轮递归再按剩余预算规划
+    碎块总数上限先约束首次切割的种子数, 每轮递归再按剩余预算规划
     每轮开始前先按上界估算这一轮之后的总数, 必然超过硬上限时不再动手
+    context Blender 上下文
+    collection 输出集合
+    obj 源物体
+    settings 参数值
+    rng 局部随机流
+    state 本次生成的回收账本与依赖图隔离
+    done 之前的源已经生成的碎块数
+    返回 (最终碎块, 资产根集合)
     """
     tracker = state[0]
     naming = NamingPlan(obj, collection, settings, tracker)
@@ -191,6 +253,7 @@ def main_object(context, collection, obj, settings, rng, state, done):
     for _round in range(rounds):
         # 上限为 0 表示不限, 预算记为 None
         budget = maximum - len(cells) if maximum else None
+        # 没有碎块可细分, 或预算已用完: 提前结束递归
         if not cells or (budget is not None and budget <= 0):
             break
         plan = recursion.plan_round(context, cells, settings, cursor, rng, budget)
@@ -211,7 +274,14 @@ def main_object(context, collection, obj, settings, rng, state, done):
 
 
 def run(context, sources, settings, rng):
-    """按名称排序显式源物体并逐个切割, 返回碎块, 源到碎块与源到资产的映射, 耗时; 失败时回收本次新建数据"""
+    """按名称排序显式源物体并逐个切割; 失败时回收本次新建数据
+
+    context Blender 上下文
+    sources 源物体序列, 非网格物体被忽略
+    settings 参数值
+    rng 局部随机流
+    返回 (碎块, 源到碎块的映射, 源到资产根集合的映射, 耗时)
+    """
     # 固定多源处理顺序, 选择顺序不会改变随机流的分配
     sources = sorted((obj for obj in sources if obj.type == "MESH"), key=lambda obj: obj.name_full)
     _check_sources(context, sources, settings)
@@ -229,6 +299,7 @@ def run(context, sources, settings, rng):
         source_to_asset = {}
         for index, obj in enumerate(sources):
             created, root = main_object(context, collection, obj, settings, rng, state, len(cells))
+            # 一个源没有产出任何碎块说明参数或网格有问题, 整次生成失败并回滚
             if not created:
                 raise MeshFractureError('No valid shards were produced for "{name}"', name=obj.name)
             cells.extend(created)

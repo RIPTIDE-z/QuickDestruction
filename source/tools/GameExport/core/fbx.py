@@ -31,7 +31,11 @@ INVALID_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def _label(root):
-    """资产的显示名: 导出集合名去掉后缀, 没有导出集合时取根集合名"""
+    """资产的显示名: 导出集合名去掉后缀, 没有导出集合时取根集合名
+
+    root 资产根集合
+    返回 显示名
+    """
     collection = asset.rig_collection(root)
     return collection.name.removesuffix(EXPORT_SUFFIX) if collection is not None else root.name
 
@@ -40,26 +44,40 @@ def _stem(root, values):
     """导出文件名主干: 文件名参数里的占位符换成资产名, 去掉用户多写的扩展名, 非法字符换成下划线
 
     文件名为空时按默认的占位符处理; 处理后为空时取 export
+    root 资产根集合
+    values 参数值, 提供文件名
+    返回 不含扩展名的文件名
     """
     pattern = values.file_name.strip() or ASSET_TOKEN
     name = pattern.replace(ASSET_TOKEN, _label(root))
+    # 用户常把扩展名一并写进去, 去掉避免出现 a.fbx.fbx
     if name.lower().endswith(FBX_EXTENSION):
         name = name[: -len(FBX_EXTENSION)]
     return INVALID_NAME.sub("_", name).strip() or "export"
 
 
 def resolve_directory(values):
-    """导出目录的绝对路径; 为空或相对路径而文件未保存时报错"""
+    """求导出目录的绝对路径
+
+    values 参数值, 提供目录
+    返回 目录路径; 为空, 或相对路径而文件未保存时抛 ExportError
+    """
     raw = values.directory.strip()
     if not raw:
         raise ExportError(NO_DIRECTORY_MESSAGE)
+    # 未保存的文件没有位置可供 // 相对, abspath 会原样返回 // 开头的路径
     if raw.startswith("//") and not bpy.data.filepath:
         raise ExportError(UNSAVED_MESSAGE)
     return Path(bpy.path.abspath(raw))
 
 
 def target_files(root, values):
-    """导出的文件路径列表, 一个骨架一个; 骨架不止一个时文件名加两位序号"""
+    """求一个资产导出的文件路径, 一个骨架一个
+
+    root 资产根集合, 必须已经构建
+    values 参数值, 提供目录与文件名
+    返回 路径列表; 骨架不止一个时文件名加两位序号
+    """
     armatures, _meshes = export_objects(root)
     directory = resolve_directory(values)
     stem = _stem(root, values)
@@ -72,19 +90,34 @@ def target_files(root, values):
 
 
 def existing_files(root, values):
-    """目标文件里已经存在的"""
+    """目标文件里已经存在的
+
+    root 资产根集合
+    values 参数值
+    返回 已存在的路径列表
+    """
     return [path for path in target_files(root, values) if path.exists()]
 
 
 def _check_axes(values):
-    """前向轴与上方向轴不能在同一条轴上"""
+    """前向轴与上方向轴不能在同一条轴上, 否则 FBX 导出插件会报错
+
+    values 参数值, 提供两个轴向
+    """
     if values.axis_forward.lstrip("-") == values.axis_up.lstrip("-"):
         raise ExportError(AXIS_CONFLICT_MESSAGE)
 
 
 def _set_frames(scene, log, first, last):
-    """导出期间把帧范围设为模拟范围; 按不会被互相钳制的顺序写入"""
+    """导出期间把帧范围设为模拟范围; 按不会被互相钳制的顺序写入
+
+    scene 场景
+    log 写前快照, 结束时由调用方撤回
+    first 模拟起始帧
+    last 模拟结束帧
+    """
     order = ("frame_start", "frame_end")
+    # 新起始帧不早于旧结束帧时先写结束帧, 否则先写起始帧, 两者都不会被对方钳制
     if first >= scene.frame_end:
         order = ("frame_end", "frame_start")
     for name in order:
@@ -92,7 +125,12 @@ def _set_frames(scene, log, first, last):
 
 
 def _select(context, objects, active):
-    """只选中给定物体并设为活动"""
+    """只选中给定物体并设为活动
+
+    context Blender 上下文
+    objects 要选中的物体序列
+    active 要设为活动的物体, 可以为 None
+    """
     for obj in context.view_layer.objects:
         obj.select_set(False)
     for obj in objects:
@@ -101,11 +139,20 @@ def _select(context, objects, active):
 
 
 def export_files(context, root, values, overwrite):
-    """导出资产的绑定, 返回写出的文件路径列表; 目标已存在且不允许覆盖时报错, 什么都不写"""
+    """导出资产的绑定, 目标已存在且不允许覆盖时报错, 什么都不写
+
+    context Blender 上下文
+    root 资产根集合, 必须已经构建
+    values 参数值
+    overwrite 为真时允许覆盖已存在的文件
+    返回 写出的文件路径列表
+    """
+    # FBX 导出是内置插件, 用户可能停用了
     if not hasattr(bpy.ops.export_scene, "fbx"):
         raise ExportError(NO_ADDON_MESSAGE)
     _check_axes(values)
     paths = target_files(root, values)
+    # 先全部核对再动手: 多个文件时不能写一半才发现后面的已存在
     if not overwrite:
         for path in paths:
             if path.exists():
@@ -114,11 +161,13 @@ def export_files(context, root, values, overwrite):
     armatures, meshes = export_objects(root)
     record = asset.rig_record(root)
     scene, view = context.scene, context.view_layer
+    # 记下现场, 结束时还原: 导出需要改选择, 活动物体与帧范围
     selection = [obj for obj in view.objects if obj.select_get()]
     active, frame = view.objects.active, scene.frame_current
     log = WriteLog()
     try:
         _set_frames(scene, log, *record["frames"])
+        # 一个骨架连同它的蒙皮网格写一个文件
         for armature, path in zip(armatures, paths, strict=True):
             members = [obj for obj in meshes if obj.parent == armature]
             _select(context, [armature, *members], armature)
@@ -132,6 +181,7 @@ def export_files(context, root, values, overwrite):
                 **FBX_FIXED,
             )
     finally:
+        # 无论成败都还原帧范围, 选择, 活动物体与当前帧
         log.undo()
         _select(context, selection, active)
         scene.frame_set(frame)
@@ -139,10 +189,16 @@ def export_files(context, root, values, overwrite):
 
 
 def all_targets(roots, values):
-    """全部资产的目标文件路径列表; 不同资产写到同一个文件时报错, 避免后写的悄悄覆盖先写的"""
+    """求全部资产的目标文件路径; 不同资产写到同一个文件时报错, 避免后写的悄悄覆盖先写的
+
+    roots 资产根集合序列
+    values 参数值
+    返回 路径列表, 按资产顺序排列
+    """
     seen = {}
     for root in roots:
         for path in target_files(root, values):
+            # Windows 的文件名不区分大小写, 比较时统一小写
             key = str(path).lower()
             if key in seen and seen[key] is not root:
                 raise ExportError(SAME_FILE_MESSAGE, path=str(path), asset=ASSET_TOKEN)

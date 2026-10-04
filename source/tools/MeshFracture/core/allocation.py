@@ -6,13 +6,25 @@ candidates 是按优先级排好的候选序列, caps 是每个候选最多切�
 
 
 def fits(caps, budget):
-    """全部候选都切满时净增的块数是否不超过预算"""
+    """判断全部候选都切满时净增的块数是否不超过预算
+
+    caps {候选: 最多切成的块数}
+    budget 本轮还能新增的块数
+    返回 放得下为真
+    """
     return sum(cap - 1 for cap in caps.values()) <= budget
 
 
 def even_split(candidates, caps, budget):
-    """平均细分: 按顺序轮流给每块多分一块, 直到用完预算或各块都到达上限, 余下的先给排在前面的"""
+    """平均细分: 按顺序轮流给每块多分一块, 直到用完预算或各块都到达上限, 余下的先给排在前面的
+
+    candidates 按优先级排好的候选序列
+    caps {候选: 最多切成的块数}
+    budget 本轮还能新增的块数
+    返回 [(候选, 种子上限)], 只含分到了块数的候选
+    """
     extra = dict.fromkeys(candidates, 0)
+    # 一轮一轮发: 每轮给每个还没到上限的候选多一块, 直到预算用完
     while budget:
         grown = False
         for candidate in candidates:
@@ -20,15 +32,23 @@ def even_split(candidates, caps, budget):
                 extra[candidate] += 1
                 budget -= 1
                 grown = True
+        # 一整轮都没有候选能再增长: 全部到达上限, 预算有余也停止
         if not grown:
             break
     return [(candidate, extra[candidate] + 1) for candidate in candidates if extra[candidate]]
 
 
 def in_order(candidates, caps, budget):
-    """按优先级依次切满, 预算只剩一部分时最后一块只切到剩余的块数"""
+    """按优先级依次切满, 预算只剩一部分时最后一块只切到剩余的块数
+
+    candidates 按优先级排好的候选序列
+    caps {候选: 最多切成的块数}
+    budget 本轮还能新增的块数
+    返回 [(候选, 种子上限)]
+    """
     plan = []
     for candidate in candidates:
+        # 预算用完后面的候选都不再切
         if budget <= 0:
             break
         extra = min(caps[candidate] - 1, budget)

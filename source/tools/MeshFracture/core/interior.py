@@ -6,7 +6,12 @@ from ..constants import INTERIOR_VGROUP_NAME
 
 
 def _mark_interior_group(cell, bm):
-    """只属于内部断面的顶点计入断面顶点组, 与外表面共享的边界顶点不计入"""
+    """只属于内部断面的顶点计入断面顶点组, 与外表面共享的边界顶点不计入
+
+    cell 碎块物体
+    bm 碎块网格的 BMesh, 面的隐藏标记表示断面
+    """
+    # 外表面的顶点: 属于任何一个没有隐藏的面
     exterior = {vert for face in bm.faces if not face.hide for vert in face.verts}
     group = cell.vertex_groups.get(INTERIOR_VGROUP_NAME)
     if group is None:
@@ -19,14 +24,21 @@ def _mark_interior_group(cell, bm):
 
 
 def _mark_sharp_edges(bm):
-    """两侧隐藏状态不同的边就是内外交界边, 标记为锐边; 着色直接读取锐边, 不拆开几何"""
+    """两侧隐藏状态不同的边就是内外交界边, 标记为锐边; 着色直接读取锐边, 不拆开几何
+
+    bm 碎块网格的 BMesh
+    """
     for edge in bm.edges:
+        # 相邻面的隐藏状态恰有两种: 一侧是断面, 一侧是外表面
         if len({face.hide for face in edge.link_faces}) == 2:
             edge.smooth = False
 
 
 def _mark_interior_faces(bm):
-    """断面面属性: 面隐藏标记就是断面判定, 在取消隐藏之前把它存成布尔面属性, 之后仍能分出断面"""
+    """断面面属性: 面隐藏标记就是断面判定, 在取消隐藏之前把它存成布尔面属性, 之后仍能分出断面
+
+    bm 碎块网格的 BMesh
+    """
     layer = bm.faces.layers.bool.get(shards.INTERIOR_ATTRIBUTE)
     if layer is None:
         layer = bm.faces.layers.bool.new(shards.INTERIOR_ATTRIBUTE)
@@ -35,9 +47,14 @@ def _mark_interior_faces(bm):
 
 
 def finish_interior(cells, settings):
-    """全部切割完成后统一处理内部断面: 断面面属性, 顶点组, 锐边, 最后取消全部隐藏"""
+    """全部切割完成后统一处理内部断面: 断面面属性, 顶点组, 锐边, 最后取消全部隐藏
+
+    cells 最终碎块物体
+    settings 参数值
+    """
     for cell in cells:
         with mesh_edit(cell.data) as bm:
+            # 断面面属性总是写: 游戏导出据它生成断面 UV
             _mark_interior_faces(bm)
             if settings.use_interior_vgroup:
                 _mark_interior_group(cell, bm)

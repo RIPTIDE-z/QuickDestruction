@@ -9,7 +9,12 @@ from .constants import CONTEXT
 
 
 def _redraw(_owner, _context):
-    """预览设置改变后重绘三维视图: 绘制回调只在重绘时执行"""
+    """预览设置改变后重绘三维视图: 绘制回调只在重绘时执行
+
+    _owner 参数组, 不使用
+    _context Blender 传入的上下文, 不使用
+    """
+    # 延迟导入: 本模块在 Blender 之外也要能被单元测试导入
     import bpy
 
     for window in bpy.context.window_manager.windows:
@@ -20,6 +25,7 @@ def _redraw(_owner, _context):
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 PROPERTY_SPECS = {
+    # 是否在视口里显示计划预览
     "show_preview": (
         "BoolProperty",
         {
@@ -30,6 +36,7 @@ PROPERTY_SPECS = {
             "update": _redraw,
         },
     ),
+    # 预览箭头相对速度的长度比例
     "preview_scale": (
         "FloatProperty",
         {
@@ -42,6 +49,7 @@ PROPERTY_SPECS = {
             "update": _redraw,
         },
     ),
+    # 是否按起动时刻给箭头着色
     "color_by_time": (
         "BoolProperty",
         {

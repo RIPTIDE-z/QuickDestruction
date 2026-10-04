@@ -17,7 +17,11 @@ from .settings import ACTIVE_WHEN, SCHEMA
 
 
 def _draw_source(layout, owner):
-    """切割种子来源子面板: 自身与子物体各一行顶点与粒子按钮, 注解铅笔与物体无关, 归在特殊一行显示全称"""
+    """切割种子来源子面板: 自身与子物体各一行顶点与粒子按钮, 注解铅笔与物体无关, 归在特殊一行显示全称
+
+    layout 要绘制到的布局
+    owner 参数组
+    """
     column = layout.column(align=True)
     verts, particles = tr(CONTEXT, "Verts"), tr(CONTEXT, "Particles")
     own = label_row(column, tr(CONTEXT, "Own"), translate=False)
@@ -68,13 +72,22 @@ GROUPS = (
 
 
 def _param_active(owner, key):
-    """参数的生效条件成立时才可用, 否则置灰但仍可编辑; 规则与流水线共用, 见 settings.ACTIVE_WHEN"""
+    """参数的生效条件成立时才可用, 否则置灰但仍可编辑; 规则与流水线共用, 见 settings.ACTIVE_WHEN
+
+    owner 参数组
+    key 字段名
+    返回 生效为真, 没有条件的字段总是生效
+    """
     rule = ACTIVE_WHEN.get(key)
     return rule is None or rule(owner)
 
 
 def _can_apply(context):
-    """仅在物体模式且选中可编辑网格时启用生成按钮"""
+    """仅在物体模式且选中可编辑网格时启用生成按钮
+
+    context Blender 上下文
+    返回 可以生成为真
+    """
     return (
         context.mode == "OBJECT"
         and context.scene is not None
@@ -99,8 +112,17 @@ class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
     issues: ClassVar[list] = []
 
     def invoke(self, context, _event):
-        """源网格不封闭或自相交时先弹窗说明后果, 由用户决定是否继续; 没有问题时直接切割"""
-        found = source_issues(context, context.selected_editable_objects)
+        """源网格不封闭或自相交时先弹窗说明后果, 由用户决定是否继续; 没有问题时直接切割
+
+        context Blender 上下文
+        _event 触发事件, 不使用
+        返回 算子返回集合
+        """
+        # 体检出错也走失败报告, 不以原始异常出现
+        try:
+            found = source_issues(context, context.selected_editable_objects)
+        except Exception as error:
+            return self.fail(error)
         if not found:
             return self.execute(context)
         # 弹窗绘制时要用到的问题清单: [(物体名, 是否不封闭, 是否自相交), ...]
@@ -117,7 +139,10 @@ class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
         )
 
     def draw(self, _context):
-        """弹窗内容: 列出有问题的物体, 说明后果与建议"""
+        """弹窗内容: 列出有问题的物体, 说明后果与建议
+
+        _context Blender 上下文, 不使用
+        """
         layout = self.layout
         column = layout.column(align=True)
         for name, not_closed, intersecting in self.issues:
@@ -141,7 +166,11 @@ class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
         )
 
     def run(self, context):
-        """读取场景参数调用阶段 API, 成功后选中本次生成的碎块"""
+        """读取场景参数调用阶段 API, 成功后选中本次生成的碎块
+
+        context Blender 上下文
+        返回 报告文字
+        """
         data = SCHEMA.read(scene_settings(context, TOOL_ID))
         result = generate_fragments(context, context.selected_editable_objects, data)
         restore_selection(context, result.shards, result.shards[0])
@@ -166,13 +195,21 @@ class QD_MESH_FRACTURE_OT_make_unique(ToolOperator, Operator):
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
     def run(self, context):
-        """改写活动物体所在资产的标识"""
+        """改写活动物体所在资产的标识
+
+        context Blender 上下文
+        返回 报告文字
+        """
         root = make_asset_unique(context.active_object)
         return tr_report(CONTEXT, 'Asset "{name}" now has its own identity', name=root.name)
 
 
 def _draw_duplicate_warning(layout, context):
-    """活动物体所在的资产被复制过时, 提示原因并给出改正按钮; 其他时候不占位置"""
+    """活动物体所在的资产被复制过时, 提示原因并给出改正按钮; 其他时候不占位置
+
+    layout 要绘制到的布局
+    context Blender 上下文
+    """
     root = asset.duplicated_root(context.active_object)
     if root is None:
         return
@@ -191,7 +228,10 @@ class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
     tool_id = TOOL_ID
 
     def draw(self, context):
-        """生成按钮与未就绪提示; 参数都在下方的子面板里"""
+        """生成按钮与未就绪提示; 参数都在下方的子面板里
+
+        context Blender 上下文
+        """
         layout = self.layout
         ready = _can_apply(context)
         button = layout.column()

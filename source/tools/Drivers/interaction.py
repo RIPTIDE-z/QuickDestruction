@@ -25,15 +25,19 @@ ROLE_CHOICES = (
     (drivers.PROJECTILE, "Projectile", "Fire a bullet along the arrow or curve"),
     (drivers.ZONE, "Zone", "Change how the shards inside behave before the simulation"),
 )
-# 各类物体能设成的角色: 曲线方向只能用曲线, 弹道两者都行, 其余只能用空物体
+# 空物体能设成的角色: 除了曲线方向 (只能用曲线) 之外的全部
 EMPTY_ROLES = tuple(item for item in ROLE_CHOICES if item[0] != drivers.CURVE_FLOW)
+# 曲线物体能设成的角色: 曲线方向与弹道
 CURVE_CHOICES = tuple(item for item in ROLE_CHOICES if item[0] in CURVE_ROLES)
 # 作用范围由物体缩放决定的角色: 界面显示半径并提示缩放
 RANGE_ROLES = (drivers.EXPLOSION, drivers.PUSH, drivers.VORTEX, drivers.ZONE)
 
 
 def _role_property():
-    """算子的驱动角色属性; SKIP_SAVE 让每次调用都按按钮给出的角色执行"""
+    """算子的驱动角色属性; SKIP_SAVE 让每次调用都按按钮给出的角色执行
+
+    返回 每次调用都新建的 EnumProperty 定义
+    """
     return EnumProperty(
         name="Driver Type",
         description="Kind of driver to create",
@@ -54,10 +58,15 @@ class QD_DRIVERS_OT_add(ToolOperator, Operator):
     )
     bl_translation_context = CONTEXT
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
+    # 要新建的驱动角色, 由按钮写入
     __annotations__ = {"role": _role_property()}
 
     def run(self, context):
-        """新建驱动并设为唯一选中的活动物体"""
+        """新建驱动并设为唯一选中的活动物体
+
+        context Blender 上下文
+        返回 报告文字
+        """
         obj = add_driver(context, self.role)
         select_only(context, [obj], obj)
         return tr_report(CONTEXT, 'Added driver "{name}"', name=obj.name)
@@ -71,10 +80,15 @@ class QD_DRIVERS_OT_convert(ToolOperator, Operator):
     bl_description = "Turn the active empty into a driver of this type"
     bl_translation_context = CONTEXT
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
+    # 要设成的驱动角色, 由按钮写入
     __annotations__ = {"role": _role_property()}
 
     def run(self, context):
-        """设置角色与对应的显示类型"""
+        """设置角色与对应的显示类型
+
+        context Blender 上下文
+        返回 报告文字
+        """
         obj = make_driver(context.active_object, self.role)
         return tr_report(CONTEXT, '"{name}" is now a driver', name=obj.name)
 
@@ -89,7 +103,11 @@ class QD_DRIVERS_OT_select_affected(ToolOperator, Operator):
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
     def run(self, context):
-        """按计划选中有起动事件的碎块; 没有时不改动选择"""
+        """按计划选中有起动事件的碎块; 没有时不改动选择
+
+        context Blender 上下文
+        返回 报告文字
+        """
         found = affected_shards(context, asset.resolve(picked_objects(context)))
         if not found:
             return tr_report(CONTEXT, "No shard is affected by the drivers")
@@ -105,6 +123,7 @@ class QD_DRIVERS_OT_select(ToolOperator, Operator):
     bl_description = "Select this driver and make it active to edit its settings"
     bl_translation_context = CONTEXT
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
+    # 要选中的驱动物体名, 由列表里的按钮写入
     __annotations__ = {
         "name": StringProperty(
             name="Driver",
@@ -115,8 +134,13 @@ class QD_DRIVERS_OT_select(ToolOperator, Operator):
     }
 
     def run(self, context):
-        """选中给定名字的驱动物体"""
+        """选中给定名字的驱动物体
+
+        context Blender 上下文
+        返回 报告文字; 选中成功时没有报告
+        """
         obj = context.scene.objects.get(self.name)
+        # 列表可能比场景旧 (驱动刚被删除或重命名)
         if obj is None:
             return tr_report(CONTEXT, 'Driver "{name}" is not in this scene', name=self.name)
         select_only(context, [obj], obj)
@@ -124,12 +148,21 @@ class QD_DRIVERS_OT_select(ToolOperator, Operator):
 
 
 def _always(*_args):
-    """参数的生效条件: 这里的字段始终可用"""
+    """参数的生效条件: 这里的字段始终可用
+
+    _args draw_fields 传入的 (参数组, 字段名), 不使用
+    返回 总是为真
+    """
     return True
 
 
 def _role_buttons(layout, operator, choices=ROLE_CHOICES):
-    """每种角色一个按钮, 两列排布"""
+    """每种角色一个按钮, 两列排布
+
+    layout 要绘制到的布局
+    operator 按钮调用的算子 ID, 算子要有 role 属性
+    choices 要列出的角色选项
+    """
     grid = layout.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
     for role, name, _description in choices:
         button = grid.operator(
@@ -147,7 +180,10 @@ class QD_DRIVERS_PT_main(ToolPanel, Panel):
     tool_id = TOOL_ID
 
     def draw(self, context):
-        """添加按钮, 选中受影响的碎块, 计划预览的开关与显示设置"""
+        """添加按钮, 选中受影响的碎块, 计划预览的开关与显示设置
+
+        context Blender 上下文
+        """
         layout = self.layout
         layout.label(text="Add at the 3D cursor:", text_ctxt=CONTEXT)
         _role_buttons(layout, QD_DRIVERS_OT_add.bl_idname)
@@ -155,14 +191,21 @@ class QD_DRIVERS_PT_main(ToolPanel, Panel):
         layout.operator(QD_DRIVERS_OT_select_affected.bl_idname, icon="RESTRICT_SELECT_OFF")
         settings = scene_settings(context, TOOL_ID)
         draw_fields(layout, settings, SCHEMA, ("show_preview",), _always)
+        # 预览没开启时, 它的显示设置置灰但仍可编辑
         column = layout.column()
         column.active = settings.show_preview
         draw_fields(column, settings, SCHEMA, ("preview_scale", "color_by_time"), _always)
 
 
 def _draw_range(layout, context, obj):
-    """作用范围的半径, 按场景单位显示; 提示用缩放调整它"""
+    """作用范围的半径, 按场景单位显示; 提示用缩放调整它
+
+    layout 要绘制到的布局
+    context Blender 上下文
+    obj 驱动物体
+    """
     unit = context.scene.unit_settings
+    # 世界单位换成用户设置的长度单位显示
     radius = bpy.utils.units.to_string(
         unit.system, "LENGTH", drivers.range_radius(obj) * unit.scale_length
     )
@@ -172,7 +215,11 @@ def _draw_range(layout, context, obj):
 
 
 def _draw_hint(layout, role):
-    """路径与区域角色没有半径可显示, 按角色给出调整方式的提示"""
+    """路径与区域角色没有半径可显示, 按角色给出调整方式的提示
+
+    layout 要绘制到的布局
+    role 驱动角色
+    """
     if role == drivers.CURVE_FLOW:
         layout.label(
             text="Edit the points of the curve to change the path", text_ctxt=CONTEXT, icon="INFO"
@@ -184,10 +231,16 @@ def _draw_hint(layout, role):
 
 
 def _draw_driver(layout, context, obj):
-    """活动驱动: 类型与启用在上, 只列出该类型用到的参数, 最后是作用范围"""
+    """活动驱动: 类型与启用在上, 只列出该类型用到的参数, 最后是作用范围
+
+    layout 要绘制到的布局
+    context Blender 上下文
+    obj 活动的驱动物体
+    """
     params = getattr(obj, drivers.ATTRIBUTE)
     layout.label(text=obj.name, translate=False, icon=ROLE_ICONS[params.role])
     draw_fields(layout, params, drivers.DRIVER_SCHEMA, ("role", "enabled"), lambda *_args: True)
+    # 停用的驱动其余参数置灰
     column = layout.column()
     column.active = params.enabled
     # 时间, 强度与衰减, 方向, 自转与随机各成一组, 组间留空
@@ -195,6 +248,7 @@ def _draw_driver(layout, context, obj):
         column.separator()
         draw_fields(column, params, drivers.DRIVER_SCHEMA, group, lambda *_args: True)
     column.separator()
+    # 有半径的角色显示半径; 路径与区域给出调整方式的提示
     if params.role in RANGE_ROLES:
         _draw_range(column, context, obj)
     else:
@@ -210,9 +264,13 @@ class QD_DRIVERS_PT_active(ToolPanel, Panel):
     bl_parent_id = "QD_DRIVERS_PT_main"
 
     def draw(self, context):
-        """按活动物体的种类给出参数, 转换按钮或提示"""
+        """按活动物体的种类给出参数, 转换按钮或提示
+
+        context Blender 上下文
+        """
         layout = self.layout
         obj = context.active_object
+        # 四种情形: 已是驱动, 普通空物体, 曲线物体, 其余
         if drivers.role_of(obj) != drivers.NONE:
             _draw_driver(layout, context, obj)
         elif obj is not None and obj.type == "EMPTY":
@@ -234,7 +292,10 @@ class QD_DRIVERS_PT_list(ToolPanel, Panel):
     bl_parent_id = "QD_DRIVERS_PT_main"
 
     def draw(self, context):
-        """每个驱动一行: 名字按钮, 类型与起动帧"""
+        """每个驱动一行: 名字按钮, 类型与起动帧
+
+        context Blender 上下文
+        """
         layout = self.layout
         found = drivers.all_drivers(context.scene)
         if not found:
@@ -245,7 +306,9 @@ class QD_DRIVERS_PT_list(ToolPanel, Panel):
         for obj in found:
             params = getattr(obj, drivers.ATTRIBUTE)
             row = column.row(align=True)
+            # 停用的驱动整行置灰
             row.active = params.enabled
+            # 当前活动的驱动按钮显示为按下状态
             button = row.operator(
                 QD_DRIVERS_OT_select.bl_idname,
                 text=obj.name,
@@ -258,6 +321,7 @@ class QD_DRIVERS_PT_list(ToolPanel, Panel):
             row.label(text=text, translate=False)
 
 
+# 本工具需要注册的全部类, 顺序即注册顺序, 子面板排在主面板之后
 CLASSES = (
     QD_DRIVERS_OT_add,
     QD_DRIVERS_OT_convert,

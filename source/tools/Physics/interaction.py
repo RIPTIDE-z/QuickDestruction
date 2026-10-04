@@ -29,7 +29,12 @@ STATUS_ROWS = 6
 
 
 def _param_active(owner, key):
-    """参数的生效条件成立时才可用, 否则置灰但仍可编辑"""
+    """参数的生效条件成立时才可用, 否则置灰但仍可编辑
+
+    owner 参数组
+    key 字段名
+    返回 生效为真, 没有条件的字段总是生效
+    """
     rule = ACTIVE_WHEN.get(key)
     return rule is None or rule(owner)
 
@@ -47,7 +52,11 @@ MATERIAL_ROWS = (
 
 
 def _draw_material(layout, owner):
-    """材料子面板: 材料下拉与各物理量; 选择材料后又手动改过数值时提示, 以免误以为仍是预设值"""
+    """材料子面板: 材料下拉与各物理量; 选择材料后又手动改过数值时提示, 以免误以为仍是预设值
+
+    layout 要绘制到的布局
+    owner 参数组
+    """
     draw_fields(
         layout,
         owner,
@@ -55,6 +64,7 @@ def _draw_material(layout, owner):
         MATERIAL_ROWS,
         _param_active,
     )
+    # 改过数值后材料项仍显示原材料名, 提示用户这些值已不是预设值
     if material_edited(owner):
         layout.label(
             text="Values were edited after choosing the material", text_ctxt=CONTEXT, icon="INFO"
@@ -84,7 +94,11 @@ class QD_PHYSICS_OT_apply(ToolOperator, Operator):
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
     def run(self, context):
-        """读取场景参数并应用, 报告碎块数与总质量"""
+        """读取场景参数并应用, 报告碎块数与总质量
+
+        context Blender 上下文
+        返回 报告文字
+        """
         roots = asset.resolve(picked_objects(context))
         data = SCHEMA.read(scene_settings(context, TOOL_ID))
         result = apply_physics(context, roots, data)
@@ -94,6 +108,7 @@ class QD_PHYSICS_OT_apply(ToolOperator, Operator):
             count=result.shards,
             mass=result.mass,
         )
+        # 有不封闭的碎块时说明它们的体积是怎么算的
         if result.open_meshes:
             message += " " + tr_report(
                 CONTEXT,
@@ -116,8 +131,13 @@ class QD_PHYSICS_OT_load_applied(ToolOperator, Operator):
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
     def run(self, context):
-        """只接受一个已应用物理的资产, 生效记录里的字段整体写回面板"""
+        """只接受一个已应用物理的资产, 生效记录里的字段整体写回面板
+
+        context Blender 上下文
+        返回 报告文字
+        """
         roots = asset.resolve(picked_objects(context))
+        # 多个资产的设置可能不同, 读回哪一份有歧义, 所以只接受一个
         record = asset.physics_record(roots[0]) if len(roots) == 1 else None
         if record is None:
             raise PhysicsError("Select one asset with physics applied")
@@ -138,7 +158,11 @@ class QD_PHYSICS_OT_remove(ToolOperator, Operator):
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
     def run(self, context):
-        """删除刚体并报告碎块数"""
+        """删除刚体并报告碎块数
+
+        context Blender 上下文
+        返回 报告文字
+        """
         count = remove_physics(context, asset.resolve(picked_objects(context)))
         return tr_report(CONTEXT, "Removed physics from {count} shards", count=count)
 
@@ -156,17 +180,27 @@ class QD_PHYSICS_OT_reset_rest(ToolOperator, Operator):
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
     def run(self, context):
-        """重设静止姿态并报告碎块数"""
+        """重设静止姿态并报告碎块数
+
+        context Blender 上下文
+        返回 报告文字
+        """
         count = reset_rest(context, asset.resolve(picked_objects(context)))
         return tr_report(CONTEXT, "Rest pose updated for {count} shards", count=count)
 
 
 def _differs(owner, root):
-    """面板上的设置与资产已应用的设置是否不同; 没有应用过时不算不同"""
+    """面板上的设置与资产已应用的设置是否不同; 没有应用过时不算不同
+
+    owner 参数组
+    root 资产根集合
+    返回 不同为真
+    """
     record = asset.physics_record(root)
     if record is None:
         return False
     current = SCHEMA.read(owner)
+    # 浮点数留一点容差; 只比较记录里有的字段 (旧记录可能缺字段)
     return any(
         abs(value - record[key]) > 1e-6 if isinstance(value, float) else value != record[key]
         for key, value in current.items()
@@ -175,20 +209,32 @@ def _differs(owner, root):
 
 
 def _material_name(identifier):
-    """材料枚举项的界面名称"""
+    """材料枚举项的界面名称
+
+    identifier 材料标识
+    返回 英文名称, 找不到时返回标识本身
+    """
     items = SCHEMA.specs["material"][1]["items"]
     return next((name for key, name, _description in items if key == identifier), identifier)
 
 
 def _mass_text(kilograms):
-    """质量的显示文字: 一吨以上用吨, 否则用千克"""
+    """质量的显示文字: 一吨以上用吨, 否则用千克
+
+    kilograms 质量, kg
+    返回 已翻译的文字
+    """
     if kilograms >= 1000.0:
         return tr(CONTEXT, "{value:.1f} t", value=kilograms / 1000.0)
     return tr(CONTEXT, "{value:.1f} kg", value=kilograms)
 
 
 def _draw_summary(layout, root):
-    """已应用物理的资产摘要: 材料与总质量; 有不封闭的碎块时说明体积的算法"""
+    """已应用物理的资产摘要: 材料与总质量; 有不封闭的碎块时说明体积的算法
+
+    layout 要绘制到的布局
+    root 资产根集合
+    """
     record = asset.physics_record(root)
     if record is None:
         return
@@ -209,7 +255,13 @@ def _draw_summary(layout, root):
 
 
 def _draw_statuses(layout, context, roots):
-    """逐个资产画出物理状态; 单个资产时面板与已应用的设置不同则提示并给出读取按钮"""
+    """逐个资产画出物理状态; 单个资产时面板与已应用的设置不同则提示并给出读取按钮
+
+    layout 要绘制到的布局
+    context Blender 上下文
+    roots 选中的资产根集合
+    """
+    # 一个资产: 状态, 摘要, 面板与已应用设置不同时给出读回按钮
     if len(roots) == 1:
         draw_stage_status(layout, tr(CONTEXT, "Status"), physics_status(roots[0]))
         _draw_summary(layout, roots[0])
@@ -220,10 +272,12 @@ def _draw_statuses(layout, context, roots):
             )
             box.operator(QD_PHYSICS_OT_load_applied.bl_idname, icon="IMPORT")
         return
+    # 少量几个资产: 每个资产一行状态
     if len(roots) <= STATUS_ROWS:
         for root in roots:
             draw_stage_status(layout, root.name, physics_status(root))
         return
+    # 很多资产: 逐个列出会占满侧栏, 只写个数
     current = sum(physics_status(root).state == CURRENT for root in roots)
     text = tr(
         CONTEXT,
@@ -243,7 +297,10 @@ class QD_PHYSICS_PT_main(ToolPanel, Panel):
     tool_id = TOOL_ID
 
     def draw(self, context):
-        """资产与状态在上, 主按钮居中加高, 次要操作并排在下"""
+        """资产与状态在上, 主按钮居中加高, 次要操作并排在下
+
+        context Blender 上下文
+        """
         layout = self.layout
         roots = draw_assets(layout, context)
         if roots:

@@ -10,7 +10,12 @@ from ..errors import NON_FINITE_MESSAGE, MeshFractureError
 
 
 def _vertex_points(item, depsgraph):
-    """一个物体的世界空间顶点: 网格取原始顶点, 曲线等可转换类型取求值几何"""
+    """一个物体的世界空间顶点: 网格取原始顶点, 曲线等可转换类型取求值几何
+
+    item 物体
+    depsgraph 求值用的依赖图
+    返回 世界坐标的点列表; 不支持的类型为空
+    """
     if item.type == "MESH":
         return [item.matrix_world @ v.co for v in item.data.vertices]
     if item.type not in {"CURVE", "SURFACE", "FONT", "META"}:
@@ -21,7 +26,12 @@ def _vertex_points(item, depsgraph):
 
 
 def _particle_points(item, depsgraph):
-    """一个物体全部粒子系统的粒子位置, 已经是世界空间坐标"""
+    """一个物体全部粒子系统的粒子位置, 已经是世界空间坐标
+
+    item 物体
+    depsgraph 求值用的依赖图
+    返回 世界坐标的点列表
+    """
     # 没有粒子系统就不必求值; 递归期间已完成的碎块不在依赖图里, 也不能求值
     if not item.particle_systems:
         return []
@@ -38,6 +48,8 @@ def _annotation_points(scene):
 
     当前帧取帧号不大于当前帧的最近一帧, 与注解保持上一帧的显示规则一致
     不读图层的 active_frame: 它是视口重绘时才刷新的缓存, 脚本调用时会是旧帧或空
+    scene 场景
+    返回 世界坐标的点列表
     """
     annotation = scene.annotation
     if annotation is None:
@@ -51,6 +63,7 @@ def _annotation_points(scene):
         for frame in layers[layers.active_index].frames
         if frame.frame_number <= scene.frame_current
     ]
+    # 当前帧之前没有任何关键帧: 注解在这一帧不显示
     if not held:
         return []
     frame = max(held, key=lambda item: item.frame_number)
@@ -58,7 +71,14 @@ def _annotation_points(scene):
 
 
 def points_from_object(context, depsgraph, obj, source):
-    """按来源选项收集世界空间种子点; 勾选多个来源时取并集, 顺序固定"""
+    """按来源选项收集世界空间种子点; 勾选多个来源时取并集, 顺序固定
+
+    context Blender 上下文
+    depsgraph 求值用的依赖图
+    obj 源物体
+    source 来源选项集合, 取 VERT_OWN, VERT_CHILD, PARTICLE_OWN, PARTICLE_CHILD, PENCIL
+    返回 世界坐标的点列表
+    """
     points = []
     if "VERT_OWN" in source:
         points.extend(_vertex_points(obj, depsgraph))
@@ -77,7 +97,11 @@ def points_from_object(context, depsgraph, obj, source):
 
 
 def random_unit_vector(rng):
-    """用调用方的随机流在单位球面均匀采样, 不使用 mathutils 的全局随机状态"""
+    """用调用方的随机流在单位球面均匀采样, 不使用 mathutils 的全局随机状态
+
+    rng random.Random 实例
+    返回 单位向量
+    """
     # 先在 [-1, 1] 上取 z, 再在圆周上取角度, 得到球面上的均匀分布
     z = rng.uniform(-1.0, 1.0)
     angle = rng.uniform(0.0, tau)
@@ -90,17 +114,32 @@ def sample_points(context, obj, settings, depsgraph=None):
     """取来源的全部候选点, 为空则回退自身顶点; 不消耗随机流, 规划递归时也用它估算块数
 
     没有给依赖图时现取一个; 现取会立即求值所有待处理的修改器, 批量切割时要传入已经取好的依赖图
+    context Blender 上下文
+    obj 源物体
+    settings 参数值
+    depsgraph 求值用的依赖图, 可以为 None
+    返回 世界坐标的点列表
     """
     if depsgraph is None:
         depsgraph = context.evaluated_depsgraph_get()
     points = points_from_object(context, depsgraph, obj, settings.source)
+    # 选定的来源没有点 (例如没有子物体): 回退到自身顶点, 保证至少有种子
     if not points:
         points = points_from_object(context, depsgraph, obj, {"VERT_OWN"})
     return points
 
 
 def seed_points(context, obj, settings, limit, rng, depsgraph=None):
-    """采样种子点: 取候选点, 超过 limit 时随机截断, 精确去重并检查有限性; limit 为 0 表示全部保留"""
+    """采样种子点: 取候选点, 超过 limit 时随机截断, 精确去重并检查有限性
+
+    context Blender 上下文
+    obj 源物体
+    settings 参数值
+    limit 种子数上限, 0 表示全部保留
+    rng 局部随机流
+    depsgraph 求值用的依赖图, 可以为 None
+    返回 世界坐标的点列表
+    """
     points = sample_points(context, obj, settings, depsgraph)
     if limit and limit < len(points):
         # 先打乱再截断, 得到随机子集而不是前 N 个
@@ -114,7 +153,14 @@ def seed_points(context, obj, settings, limit, rng, depsgraph=None):
 
 
 def scatter_points(points, scale, source_noise, rng):
-    """种子扰动: 每个种子点沿随机方向位移, 半径在 0 到上限之间均匀取值; 强度为 0 时不消耗随机流"""
+    """种子扰动: 每个种子点沿随机方向位移, 半径在 0 到上限之间均匀取值; 强度为 0 时不消耗随机流
+
+    points 世界坐标的种子点
+    scale 物体尺度, 扰动半径的基准
+    source_noise 扰动强度, 0 到 1
+    rng 局部随机流
+    返回 扰动后的点列表
+    """
     if not source_noise:
         return points
     return [

@@ -81,7 +81,7 @@ flowchart LR
 | 错误 | 蒙皮一致 | 抽样帧上蒙皮后的顶点与碎块动画给出的世界顶点一致（构建时校验首尾与若干帧，测试按全部帧校验） |
 | 错误 | 骨骼名 | 骨骼名只含 ASCII 且不超过 63 字节 |
 | 错误 | 骨骼上限 | 每段网格与每个骨架的骨骼数没有超过设定上限 |
-| 警告 | 绑定过期 | 物理重新应用过或设置已改，需要重建（重新烘焙与重置模拟会直接清除旧绑定） |
+| 警告 | 绑定过期 | 物理重新应用过、模拟成果变了或导出集合被删，需要重建（重新烘焙与重置模拟会直接清除旧绑定；面板上的"设置在上次构建后改过"是另一回事，只提示参数与上次构建时不同） |
 | 警告 | 变换 | 导出集合里的物体不是单位变换 |
 | 警告 | 断面 UV | 断面没有 UV，或碎块没有断面标记（旧版本生成的碎块需要重新切割） |
 | 警告 | 结算时间 | 最后一次起动距离结束不足 1 秒，碎块可能还没落定 |
@@ -114,6 +114,7 @@ from bl_ext.user_default.quick_destruction.tools.GameExport.api import (
     check,
     existing_files,
     export_fbx,
+    export_paths,
 )
 
 results = build_rig(bpy.context, [root], {"max_bones_per_mesh": 64})  # [RigResult]
@@ -123,6 +124,7 @@ paths, issues = export_fbx(
 )
 ```
 
+- `export_paths(roots, config)` 返回一组资产会写到的全部文件，不同资产会写到同一个文件时报错；`existing_files(root, config)` 只返回其中已存在的；
 - 配置缺失字段取默认值，选了 `engine` 而没有给轴向时自动填入引擎的取值；
 - `build_rig_steps` 是生成器，每个阶段产出一次进度，供可取消的界面任务使用；`build_rig` 同步执行到底；
 - 构建与导出前都会检查运行锁：同一时间只允许一个长任务；

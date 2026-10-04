@@ -1,6 +1,7 @@
 """物理应用 - 为资产的碎块建立刚体, 把原点移到体积质心, 记录静止姿态, 按材料逐块写入刚体属性
 
-应用不改变碎块是否在刚体世界里: 原本不在世界里的碎块建立刚体数据后立即移出, 何时参与模拟由模拟会话决定
+应用不改变碎块是否在刚体世界里: 原本不在世界里的碎块建立刚体数据后立即移出
+何时参与模拟由模拟会话决定
 对已有数据的改动先记入写前快照, 新建的数据登记到创建账本; 中途失败时两者一起撤回
 """
 
@@ -50,21 +51,34 @@ class _Tally:
 
 
 def _measure(shard):
-    """在网格局部坐标里量出 (体积, 质心, 是否封闭, 是否退化); 不封闭的网格用凸包体积与顶点平均位置"""
+    """在网格局部坐标里量出体积与质心; 不封闭的网格用凸包体积与顶点平均位置
+
+    shard 碎块物体
+    返回 (体积, 质心, 是否封闭, 是否退化)
+    """
     with mesh_edit(shard.data) as bm:
         closed = not is_not_closed(bm)
         volume, centroid = volume_centroid(bm)
+        # 封闭但体积接近零: 质心不可信, 记为退化
         degenerate = closed and centroid is None
+        # 不封闭的网格没有可靠的带符号体积, 改用凸包体积近似
         if not closed:
             volume = convex_hull_volume(bm)
+        # 质心不可信时退回顶点平均位置
         if not closed or centroid is None:
             centroid = vertex_mean(bm)
         return abs(volume), centroid.copy(), closed, degenerate
 
 
 def _move_origin(shard, centroid, log):
-    """把原点移到质心, 世界几何不变; 网格被多个物体共用或偏移极小时不动"""
+    """把原点移到质心, 世界几何不变; 网格被多个物体共用或偏移极小时不动
+
+    shard 碎块物体
+    centroid 局部坐标里的质心
+    log 写前快照
+    """
     size = max(shard.dimensions) or 1.0
+    # 共用网格时改网格会连带改动别的物体; 偏移极小时再移动只会累积浮点误差
     if shard.data.users > 1 or centroid.length <= ORIGIN_EPSILON * size:
         return
     mesh = shard.data
@@ -75,7 +89,13 @@ def _move_origin(shard, centroid, log):
 
 
 def _write_body(shard, mass, values, log):
-    """按材料写入刚体属性, 每项先记下原值"""
+    """按材料写入刚体属性, 每项先记下原值
+
+    shard 碎块物体, 必须已有刚体
+    mass 质量, kg
+    values 参数值
+    log 写前快照
+    """
     body = shard.rigid_body
     log.set(body, "collision_shape", "CONVEX_HULL")
     log.set(body, "mass", mass)
@@ -83,6 +103,7 @@ def _write_body(shard, mass, values, log):
     log.set(body, "restitution", values.restitution)
     log.set(body, "linear_damping", values.linear_damping)
     log.set(body, "angular_damping", values.angular_damping)
+    # 固定边距时写入边距值; 自动时交给 Blender 默认的内嵌边距
     fixed = values.margin_mode == "FIXED"
     log.set(body, "use_margin", fixed)
     if fixed:
@@ -90,7 +111,12 @@ def _write_body(shard, mass, values, log):
 
 
 def _record_rest(shard, log):
-    """首次应用时把当前世界矩阵记为静止姿态; 已有静止姿态的碎块保持不变"""
+    """首次应用时把当前世界矩阵记为静止姿态; 已有静止姿态的碎块保持不变
+
+    shard 碎块物体
+    log 写前快照
+    """
+    # 已有记录: 静止姿态只在首次应用时确定, 之后保持, 模拟才有稳定的起点
     if asset.rest_matrix(shard) is not None:
         return
     asset.store_rest(shard, shard.matrix_world)
@@ -98,18 +124,33 @@ def _record_rest(shard, log):
 
 
 def _shard_mass(shard, volume, values, unit_cube):
-    """碎块质量: 局部体积乘以物体变换的体积比与单位比例的立方, 再乘以密度"""
+    """碎块质量: 局部体积乘以物体变换的体积比与单位比例的立方, 再乘以密度
+
+    shard 碎块物体
+    volume 局部体积
+    values 参数值, 提供密度
+    unit_cube 每个 Blender 单位对应米数的立方
+    返回 质量, kg, 不小于下限
+    """
     stretch = abs(shard.matrix_world.to_3x3().determinant())
     return max(MASS_MIN, volume * stretch * unit_cube * values.density)
 
 
 def _record(root, shards, values, log, summary):
-    """写入资产的物理生效记录, 修订号在上一次的基础上加一; summary 是 (总质量, 不封闭的碎块数)"""
+    """写入资产的物理生效记录, 修订号在上一次的基础上加一
+
+    root 资产根集合
+    shards 资产的碎块列表
+    values 参数值
+    log 写前快照
+    summary (总质量, 不封闭的碎块数)
+    """
     previous = asset.physics_record(root)
     record = {key: getattr(values, key) for key in SCHEMA.specs}
     record["rev"] = (previous or {}).get("rev", 0) + 1
     record["shards"] = len(shards)
     record["mass"], record["open_meshes"] = summary
+    # 撤回: 原来没有记录就清除, 有就写回旧记录
     if previous is None:
         log.add(lambda: asset.clear_physics_record(root))
     else:
@@ -118,7 +159,17 @@ def _record(root, shards, values, log, summary):
 
 
 def _apply_asset(context, world, root, shards, values, log, tally):
-    """处理一个资产: 建立刚体, 移原点, 记静止姿态, 写属性, 写生效记录"""
+    """处理一个资产: 建立刚体, 移原点, 记静止姿态, 写属性, 写生效记录
+
+    context Blender 上下文
+    world 刚体世界
+    root 资产根集合
+    shards 资产的碎块列表
+    values 参数值
+    log 写前快照
+    tally 累计量, 本函数往里累加
+    """
+    # 没有刚体的碎块要新建 (链接进世界集合时由 Blender 自动建立); 撤回时整体删除
     fresh = [shard for shard in shards if shard.rigid_body is None]
     outside = [shard for shard in shards if not rigidbody.in_world(world, shard)]
     rigidbody.link(world, fresh)
@@ -143,7 +194,11 @@ def _apply_asset(context, world, root, shards, values, log, tally):
 
 
 def _undo(log, tracker):
-    """撤回写前快照并回收新建数据; 清理失败只打印, 不覆盖原异常"""
+    """撤回写前快照并回收新建数据; 清理失败只打印, 不覆盖原异常
+
+    log 写前快照
+    tracker 创建账本
+    """
     for action in (log.undo, tracker.rollback):
         try:
             action()
@@ -152,12 +207,19 @@ def _undo(log, tracker):
 
 
 def apply(context, roots, values):
-    """对一组资产应用物理, 返回 PhysicsResult; 失败时撤回本次全部改动"""
+    """对一组资产应用物理; 失败时撤回本次全部改动
+
+    context Blender 上下文
+    roots 资产根集合列表
+    values 参数值
+    返回 PhysicsResult
+    """
     asset.validate(roots)
     rigidbody.check_cache(context.scene)
     # 脚本改过的变换要先求值, 下面读到的 matrix_world 才是最新的
     context.view_layer.update()
     targets = [(root, asset.shards_of(root)) for root in roots]
+    # 没有碎块的资产没有东西可应用, 在改动场景之前报错
     for root, shards in targets:
         if not shards:
             raise PhysicsError('Asset "{name}" has no shards', name=root.name)
@@ -177,7 +239,12 @@ def apply(context, roots, values):
 
 
 def remove(context, roots):
-    """删除资产碎块的刚体数据与物理生效记录, 返回处理的碎块数; 原点与静止姿态保留"""
+    """删除资产碎块的刚体数据与物理生效记录; 原点与静止姿态保留
+
+    context Blender 上下文
+    roots 资产根集合列表
+    返回 处理的碎块数
+    """
     asset.validate(roots)
     shards = [shard for root in roots for shard in asset.shards_of(root)]
     rigidbody.remove_bodies(context, shards)
@@ -187,8 +254,14 @@ def remove(context, roots):
 
 
 def reset_rest(context, roots):
-    """把碎块当前的世界矩阵记为新的静止姿态, 物理修订号加一, 依赖它的模拟随之过期; 返回处理的碎块数"""
+    """把碎块当前的世界矩阵记为新的静止姿态, 物理修订号加一, 依赖它的模拟随之过期
+
+    context Blender 上下文
+    roots 资产根集合列表
+    返回 处理的碎块数
+    """
     asset.validate(roots)
+    # 必须先应用过物理, 且没有模拟成果: 有成果时碎块的位置是动画给出的, 不能记为静止姿态
     for root in roots:
         if asset.physics_record(root) is None:
             raise PhysicsError('Apply physics to "{name}" first', name=root.name)
@@ -201,6 +274,7 @@ def reset_rest(context, roots):
         shards = asset.shards_of(root)
         for shard in shards:
             asset.store_rest(shard, shard.matrix_world)
+        # 修订号加一: 依赖旧静止姿态的模拟与绑定据此判为过期
         record = asset.physics_record(root)
         record["rev"] += 1
         asset.set_physics_record(root, record)

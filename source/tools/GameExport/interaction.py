@@ -67,26 +67,44 @@ _ISSUES = {}
 
 
 def _param_active(owner, key):
-    """参数的生效条件成立时才可用, 否则置灰但仍可编辑"""
+    """参数的生效条件成立时才可用, 否则置灰但仍可编辑
+
+    owner 参数组
+    key 字段名
+    返回 生效为真, 没有条件的字段总是生效
+    """
     rule = ACTIVE_WHEN.get(key)
     return rule is None or rule(owner)
 
 
 def _rig_id(root):
-    """资产当前绑定的标识, 没有构建过时为 None"""
+    """资产当前绑定的标识
+
+    root 资产根集合
+    返回 标识; 没有构建过时为 None
+    """
     record = asset.rig_record(root)
     return None if record is None else record.get("id")
 
 
 def _remember(root, issues):
-    """缓存一个资产当前绑定的检查结果"""
+    """缓存一个资产当前绑定的检查结果
+
+    root 资产根集合
+    issues 检查发现的问题
+    """
     rig_id = _rig_id(root)
+    # 没有绑定的资产没有可缓存的标识
     if rig_id is not None:
         _ISSUES[rig_id] = issues
 
 
 def _issue_summary(issues):
-    """检查结果的汇总文字: 错误数与警告数"""
+    """检查结果的汇总文字: 错误数与警告数
+
+    issues Issue 序列
+    返回 已翻译的文字
+    """
     errors = sum(issue.level == ERROR for issue in issues)
     return tr_report(
         CONTEXT,
@@ -97,7 +115,11 @@ def _issue_summary(issues):
 
 
 def _build_report(results):
-    """构建完成的报告: 资产数, 骨骼与网格数, 耗时与问题汇总"""
+    """构建完成的报告: 资产数, 骨骼总数, 耗时与问题汇总
+
+    results RigResult 列表
+    返回 已翻译的文字
+    """
     bones = sum(result.bones for result in results)
     seconds = sum(result.seconds for result in results)
     issues = tuple(issue for result in results for issue in result.issues)
@@ -121,22 +143,35 @@ class QD_GAME_EXPORT_OT_build(LongTaskOperator, Operator):
         "assets; press Esc to cancel and restore the scene"
     )
     bl_translation_context = CONTEXT
+    # UNDO 让完成的构建进入撤销栈; 取消时场景已经恢复, 不推送撤销
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
     def begin(self, context):
-        """读完选中的资产与面板参数, 返回构建的生成器"""
+        """读完选中的资产与面板参数, 返回构建的生成器
+
+        context Blender 上下文
+        返回 构建生成器
+        """
         roots = asset.resolve(picked_objects(context))
         data = SCHEMA.read(scene_settings(context, TOOL_ID))
         return build_rig_steps(context, roots, data)
 
     def report_text(self, result):
-        """构建完成的报告; 顺便缓存各资产的检查结果"""
+        """构建完成的报告; 顺便缓存各资产的检查结果
+
+        result RigResult 列表
+        返回 已翻译的报告文字
+        """
         for item in result:
             _ISSUES[item.rig_id] = item.issues
         return _build_report(result)
 
     def progress_text(self, progress):
-        """状态栏的进度文字"""
+        """状态栏的进度文字
+
+        progress 当前进度
+        返回 已翻译的文字
+        """
         return tr(
             CONTEXT,
             "Building rig, stage {done} of {total}, press Esc to cancel",
@@ -145,7 +180,10 @@ class QD_GAME_EXPORT_OT_build(LongTaskOperator, Operator):
         )
 
     def cancelled_text(self):
-        """取消后的报告"""
+        """取消后的报告
+
+        返回 已翻译的报告文字
+        """
         return tr_report(CONTEXT, "Build cancelled; the scene was restored")
 
 
@@ -156,10 +194,15 @@ class QD_GAME_EXPORT_OT_check(ToolOperator, Operator):
     bl_label = "Check Rig"
     bl_description = "Check that the rig matches the shards frame by frame and fits the bone limits"
     bl_translation_context = CONTEXT
+    # 检查只读数据, 不进入撤销栈
     bl_options: ClassVar[set[str]] = {"INTERNAL"}
 
     def run(self, context):
-        """检查每个资产并缓存结果, 报告问题汇总"""
+        """检查每个资产并缓存结果, 报告问题汇总
+
+        context Blender 上下文
+        返回 报告文字
+        """
         roots = asset.resolve(picked_objects(context))
         config = SCHEMA.read(scene_settings(context, TOOL_ID))
         found = []
@@ -182,8 +225,10 @@ class QD_GAME_EXPORT_OT_export(ToolOperator, Operator):
     bl_label = "Export FBX"
     bl_description = "Write the rig of the selected assets to FBX files in the export directory"
     bl_translation_context = CONTEXT
+    # UNDO 让导出记录的写入可以撤销; 磁盘上的文件不会随撤销删除
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
+    # 是否覆盖已存在的文件: 确认对话框通过后由 invoke 置为真, 不保存在 .blend 里
     __annotations__ = {
         "overwrite": BoolProperty(
             name="Overwrite",
@@ -194,12 +239,23 @@ class QD_GAME_EXPORT_OT_export(ToolOperator, Operator):
     }
 
     def invoke(self, context, event):
-        """目标文件已存在时先弹确认对话框, 确认后覆盖"""
-        roots = asset.resolve(picked_objects(context))
-        config = SCHEMA.read(scene_settings(context, TOOL_ID))
-        found = [path for path in export_paths(roots, config) if path.exists()]
+        """目标文件已存在时先弹确认对话框, 确认后覆盖
+
+        context Blender 上下文
+        event 触发事件
+        返回 算子返回集合
+        """
+        # 准备输入时的错误 (例如文件未保存却用相对目录) 也走失败报告
+        try:
+            roots = asset.resolve(picked_objects(context))
+            config = SCHEMA.read(scene_settings(context, TOOL_ID))
+            found = [path for path in export_paths(roots, config) if path.exists()]
+        except Exception as error:
+            return self.fail(error)
+        # 没有会被替换的文件, 或已经确认过: 直接导出
         if not found or self.overwrite:
             return self.execute(context)
+        # 确认对话框通过后会再次执行本算子, 此时需要允许覆盖
         self.overwrite = True
         message = tr(CONTEXT, "{count} files already exist and will be replaced", count=len(found))
         return context.window_manager.invoke_confirm(
@@ -211,7 +267,11 @@ class QD_GAME_EXPORT_OT_export(ToolOperator, Operator):
         )
 
     def run(self, context):
-        """逐个导出并报告文件数与问题汇总"""
+        """逐个导出并报告文件数与问题汇总
+
+        context Blender 上下文
+        返回 报告文字
+        """
         roots = asset.resolve(picked_objects(context))
         config = SCHEMA.read(scene_settings(context, TOOL_ID))
         # 先核对文件名, 不同资产写到同一个文件时一个都不写
@@ -233,7 +293,12 @@ class QD_GAME_EXPORT_OT_export(ToolOperator, Operator):
 
 
 def _settings_changed(root, context):
-    """面板上影响绑定的设置与这个资产上次构建时实际使用的设置是否不同"""
+    """面板上影响绑定的设置与这个资产上次构建时实际使用的设置是否不同
+
+    root 资产根集合
+    context Blender 上下文
+    返回 不同为真; 没有构建过时为假
+    """
     record = asset.rig_record(root)
     if record is None:
         return False
@@ -241,7 +306,11 @@ def _settings_changed(root, context):
 
 
 def _draw_summary(layout, root):
-    """单个资产的上次构建摘要: 骨架, 网格, 骨骼数与不动的碎块数"""
+    """单个资产的上次构建摘要: 骨架, 网格, 骨骼数与不动的碎块数
+
+    layout 要绘制到的布局
+    root 资产根集合
+    """
     record = asset.rig_record(root)
     if record is None:
         return
@@ -257,13 +326,19 @@ def _draw_summary(layout, root):
 
 
 def _draw_issues(layout, root):
-    """单个资产当前绑定上一次检查的问题; 没检查过时不画"""
+    """单个资产当前绑定上一次检查的问题; 没检查过时不画
+
+    layout 要绘制到的布局
+    root 资产根集合
+    """
     issues = _ISSUES.get(_rig_id(root))
+    # 缓存里没有: 这个绑定还没检查过, 不显示"没有问题"以免误导
     if issues is None:
         return
     if not issues:
         layout.label(text="No problems found", text_ctxt=CONTEXT, icon="CHECKMARK")
         return
+    # 只列前几条, 其余汇总成个数, 避免窄侧栏被问题占满
     for issue in issues[:ISSUE_ROWS]:
         icon = "ERROR" if issue.level == ERROR else "INFO"
         layout.label(text=issue_text(issue), translate=False, icon=icon)
@@ -273,17 +348,25 @@ def _draw_issues(layout, root):
 
 
 def _draw_statuses(layout, context, roots):
-    """绑定与导出状态; 资产很多时只写绑定处于输入未变状态的个数"""
+    """绑定与导出状态; 资产很多时只写绑定处于输入未变状态的个数
+
+    layout 要绘制到的布局
+    context Blender 上下文
+    roots 选中的资产根集合
+    """
     scene = context.scene
+    # 一个资产: 绑定与导出状态, 摘要与检查结果都列出
     if len(roots) == 1:
         root = roots[0]
         draw_stage_status(layout, tr(CONTEXT, "Rig"), rig_status(root, scene))
         draw_stage_status(layout, tr(CONTEXT, "Export"), export_status(root))
         _draw_summary(layout, root)
         _draw_issues(layout, root)
+    # 少量几个资产: 每个资产一行绑定状态
     elif len(roots) <= STATUS_ROWS:
         for root in roots:
             draw_stage_status(layout, root.name, rig_status(root, scene))
+    # 很多资产: 逐个列出会占满侧栏, 只写个数
     else:
         current = sum(rig_status(root, scene).state == CURRENT for root in roots)
         text = tr(
@@ -308,12 +391,16 @@ class QD_GAME_EXPORT_PT_main(ToolPanel, Panel):
     tool_id = TOOL_ID
 
     def draw(self, context):
-        """资产与状态在上, 构建按钮加高, 检查与导出在下; 构建进行中时按钮置灰并提示取消方式"""
+        """资产与状态在上, 构建按钮加高, 检查与导出在下; 构建进行中时按钮置灰并提示取消方式
+
+        context Blender 上下文
+        """
         layout = self.layout
         roots = draw_assets(layout, context)
         if roots:
             _draw_statuses(layout, context, roots)
         running = busy.busy()
+        # 有长任务在运行时三个按钮都置灰, 并提示取消方式
         if running:
             layout.label(text="Building, press Esc to cancel", text_ctxt=CONTEXT, icon="TIME")
         ready = bool(roots) and not running

@@ -10,7 +10,8 @@
     6. 状态: 构建后输入未变; 重新烘焙后过期; 导出记录随绑定重建而过期; 设置摘要随参数变化
     7. 导出: 文件写出, 覆盖需要确认, 轴向冲突, 目录与未保存文件的错误; 过期的绑定拒绝导出;
        导出后选择, 活动物体, 当前帧与帧范围还原
-    7b. 文件名: 默认用资产名, 自定义名与占位符, 扩展名与非法字符, 多骨架序号, 多资产写到同一文件时拒绝
+    7b. 文件名: 默认用资产名, 自定义名与占位符, 扩展名与非法字符, 多骨架序号,
+        多资产写到同一文件时拒绝
     8. 往返: 导出的 FBX 重新导入 (动画偏移为 0), 各帧的顶点都能在碎块动画给出的世界顶点上找到
 测试过程:
     在后台 Blender 里注册插件, 用 MeshFracture, Physics, Drivers 与 Simulation 的阶段 API 得到烘焙好的
@@ -53,7 +54,10 @@ ROUND_TRIP_TOLERANCE = 1e-3
 
 
 def baked_asset(count=10, partial=False):
-    """切碎, 应用物理并烘焙一个资产, 返回 (根集合, 碎块列表); partial 为真时只有一部分碎块被爆炸波及"""
+    """切碎, 应用物理并烘焙一个资产, 返回 (根集合, 碎块列表)
+
+    partial 为真时只有一部分碎块被爆炸波及
+    """
     reset()
     for action in list(bpy.data.actions):
         bpy.data.actions.remove(action)
@@ -491,6 +495,15 @@ def case_operators():
             "允许覆盖时成功",
             bpy.ops.qd_game_export.export("EXEC_DEFAULT", overwrite=True) == {"FINISHED"},
         )
+    # invoke 里准备输入时出错 (blend 文件未保存而目录是相对路径) 也要走报告, 不能以原始异常形式抛出
+    bpy.context.scene.qd_settings.game_export.directory = "//export/"
+    harness.select([shards[0]])
+    try:
+        bpy.ops.qd_game_export.export("INVOKE_DEFAULT")
+        reported = False
+    except RuntimeError as error:
+        reported = "Export FBX failed" in str(error) and "Save the blend file" in str(error)
+    check("invoke 里的错误以失败报告出现", reported)
     # 选中导出的网格也能解析到资产
     _armatures, meshes = export_parts(root)
     harness.select([meshes[0]])
@@ -557,6 +570,7 @@ def main():
     harness.run_cases(CASES)
 
 
+# 全部场景, 按顺序逐个运行; 会重新打开文件的场景放在最后
 CASES = (
     case_build_basics,
     case_build_all_moving,

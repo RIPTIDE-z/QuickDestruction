@@ -6,12 +6,14 @@
 from ...common.schema import Schema
 from .constants import CONTEXT
 
-# 质量档: 预览按设定的子步烘焙, 终稿把子步提高到建议值
+# 质量档: 预览按设定的子步烘焙
 PREVIEW = "PREVIEW"
+# 质量档: 终稿把子步提高到建议值
 FINAL = "FINAL"
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 PROPERTY_SPECS = {
+    # 是否跟随场景的起止帧
     "use_scene_range": (
         "BoolProperty",
         {
@@ -21,6 +23,7 @@ PROPERTY_SPECS = {
             "default": True,
         },
     ),
+    # 自定义范围的起始帧, 碎块在这一帧处于静止姿态
     "frame_start": (
         "IntProperty",
         {
@@ -30,6 +33,7 @@ PROPERTY_SPECS = {
             "default": 1,
         },
     ),
+    # 自定义范围的结束帧
     "frame_end": (
         "IntProperty",
         {
@@ -39,6 +43,7 @@ PROPERTY_SPECS = {
             "default": 120,
         },
     ),
+    # 质量档: 预览或终稿
     "quality": (
         "EnumProperty",
         {
@@ -57,6 +62,7 @@ PROPERTY_SPECS = {
             "for the fastest shards.",
         },
     ),
+    # 每帧的模拟子步数, 上限与 SUBSTEP_LIMIT 一致
     "substeps": (
         "IntProperty",
         {
@@ -69,6 +75,7 @@ PROPERTY_SPECS = {
             "default": 10,
         },
     ),
+    # 每个子步里求解接触的迭代次数
     "solver_iterations": (
         "IntProperty",
         {
@@ -80,6 +87,7 @@ PROPERTY_SPECS = {
             "default": 10,
         },
     ),
+    # 模拟的时间缩放, 小于 1 为慢动作
     "time_scale": (
         "FloatProperty",
         {
@@ -96,7 +104,11 @@ PROPERTY_SPECS = {
 
 
 def _custom_range(values):
-    """帧范围字段只在不跟随场景范围时生效"""
+    """帧范围字段只在不跟随场景范围时生效
+
+    values 参数组
+    返回 生效为真
+    """
     return not values.use_scene_range
 
 
@@ -111,7 +123,12 @@ SCHEMA = Schema(PROPERTY_SPECS, CONTEXT)
 
 
 def frame_range(values, scene):
-    """实际使用的帧范围: 跟随场景时取场景的起止帧, 否则取面板里的值"""
+    """实际使用的帧范围: 跟随场景时取场景的起止帧, 否则取面板里的值
+
+    values 参数组或参数值
+    scene 场景
+    返回 (起始帧, 结束帧)
+    """
     if values.use_scene_range:
         return scene.frame_start, scene.frame_end
     return values.frame_start, values.frame_end
