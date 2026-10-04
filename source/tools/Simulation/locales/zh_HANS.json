@@ -36,7 +36,11 @@
     "{count} other assets are moved out of the rigid body world while baking": "烘焙期间有 {count} 个其他资产会临时移出刚体世界",
     "{assets} assets and {bodies} other rigid bodies take part": "{assets} 个资产与 {bodies} 个其他刚体一起参与",
     "{assets} assets take part": "{assets} 个资产参与",
-    "Shard \"{name}\" has a parent; unparent it before simulating": "碎块“{name}”有父级，请先解除父级再模拟"
+    "Shard \"{name}\" has a parent; unparent it before simulating": "碎块“{name}”有父级，请先解除父级再模拟",
+    "Add Ground": "添加预设地面",
+    "Added a ground with its top at height {top:.2f}": "已添加地面，顶面高度 {top:.2f}",
+    "Moved the ground to height {top:.2f}": "已把地面对齐到高度 {top:.2f}",
+    "The selected assets have no shards": "所选资产没有碎块"
   },
   "tooltips": {
     "Simulate fractured assets with their drivers and bake the motion": "让破碎资产在驱动作用下进行模拟，并烘焙出运动",
@@ -50,6 +54,7 @@
     "Speed of the simulation; below 1 gives slow motion. Driver speeds keep their meaning in simulated seconds.": "模拟的快慢；小于 1 为慢动作。驱动的速度仍按模拟时间的每秒计算。",
     "Preview is for trying things out; Final bakes with enough substeps for the fastest shards.": "预览用于试效果；终稿按最快的碎块所需的子步烘焙。",
     "Raise the substeps to the suggested value when it is higher, so fast shards are less likely to pass through thin ones.": "建议值更高时把子步提高到建议值，很快的碎块就不容易穿过薄的碎块。",
-    "Use the substeps below as they are; quick to bake.": "按下面设定的子步烘焙，速度快。"
+    "Use the substeps below as they are; quick to bake.": "按下面设定的子步烘焙，速度快。",
+    "Add a thick static rigid body ground just below the selected assets, or fit the existing one to them": "在所选资产最低点下方添加一块有厚度的静态刚体地面；已有地面时重新对齐到资产"
   }
 }

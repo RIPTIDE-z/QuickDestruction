@@ -18,6 +18,7 @@ flowchart TB
         PH[Physics 物理设置]
         DR[Drivers 破坏驱动]
         SI[Simulation 模拟烘焙]
+        GE[GameExport 游戏导出]
     end
     subgraph framework
         F[contract, ui, operators, presets]
@@ -245,6 +246,7 @@ from bl_ext.user_default.quick_destruction.common import drivers
 from bl_ext.user_default.quick_destruction.tools.Drivers.api import add_driver
 from bl_ext.user_default.quick_destruction.tools.MeshFracture.api import generate_fragments
 from bl_ext.user_default.quick_destruction.tools.Physics.api import apply_physics
+from bl_ext.user_default.quick_destruction.tools.GameExport.api import build_rig, export_fbx
 from bl_ext.user_default.quick_destruction.tools.Simulation.api import bake
 
 context = bpy.context
@@ -254,6 +256,8 @@ root = fracture.source_to_asset[source]
 apply_physics(context, [root], {"material": "CONCRETE", "activation": "FROZEN"})
 add_driver(context, drivers.EXPLOSION, location=source.location, frame=10)
 result = bake(context, [root], {})
+build_rig(context, [root], {})
+paths, issues = export_fbx(context, root, {"engine": "UNREAL", "directory": "D:/out"})
 ```
 
 - **变换求值**：`apply_physics`、`reset_rest` 与 `bake` 读取世界矩阵前会先刷新视图层。脚本改了碎块或驱动的变换后，不必手动调用 `context.view_layer.update()`。
@@ -266,6 +270,7 @@ result = bake(context, [root], {})
 | `apply_physics`、`remove_physics`、`reset_rest` | 见[物理设置](../使用说明/Physics.md#阶段-api) |
 | `add_driver`、`make_driver` | 见[破坏驱动](../使用说明/Drivers.md#阶段-api) |
 | `bake`、`bake_steps`、`reset` | 见[模拟烘焙](../使用说明/Simulation.md#阶段-api) |
+| `build_rig`、`build_rig_steps`、`check`、`export_fbx`、`existing_files` | 见[游戏导出](../使用说明/GameExport.md#阶段-api) |
 
 `generate_fragments` 的参数：
 
@@ -305,6 +310,15 @@ API 在退出时尝试恢复原选择和活动物体；生成算子成功后另�
 | Simulation | `core/session.py` | 校验、参与者、时间换算、计划编译、质量档与子步、会话签名；不改动场景 |
 | Simulation | `core/blocking.py` | 起动受阻判定：起动速度去掉朝向推不动的物体的分量 |
 | Simulation | `core/flight.py` | 弹体飞行动画的写入与清理 |
+| Simulation | `core/ground.py` | 预设地面：在资产最低点下方建有厚度的被动盒体刚体；地面标记在 `common/rigidbody.py`，一个场景一块 |
 | Simulation | `core/keys.py` | 交接关键帧与烘焙关键帧的写入 |
 | Simulation | `core/bake.py` | 写入、推进、写成果、提交与两阶段撤回 |
 | Simulation | `core/reset.py`、`core/task.py` | 复位；运行锁的转发 |
+| GameExport | `core/tracks.py` | 从成果动作的关键帧直接读出每块碎块的逐帧位姿；动静分类与起动帧 |
+| GameExport | `core/partition.py` | 骨骼命名、Morton 序与容量受限的划分；纯数值，单元测试直接覆盖 |
+| GameExport | `core/bones.py`、`core/merge.py` | 建骨架（骨骼头部在静止质心、`matrix_local` 为纯平移）；复制碎块、加顶点组与来源属性后受控 `join` |
+| GameExport | `core/transfer.py` | 世界轨迹换算成姿态基矩阵 `B⁻¹·Mt·M0⁻¹·B`，批量写线性关键帧 |
+| GameExport | `core/interior.py` | 断面盒投影 UV，断面由碎块网格上的面属性 `qd_interior` 标出 |
+| GameExport | `core/build.py` | 构建流程、临时集合、校验、两阶段提交与撤回 |
+| GameExport | `core/check.py`、`core/fbx.py` | 检查与逐帧蒙皮核对；FBX 导出封装与现场还原 |
+| framework | `longtask.py` | 可取消模态长任务的公共流程，模拟烘焙与绑定构建共用；运行锁在 `common/busy.py` |

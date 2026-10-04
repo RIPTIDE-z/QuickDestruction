@@ -13,7 +13,7 @@ copyright = [
 ]
 
 [permissions]
-files = "Read and write user parameter presets"
+files = "Read and write presets and export FBX files"
 
 [build]
 # Python caches are not extension runtime files

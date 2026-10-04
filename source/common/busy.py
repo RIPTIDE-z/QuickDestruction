@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from .errors import DomainError
 
 # 有任务正在运行时的消息
-BUSY_MESSAGE = "Another simulation is running"
+BUSY_MESSAGE = "Another task is running"
 
 # 正在运行的任务, 最多一个; 元素是任务的取消函数
 RUNNING = []

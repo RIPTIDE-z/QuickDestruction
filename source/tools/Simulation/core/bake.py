@@ -1,6 +1,6 @@
 """烘焙流程 - 写入会话设置与交接关键帧, 逐帧推进并采样, 写成烘焙动作, 校验后提交
 
-两阶段提交: 推进期间碎块使用临时动作, 旧成果原样保留; 全部成功后才换上新动作并删除旧成果
+两阶段提交: 推进期间碎块使用临时动作, 旧成果原样保留; 全部成功后才换上新动作并删除旧成果与基于它构建的绑定
 两本写前快照: temp 记录会话期间的临时改动 (世界设置, 世界成员, 刚体开关), 无论成败结束时都撤回,
 撤回时参与的碎块也随之移出刚体世界; result 记录对碎块动画与位姿的改动, 只在失败或取消时撤回
 """
@@ -306,6 +306,9 @@ def _commit(session, finals, pending, moved, flights, result):
         stale = action is not None and action not in finals.values()
         if stale and asset.owned(action, asset_id, STAGE):
             bpy.data.actions.remove(action)
+    # 新成果取代旧成果后, 基于旧成果构建的绑定与导出集合不再对应碎块动画, 同样放在最后删除
+    for root in session.roots:
+        asset.discard_rig(root)
     return run_id
 
 

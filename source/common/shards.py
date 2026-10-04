@@ -16,6 +16,8 @@ PARENT_MARK = "_qd_parent"
 ASSET_MARK = "_qd_asset"
 # 静止姿态: 首次应用物理时记录的世界矩阵, 按行展开的 16 个浮点数
 REST_MARK = "_qd_rest"
+# 碎块网格上的断面面属性: 布尔型, 面域, 为真的面是切割时新生成的内部断面; 下游据此给断面铺 UV 与材质
+INTERIOR_ATTRIBUTE = "qd_interior"
 
 
 def mark(shard, source_name, path, asset_id):

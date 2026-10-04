@@ -23,6 +23,7 @@ BACKGROUND_TESTS = (
     "verify_inputs.py",
     "verify_operator.py",
     "verify_dynamics.py",
+    "verify_export.py",
 )
 # 需要真实界面的 Blender 测试, 不能加 -b
 UI_TESTS = ("verify_ui_draw.py",)

@@ -10,6 +10,8 @@ from .errors import DomainError
 
 # 点缓存已烘焙时的消息: 已烘焙的缓存会忽略之后对刚体的修改
 BAKED_CACHE_MESSAGE = "Free the rigid body cache bake first"
+# 预设地面物体上的标记: 一个场景一块, 再次添加时重新对齐而不是再建一块
+GROUND_MARK = "_qd_ground"
 # 新建的刚体世界成员集合名, 与 Blender 自己新建时的名字一致
 WORLD_COLLECTION_NAME = "RigidBodyWorld"
 
@@ -78,6 +80,16 @@ def remove_bodies(context, objects):
         selected_objects=bodies, selected_editable_objects=bodies, object=bodies[0]
     ):
         bpy.ops.rigidbody.objects_remove()
+
+
+def mark_ground(obj):
+    """把物体标记为预设地面"""
+    obj[GROUND_MARK] = True
+
+
+def ground_of(scene):
+    """场景里的预设地面, 没有时为 None"""
+    return next((obj for obj in scene.objects if GROUND_MARK in obj), None)
 
 
 def unit_scale(scene):

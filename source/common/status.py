@@ -5,6 +5,7 @@
 """
 
 import hashlib
+from pathlib import Path
 from typing import NamedTuple
 
 from . import asset, drivers, shards
@@ -61,6 +62,20 @@ DRIVERS_MESSAGE = "Drivers changed"
 ENVIRONMENT_MESSAGE = "Other rigid bodies changed"
 # 模拟过期原因: 帧率, 单位或重力变了
 SCENE_MESSAGE = "Frame rate, units or gravity changed"
+
+
+# 绑定过期原因: 资产没有模拟成果
+RIG_NO_SIMULATION_MESSAGE = "The simulation was deleted"
+# 绑定过期原因: 绑定之后又烘焙过
+RIG_SIMULATION_CHANGED_MESSAGE = "The simulation was baked again"
+# 绑定过期原因: 模拟本身已过期
+RIG_SIMULATION_OUTDATED_MESSAGE = "The simulation is outdated"
+# 绑定过期原因: 导出集合被删除
+RIG_COLLECTION_MISSING_MESSAGE = "The export collection is missing"
+# 导出过期原因: 绑定之后又重建过
+EXPORT_RIG_REBUILT_MESSAGE = "The rig was built again"
+# 导出过期原因: 写出的文件不见了
+EXPORT_FILE_MISSING_MESSAGE = "An exported file is missing"
 
 
 def _number(value):
@@ -154,3 +169,36 @@ def simulation_status(root, scene):
     if run is None:
         return Status(OUTDATED, RUN_MISSING_MESSAGE)
     return _run_status(run, record.get("run"), scene)
+
+
+def rig_status(root, scene):
+    """资产的绑定状态: 没有构建为未完成; 模拟成果变了或不在了, 物理重新应用过, 导出集合被删为已过期"""
+    record = asset.rig_record(root)
+    if record is None:
+        return Status(NONE)
+    if asset.rig_collection(root) is None:
+        return Status(OUTDATED, RIG_COLLECTION_MISSING_MESSAGE)
+    result = asset.sim_record(root)
+    if result is None or asset.sim_action(root) is None:
+        return Status(OUTDATED, RIG_NO_SIMULATION_MESSAGE)
+    if result.get("run") != record.get("run"):
+        return Status(OUTDATED, RIG_SIMULATION_CHANGED_MESSAGE)
+    physics = asset.physics_record(root)
+    if physics is None or physics.get("rev") != record.get("physics_rev"):
+        return Status(OUTDATED, PHYSICS_REAPPLIED_MESSAGE)
+    if simulation_status(root, scene).state != CURRENT:
+        return Status(OUTDATED, RIG_SIMULATION_OUTDATED_MESSAGE)
+    return Status(CURRENT)
+
+
+def export_status(root):
+    """资产的导出状态: 没有导出为未完成; 绑定重建过或文件不见了为已过期"""
+    record = asset.export_record(root)
+    if record is None:
+        return Status(NONE)
+    rig = asset.rig_record(root)
+    if rig is None or rig.get("id") != record.get("rig"):
+        return Status(OUTDATED, EXPORT_RIG_REBUILT_MESSAGE)
+    if any(not Path(path).is_file() for path in record.get("files", ())):
+        return Status(OUTDATED, EXPORT_FILE_MISSING_MESSAGE)
+    return Status(CURRENT)

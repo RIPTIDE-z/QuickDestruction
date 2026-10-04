@@ -53,7 +53,13 @@
     "The simulation record is missing": "找不到这次模拟的记录",
     "Outdated": "已过期",
     "The source object of \"{name}\" is gone; a projectile needs it to find where it hits": "“{name}”的源物体已被删除，弹道需要它来求出命中位置",
-    "Another simulation is running": "已有模拟正在运行"
+    "Another task is running": "已有任务正在运行",
+    "An exported file is missing": "有导出的文件不见了",
+    "The export collection is missing": "导出集合不见了",
+    "The rig was built again": "绑定已重新构建",
+    "The simulation is outdated": "模拟已过期",
+    "The simulation was baked again": "模拟已重新烘焙",
+    "The simulation was deleted": "模拟已被删除"
   },
   "tooltips": {
     "Name of the preset": "预设名称",

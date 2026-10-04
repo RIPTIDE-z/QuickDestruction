@@ -33,6 +33,8 @@ def reset(context, roots):
         asset.clear_sim_result(root)
         if action is not None and asset.owned(action, asset_id, STAGE):
             bpy.data.actions.remove(action)
+        # 模拟成果没了, 依赖它的绑定与导出集合一起清除
+        asset.discard_rig(root)
         count += len(items)
     asset.prune_runs(scene)
     # 弹体的飞行动画属于驱动而不是某个资产: 没有任何模拟成果时才一并清理

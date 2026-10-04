@@ -1,4 +1,4 @@
-"""领域常量 - 工具身份与翻译上下文, 模拟成果的阶段标记与动作名前缀, 静止判定阈值, 长任务放行的视图事件"""
+"""领域常量 - 工具身份与翻译上下文, 模拟成果的阶段标记与动作名前缀, 静止判定阈值, 每帧子步上限"""
 
 from ...framework.contract import tool_context
 
@@ -21,17 +21,8 @@ SUBSTEP_LIMIT = 200
 # 整段位移与转角都不超过它的碎块视为没有动, 不写关键帧, 停在静止姿态
 STATIC_EPSILON = 1e-6
 
-# 烘焙期间仍然放行的事件: 只允许旋转, 平移与缩放视图, 其余输入在烘焙结束前被拦下
-NAVIGATION_EVENTS = frozenset(
-    {
-        "MIDDLEMOUSE",
-        "WHEELUPMOUSE",
-        "WHEELDOWNMOUSE",
-        "MOUSEMOVE",
-        "INBETWEEN_MOUSEMOVE",
-        "TRACKPADPAN",
-        "TRACKPADZOOM",
-        "MOUSEROTATE",
-        "NDOF_MOTION",
-    }
-)
+# 预设地面: 物体名, 厚度与最小半边长 (米, 按场景单位换算), 以及半边长相对资产最大水平尺寸的倍数
+GROUND_NAME = "QD_Ground"
+GROUND_THICKNESS = 1.0
+GROUND_MIN_HALF = 10.0
+GROUND_EXTENT_RATIO = 3.0

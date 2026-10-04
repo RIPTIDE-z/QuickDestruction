@@ -42,7 +42,7 @@ import harness
 from harness import check, cube, reset, seeds, volume
 
 from source import registration
-from source.common import asset, drivers
+from source.common import asset, busy, drivers
 from source.common.status import (
     CURRENT,
     NONE,
@@ -59,8 +59,9 @@ from source.tools.Physics.api import apply_physics, remove_physics, reset_rest
 from source.tools.Physics.core import apply as physics_core
 from source.tools.Physics.settings import SCHEMA as PHYSICS_SCHEMA
 from source.tools.Physics.settings import material_edited
-from source.tools.Simulation.api import bake, bake_steps
+from source.tools.Simulation.api import add_ground, bake, bake_steps
 from source.tools.Simulation.api import reset as reset_simulation
+from source.tools.Simulation.core import ground as sim_ground_module
 from source.tools.Simulation.core import keys as sim_keys
 from source.tools.Simulation.core import session as sim_session
 from source.tools.Simulation.core import task as sim_task
@@ -621,7 +622,7 @@ def case_audit_guards():
             ("移除物理", lambda: remove_physics(bpy.context, [root])),
             ("重设静止姿态", lambda: reset_rest(bpy.context, [root])),
         ):
-            expect_error(f"烘焙进行时拒绝{label}", call, "Another simulation")
+            expect_error(f"烘焙进行时拒绝{label}", call, "Another task")
     finally:
         sim_task.release(sim_task.ensure_idle)
     check(
@@ -782,7 +783,7 @@ def case_bake_reset_and_guards():
     expect_error("结束帧不晚于起始帧时拒绝", lambda: bake(bpy.context, [root], custom), "End Frame")
     sim_task.claim(sim_task.ensure_idle)
     try:
-        expect_error("已有任务时拒绝", lambda: bake(bpy.context, [root], {}), "Another simulation")
+        expect_error("已有任务时拒绝", lambda: bake(bpy.context, [root], {}), "Another task")
     finally:
         sim_task.release(sim_task.ensure_idle)
 
@@ -1225,6 +1226,75 @@ def case_bake_partial_and_multi():
     check("途中受阻后没有凭空的高速", fastest < 6.0 * 2 + 2.0, f"{fastest:.2f}")
 
 
+def case_ground():
+    """预设地面: 有厚度的静态盒体刚体, 顶面贴齐资产最低点, 重复添加只重新对齐, 失败撤回, 模拟里碎块落在地面上"""
+    sim_scene(gravity=True, end=48)
+    scene = bpy.context.scene
+    root, shards = physical("Wall", location=(2.0, 1.0, 3.0), activation="FREE")
+    lowest = min((asset.rest_matrix(s) @ v.co).z for s in shards for v in s.data.vertices)
+    before_objects = len(bpy.data.objects)
+    result = add_ground(bpy.context, [root])
+    ground = result.ground
+    check("新建了一块地面", result.created and ground.name == "QD_Ground")
+    check("地面是被动刚体", ground.rigid_body.type == "PASSIVE")
+    check("碰撞形状是盒体", ground.rigid_body.collision_shape == "BOX")
+    check("地面在刚体世界里", ground.name in scene.rigidbody_world.collection.objects)
+    check("地面在场景里可见", ground.name in scene.collection.objects)
+    top = max(v.co.z for v in ground.data.vertices) + ground.location.z
+    bottom = min(v.co.z for v in ground.data.vertices) + ground.location.z
+    check("顶面与资产最低点齐平", abs(top - lowest) < 1e-5, f"{top:.4f}/{lowest:.4f}")
+    check("地面有厚度", abs((top - bottom) - 1.0) < 1e-5, f"{top - bottom:.3f}")
+    check("地面水平范围覆盖资产", result.size >= 20.0, f"{result.size:.1f}")
+    check("物体缩放保持 1", tuple(ground.scale) == (1.0, 1.0, 1.0))
+    again = add_ground(bpy.context, [root])
+    check("重复添加不再新建", not again.created and again.ground == ground)
+    grounds = [obj for obj in bpy.data.objects if "_qd_ground" in obj]
+    check("场景里只有一块地面", len(grounds) == 1 and len(bpy.data.objects) == before_objects + 1)
+    check(
+        "重新对齐后旧网格被回收",
+        not [m for m in bpy.data.meshes if m.users == 0 and m.name.startswith("QD_Ground")],
+    )
+    # 地面作为环境刚体让模拟成果在它变化时过期, 碎块自由下落后停在地面上
+    result_bake = bake(bpy.context, [root], {})
+    check("烘焙能带地面一起完成", result_bake.moved > 0)
+    scene.frame_set(48)
+    lowest_after = min((s.matrix_world @ v.co).z for s in shards for v in s.data.vertices)
+    check(
+        "自由下落的碎块没有穿过地面", lowest_after > top - 0.1, f"{lowest_after:.3f} 对 {top:.3f}"
+    )
+    check("烘焙后状态为输入未变", simulation_status(root, scene).state == CURRENT)
+    ground.location.z -= 0.5
+    check("移动地面后模拟成果过期", simulation_status(root, scene).state == OUTDATED)
+    # 失败时撤回: 没有刚体世界的场景里添加失败, 不留下世界与物体
+    reset_simulation(bpy.context, [root])
+    for obj in list(bpy.data.objects):
+        if "_qd_ground" in obj:
+            bpy.data.objects.remove(obj)
+    # 测试自己删掉地面物体后网格成了孤立数据, 先清掉, 下面才能判断失败有没有留下网格
+    for mesh in [m for m in bpy.data.meshes if m.name.startswith("QD_Ground")]:
+        bpy.data.meshes.remove(mesh)
+    count = len(bpy.data.objects)
+    with patch.object(sim_ground_module.rigidbody, "link", side_effect=RuntimeError("injected")):
+        try:
+            add_ground(bpy.context, [root])
+            failed = False
+        except RuntimeError:
+            failed = True
+    check("注入失败时抛出", failed)
+    check("失败后没有残留地面", len(bpy.data.objects) == count)
+    check(
+        "失败后没有残留地面网格", not [m for m in bpy.data.meshes if m.name.startswith("QD_Ground")]
+    )
+    # 守卫: 有长任务在运行时拒绝
+    with sim_task.holding():
+        try:
+            add_ground(bpy.context, [root])
+            refused = False
+        except busy.BusyError:
+            refused = True
+    check("有任务运行时拒绝添加地面", refused)
+
+
 def main():
     """注册插件后运行全部场景"""
     registration.register()
@@ -1262,6 +1332,7 @@ CASES = (
     case_affected_and_preview,
     case_physics_summary_and_resistance,
     case_bake_deterministic,
+    case_ground,
     # 会重新打开文件, 放在最后
     case_bake_persistence,
 )

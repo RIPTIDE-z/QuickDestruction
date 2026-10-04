@@ -11,12 +11,13 @@ from .common.localization import DEFAULT_CONTEXT, build_translations
 from .framework import presets
 from .framework.constants import CONTEXT, LOCALES, SIDEBAR_CATEGORY
 from .tools.Drivers.tool import TOOL as DRIVERS
+from .tools.GameExport.tool import TOOL as GAME_EXPORT
 from .tools.MeshFracture.tool import TOOL as MESH_FRACTURE
 from .tools.Physics.tool import TOOL as PHYSICS
 from .tools.Simulation.tool import TOOL as SIMULATION
 
 # 工具清单: 元组顺序即注册顺序, 也就是侧栏里面板的上下顺序
-TOOLS = (MESH_FRACTURE, PHYSICS, DRIVERS, SIMULATION)
+TOOLS = (MESH_FRACTURE, PHYSICS, DRIVERS, SIMULATION, GAME_EXPORT)
 
 # 已完成的注册步骤的逆操作, 停用时逆序执行
 _undo_steps = []

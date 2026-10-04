@@ -1094,6 +1094,44 @@ def duplicate_asset(root):
     return copy, copies
 
 
+def case_interior_attribute():
+    """断面面属性 qd_interior: 恰好覆盖切割新生成的断面, 外表面 (落在源立方体六个面上的面) 都不带"""
+    reset()
+    source = cube("Src", half=1.0, location=(0.0, 0.0, 1.0))
+    seeds(source, 8, 0.9, 7)
+    shards = cut(
+        [source],
+        {"source": {"VERT_CHILD"}, "first_cut_seeds": 0, "source_noise": 0.0, "recursion": 1},
+    ).shards
+    wrong, interior, exterior = 0, 0, 0
+    for shard in shards:
+        attribute = shard.data.attributes.get("qd_interior")
+        if attribute is None:
+            wrong += len(shard.data.polygons)
+            continue
+        flags = [item.value for item in attribute.data]
+        for polygon, flag in zip(shard.data.polygons, flags, strict=True):
+            # 内外交界处布尔求交会留下面积极小的碎三角, 几何上归属含糊, 不参与判定
+            if polygon.area < 1e-3:
+                continue
+            points = [shard.matrix_world @ shard.data.vertices[i].co for i in polygon.vertices]
+            # 外表面: 所有顶点落在同一个源立方体面上, 容差随缝隙留出
+            outer = any(
+                all(
+                    abs(abs(point[axis] - (1.0 if axis == 2 else 0.0)) - 1.0) < 2e-3
+                    for point in points
+                )
+                for axis in range(3)
+            )
+            interior += flag
+            exterior += not flag
+            wrong += flag == outer
+    check("每块碎块都有断面面属性", all(s.data.attributes.get("qd_interior") for s in shards))
+    check("断面标记与几何判定一致", wrong == 0, f"{wrong} 个面不一致")
+    check("断面与外表面都存在", interior > 0 and exterior > 0, f"{interior} {exterior}")
+    check("属性是布尔型的面属性", shards[0].data.attributes["qd_interior"].domain == "FACE")
+
+
 def case_small_sources():
     """小物体: 切面内缩量, 共面容差与包围盒外扩都随物体尺寸缩放, 块数与体积不随物体变小而丢失
 
@@ -1221,6 +1259,7 @@ CASES = (
     case_early_limit,
     case_weight_pruning,
     case_small_sources,
+    case_interior_attribute,
     case_asset_identity,
     # 会重新打开文件, 放在最后
     case_asset_persistence,

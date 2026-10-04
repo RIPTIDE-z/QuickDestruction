@@ -29,6 +29,14 @@ SIM_ACTION_MARK = "_qd_sim_action"
 RUNS_MARK = "_qd_sim_runs"
 # 插件自有数据块上的阶段标记, 删除或替换前按资产标识与阶段一起核对归属
 STAGE_MARK = "_qd_stage"
+# 根集合上的绑定记录: 构建绑定时的模拟会话, 物理修订号, 构建参数摘要与产物统计
+RIG_MARK = "_qd_rig"
+# 根集合上的导出集合, ID 指针型自定义属性: 里面是骨架与蒙皮网格
+RIG_COLLECTION_MARK = "_qd_rig_collection"
+# 根集合上的导出记录: 对应的绑定与已写出的文件
+EXPORT_MARK = "_qd_export"
+# 绑定产物 (导出集合, 骨架, 蒙皮网格, 动作) 的阶段标记值
+RIG_STAGE = "rig"
 # 弹体子物体上记下的原位置, 飞行动画写入前保存, 复位时放回
 FLIGHT_REST_MARK = "_qd_flight_rest"
 # 当前的清单格式版本
@@ -159,7 +167,14 @@ def make_unique(root):
             obj[shards.ASSET_MARK] = new_id
     root[shards.ASSET_MARK] = new_id
     # 复制品不继承原资产的各阶段成果, 需要重新应用
-    for key in (PHYSICS_MARK, SIM_MARK, SIM_ACTION_MARK):
+    for key in (
+        PHYSICS_MARK,
+        SIM_MARK,
+        SIM_ACTION_MARK,
+        RIG_MARK,
+        RIG_COLLECTION_MARK,
+        EXPORT_MARK,
+    ):
         root.pop(key, None)
     return new_id
 
@@ -271,6 +286,56 @@ def clear_sim_result(root):
     """移除资产的模拟成果记录与动作引用"""
     for key in (SIM_MARK, SIM_ACTION_MARK):
         root.pop(key, None)
+
+
+def rig_record(root):
+    """资产的绑定记录, 没有构建过时为 None"""
+    return _record(root, RIG_MARK)
+
+
+def rig_collection(root):
+    """资产的导出集合, 没有构建过或集合已被删除时为 None"""
+    return root.get(RIG_COLLECTION_MARK)
+
+
+def set_rig_result(root, record, collection):
+    """写入资产的绑定记录与导出集合引用"""
+    root[RIG_MARK] = record
+    root[RIG_COLLECTION_MARK] = collection
+
+
+def clear_rig_result(root):
+    """移除绑定记录, 导出集合引用与导出记录: 导出记录依赖绑定, 一起失效"""
+    for key in (RIG_MARK, RIG_COLLECTION_MARK, EXPORT_MARK):
+        root.pop(key, None)
+
+
+def discard_rig(root):
+    """删除资产的导出集合及其中的物体, 网格, 骨架数据与动画, 并清除绑定与导出记录
+
+    模拟成果重新烘焙或复位后, 旧绑定里的动画已经与碎块对不上, 留着只会被误当成最新数据导出;
+    已经写到磁盘上的 FBX 文件不动, 只是导出记录随之清除; 没有绑定时什么也不做
+    """
+    collection = rig_collection(root)
+    stale = []
+    if collection is not None:
+        for obj in collection.objects:
+            animation = obj.animation_data.action if obj.animation_data else None
+            stale.extend(item for item in (obj, obj.data, animation) if item is not None)
+        stale.append(collection)
+    clear_rig_result(root)
+    if stale:
+        bpy.data.batch_remove(stale)
+
+
+def export_record(root):
+    """资产的导出记录, 没有导出过时为 None"""
+    return _record(root, EXPORT_MARK)
+
+
+def set_export_record(root, record):
+    """写入资产的导出记录"""
+    root[EXPORT_MARK] = record
 
 
 def owned(item, asset_id, stage):

@@ -7,10 +7,20 @@ bake 同步执行到底; bake_steps 是生成器, 每推进一帧产出一次进
 from .core import task
 from .core.bake import Progress, SimulationResult
 from .core.bake import bake_steps as _bake_steps
+from .core.ground import GroundResult
+from .core.ground import add_ground as _add_ground
 from .core.reset import reset as _reset
 from .settings import SCHEMA
 
-__all__ = ("Progress", "SimulationResult", "bake", "bake_steps", "reset")
+__all__ = (
+    "GroundResult",
+    "Progress",
+    "SimulationResult",
+    "add_ground",
+    "bake",
+    "bake_steps",
+    "reset",
+)
 
 
 def bake_steps(context, roots, config):
@@ -33,3 +43,9 @@ def reset(context, roots):
     """删除资产的模拟成果, 碎块回到静止姿态; 返回处理的碎块数"""
     task.ensure_idle()
     return _reset(context, list(roots))
+
+
+def add_ground(context, roots):
+    """在资产最低点下方添加有厚度的静态刚体地面, 已有时重新对齐; 返回 GroundResult"""
+    task.ensure_idle()
+    return _add_ground(context, list(roots))
