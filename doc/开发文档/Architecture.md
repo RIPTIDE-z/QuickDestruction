@@ -149,7 +149,7 @@ TOOL = ToolSpec(
 | 根集合 | `_qd_source_ref`、`_qd_source`、`_qd_gap` | 网格破碎 | 源物体的 ID 指针、生成时的源名、切割间隙 |
 | 根集合 | `_qd_physics` | 物理设置 | 实际使用的物理配置与修订号 `rev`、碎块数 |
 | 根集合 | `_qd_sim`、`_qd_sim_action` | 模拟烘焙 | 会话标识、当时的物理修订号与成果动作 |
-| 根集合 | `_qd_rig`、`_qd_rig_collection` | 游戏导出 | 绑定记录（标识、模拟会话与物理修订号、构建参数摘要、帧范围、骨骼与网格数、骨骼到碎块的映射）与导出集合的指针 |
+| 根集合 | `_qd_rig`、`_qd_rig_collection` | 游戏导出 | 绑定记录（标识、模拟会话与物理修订号、构建参数摘要、帧范围、骨骼与网格数、骨骼到碎块的映射、绑定方式与切换帧）与导出集合的指针 |
 | 根集合 | `_qd_export` | 游戏导出 | 导出的文件列表与它对应的绑定标识 |
 | 碎块 | `_qd_source`、`_qd_level`、`_qd_path`、`_qd_parent`、`_qd_asset` | 网格破碎 | 来源、层级、路径、父碎块、所属资产 |
 | 碎块网格 | 面属性 `qd_interior` | 网格破碎 | 为真的面是切割新生成的断面；游戏导出据此做断面 UV |
@@ -176,7 +176,7 @@ TOOL = ToolSpec(
 | 碎块原点（移到质心，世界几何不变）、`_qd_rest`、刚体固有属性、`_qd_physics` | 物理设置 | 模拟烘焙 |
 | `Object.qd_driver` 与驱动物体的变换 | 破坏驱动与用户 | 模拟烘焙 |
 | 刚体世界设置、碎块是否在刚体世界里、刚体类型与休眠开关、成果动作、会话记录、预设地面 | 模拟烘焙 | 状态判定 |
-| 绑定记录、导出集合、导出记录 | 游戏导出 | 状态判定；模拟烘焙在提交成果或复位时清除它们（`asset.discard_rig`） |
+| 绑定记录、导出集合、导出记录 | 游戏导出 | 状态判定；模拟烘焙在提交成果或复位时清除它们（`asset.discard_rig`），只删带本资产绑定阶段标记的物体与因此没有使用者的数据 |
 
 每份数据只有一个写入方。工具之间不传 Python 对象，跨操作的成果都落在 .blend 数据上，经 `common` 的访问器读写。
 
@@ -328,7 +328,8 @@ API 在退出时尝试恢复原选择和活动物体；生成算子成功后另�
 | GameExport | `core/tracks.py` | 从成果动作的关键帧直接读出每块碎块的逐帧位姿；动静分类与起动帧 |
 | GameExport | `core/partition.py` | 骨骼命名、Morton 序与容量受限的划分；纯数值，单元测试直接覆盖 |
 | GameExport | `core/bones.py`、`core/merge.py` | 建骨架（骨骼头部在静止质心、`matrix_local` 为纯平移）；复制碎块、加顶点组与来源属性后受控 `join` |
-| GameExport | `core/transfer.py` | 世界轨迹换算成姿态基矩阵 `B⁻¹·Mt·M0⁻¹·B`，批量写线性关键帧 |
+| GameExport | `core/transfer.py` | 世界轨迹换算成姿态基矩阵 `B⁻¹·Mt·M0⁻¹·B`，批量写线性关键帧；原物体切换的缩放开关写成常量插值 |
+| GameExport | `core/swap.py` | 原物体切换：源物体做成原物体网格，切换帧、缩放开关与骨骼头部位置 |
 | GameExport | `core/interior.py` | 断面盒投影 UV，断面由碎块网格上的面属性 `qd_interior` 标出 |
 | GameExport | `core/build.py` | 构建流程、临时集合、校验、两阶段提交与撤回 |
 | GameExport | `core/check.py`、`core/fbx.py` | 检查与逐帧蒙皮核对；FBX 导出封装与现场还原 |

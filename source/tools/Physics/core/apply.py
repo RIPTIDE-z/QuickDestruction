@@ -5,14 +5,13 @@
 对已有数据的改动先记入写前快照, 新建的数据登记到创建账本; 中途失败时两者一起撤回
 """
 
-import traceback
 from dataclasses import dataclass
 
 from mathutils import Matrix
 
 from ....common import asset, rigidbody
 from ....common.blender_context import mesh_edit
-from ....common.created_data import CreatedData, WriteLog
+from ....common.created_data import CreatedData, WriteLog, run_all
 from ....common.geometry import convex_hull_volume, is_not_closed, vertex_mean, volume_centroid
 from ..constants import MASS_MIN
 from ..errors import PhysicsError
@@ -193,19 +192,6 @@ def _apply_asset(context, world, root, shards, values, log, tally):
     _record(root, shards, values, log, (mass_total, open_total))
 
 
-def _undo(log, tracker):
-    """撤回写前快照并回收新建数据; 清理失败只打印, 不覆盖原异常
-
-    log 写前快照
-    tracker 创建账本
-    """
-    for action in (log.undo, tracker.rollback):
-        try:
-            action()
-        except Exception:
-            traceback.print_exc()
-
-
 def apply(context, roots, values):
     """对一组资产应用物理; 失败时撤回本次全部改动
 
@@ -233,7 +219,8 @@ def apply(context, roots, values):
         for root, shards in targets:
             _apply_asset(context, world, root, shards, values, log, tally)
     except Exception:
-        _undo(log, tracker)
+        # 撤回写前快照并回收新建数据
+        run_all((log.undo, tracker.rollback))
         raise
     return PhysicsResult(tally.shards, tally.mass, tally.open_meshes, tally.degenerate)
 

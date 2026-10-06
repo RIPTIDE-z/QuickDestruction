@@ -73,13 +73,15 @@
     "Sleeping": "休眠",
     "The bullet follows the arrow or the curve": "子弹沿箭头或曲线飞行",
     "Tube Radius": "管半径",
-    "Use the active curve as:": "把活动曲线设为：",
     "Vortex": "旋涡",
-    "Zone": "区域"
+    "Zone": "区域",
+    "\"{name}\" is not a driver": "“{name}”不是驱动",
+    "Delete Driver": "删除驱动",
+    "Deleted driver \"{name}\"": "已删除驱动“{name}”",
+    "{name}: {role}": "{name}：{role}"
   },
   "tooltips": {
     "Settings of the active driver": "活动驱动的设置",
-    "All drivers of the scene; click one to select it": "场景中的全部驱动；点击可选中",
     "Add a driver empty at the 3D cursor; move and scale it to place its range, the shown shape is the range": "在 3D 游标处添加一个驱动空物体；移动与缩放它来摆放作用范围，显示的形状就是作用范围",
     "Turn the active empty into a driver of this type": "把活动空物体设为这种类型的驱动",
     "Select this driver and make it active to edit its settings": "选中此驱动并设为活动物体，以便编辑它的设置",
@@ -132,6 +134,9 @@
     "Speed of the shards thrown out at the exit.": "出口处被抛出的碎块的速度。",
     "Swirl shards around the axis of the empty, optionally pulling them in or lifting them.": "让碎块绕空物体的轴旋转，可以同时向内收拢或沿轴抬升。",
     "Thickness of concrete the bullet can pierce; harder materials stop it sooner.": "子弹能穿过的混凝土厚度；更硬的材料会让它更早停下。",
-    "What happens to the shards whose center is inside the zone.": "质心在区域内的碎块会怎样。"
+    "What happens to the shards whose center is inside the zone.": "质心在区域内的碎块会怎样。",
+    "All drivers of the scene; click one to select it, or delete it with the button at the end of its row": "场景中的全部驱动；点击可选中，点击行尾的按钮可删除",
+    "Delete this driver from the scene": "从场景中删除这个驱动",
+    "Name of the driver object to delete": "要删除的驱动物体名称"
   }
 }

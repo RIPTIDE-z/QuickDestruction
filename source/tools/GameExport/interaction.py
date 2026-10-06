@@ -6,7 +6,7 @@
 
 from typing import ClassVar
 
-from bpy.props import BoolProperty
+from bpy.props import BoolProperty, StringProperty
 from bpy.types import Operator, Panel
 
 from ...common import asset, busy
@@ -23,7 +23,7 @@ from ...framework.ui import (
     parameter_panels,
     picked_objects,
 )
-from .api import build_rig_steps, check, export_fbx, export_paths
+from .api import build_rig_steps, check, export_fbx, export_paths, needs_directory
 from .constants import CONTEXT, TOOL_ID
 from .core.build import build_digest
 from .core.check import ERROR, issue_text
@@ -34,22 +34,23 @@ STATUS_ROWS = 6
 # 面板里最多列出的问题条数
 ISSUE_ROWS = 5
 
-# 参数分组: 绑定构建的参数很少改动, 默认收起; 导出的目录与引擎常用, 默认展开
+# 参数分组: 绑定设置以绑定方式开头, 两组默认都展开
 GROUPS = (
     ParamGroup(
-        "Rig",
+        "Rig Settings",
         (
+            "rig_mode",
             "static_distance",
             "static_angle",
             "max_bones_per_mesh",
             "max_bones_total",
             "interior_uv",
             "interior_uv_scale",
+            "ascii_names",
         ),
-        closed=True,
     ),
     ParamGroup(
-        "Export",
+        "Export Settings",
         (
             "engine",
             "axis_forward",
@@ -228,14 +229,23 @@ class QD_GAME_EXPORT_OT_export(ToolOperator, Operator):
     # UNDO 让导出记录的写入可以撤销; 磁盘上的文件不会随撤销删除
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
 
-    # 是否覆盖已存在的文件: 确认对话框通过后由 invoke 置为真, 不保存在 .blend 里
     __annotations__ = {
+        # 是否覆盖已存在的文件: 确认对话框通过后由 invoke 置为真, 不保存在 .blend 里
         "overwrite": BoolProperty(
             name="Overwrite",
             description="Replace files that already exist",
             default=False,
             options={"HIDDEN", "SKIP_SAVE"},
-        )
+        ),
+        # 文件浏览器选出的目录: 面板上的目录定不下来时由弹窗写入, 执行时存回面板参数
+        "directory": StringProperty(
+            name="Directory",
+            description="Folder to write the FBX files to",
+            subtype="DIR_PATH",
+            options={"HIDDEN", "SKIP_SAVE"},
+        ),
+        # 让文件浏览器只显示文件夹
+        "filter_folder": BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"}),
     }
 
     def invoke(self, context, event):
@@ -245,10 +255,14 @@ class QD_GAME_EXPORT_OT_export(ToolOperator, Operator):
         event 触发事件
         返回 算子返回集合
         """
-        # 准备输入时的错误 (例如文件未保存却用相对目录) 也走失败报告
+        # 准备输入时的错误也走失败报告
         try:
             roots = asset.resolve(picked_objects(context))
             config = SCHEMA.read(scene_settings(context, TOOL_ID))
+            # 目录为空, 或 blend 文件未保存而目录是相对路径: 弹出文件浏览器让用户选一个绝对目录
+            if needs_directory(config):
+                context.window_manager.fileselect_add(self)
+                return {"RUNNING_MODAL"}
             found = [path for path in export_paths(roots, config) if path.exists()]
         except Exception as error:
             return self.fail(error)
@@ -273,7 +287,11 @@ class QD_GAME_EXPORT_OT_export(ToolOperator, Operator):
         返回 报告文字
         """
         roots = asset.resolve(picked_objects(context))
-        config = SCHEMA.read(scene_settings(context, TOOL_ID))
+        owner = scene_settings(context, TOOL_ID)
+        # 从文件浏览器选了目录: 存回面板参数, 之后的导出直接用它
+        if self.directory:
+            owner.directory = self.directory
+        config = SCHEMA.read(owner)
         # 先核对文件名, 不同资产写到同一个文件时一个都不写
         export_paths(roots, config)
         files, found = [], []
@@ -323,6 +341,11 @@ def _draw_summary(layout, root):
         static=record["static"],
     )
     layout.label(text=text, translate=False, icon="ARMATURE_DATA")
+    # 原物体切换: 写明哪一帧从原物体换成碎块
+    frame = record.get("swap")
+    if frame is not None:
+        text = tr(CONTEXT, "The intact object turns into shards at frame {frame}", frame=frame)
+        layout.label(text=text, translate=False, icon="MOD_EXPLODE")
 
 
 def _draw_issues(layout, root):

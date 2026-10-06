@@ -2,7 +2,7 @@
 
 复制碎块网格并变换到静止世界姿态, 加顶点组与来源属性, 再 join
 
-顶点组与骨骼同名, 权重 1; 不动的碎块归 root 组
+顶点组与骨骼同名, 权重 1; 不动的碎块归 root 组, 原物体切换时归 still 组
 来源属性记录每个顶点属于哪块碎块, 检查与测试靠它把蒙皮网格逐块对回碎块
 合并用受控的 object.join: 只在构建集合里的临时复制品上执行, 保留全部属性, 材质与 UV
 """
@@ -104,8 +104,17 @@ def build_mesh(context, tracker, name, collection, entries, armature):
         tracker.flush()
         obj.name = name
         obj.data.name = name
+    bind(obj, armature)
+    return obj
+
+
+def bind(obj, armature):
+    """把网格物体绑到骨架上
+
+    obj 网格物体, 顶点组与骨骼同名
+    armature 骨架物体
+    """
     # 骨架修改器让顶点跟着骨骼动, 父级关系让导出时网格归属于这个骨架
     modifier = obj.modifiers.new("Armature", "ARMATURE")
     modifier.object = armature
     obj.parent = armature
-    return obj

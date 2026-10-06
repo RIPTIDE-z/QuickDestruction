@@ -449,25 +449,43 @@ def clear_rig_result(root):
         root.pop(key, None)
 
 
+def remove_rig_collection(collection, asset_id):
+    """删除导出集合里属于本资产绑定阶段的物体, 以及因此不再有使用者的物体数据与动作
+
+    只删带本资产绑定阶段标记的物体: 用户自己放进导出集合的物体与它们的数据原样保留;
+    集合删空后一并删除, 还有用户的内容时留下
+    collection 导出集合
+    asset_id 资产标识
+    """
+    objects = [obj for obj in collection.objects if owned(obj, asset_id, RIG_STAGE)]
+    linked = {}
+    for obj in objects:
+        animation = obj.animation_data.action if obj.animation_data else None
+        # 字典去重并保持顺序: 几个物体可能共用同一份数据
+        linked.update(dict.fromkeys(item for item in (obj.data, animation) if item is not None))
+    # 先删物体, 物体数据与动作的使用者随之减少, 之后才能判断它们是否还被别处使用
+    # 批量删除: 逐个删除数据块的代价随数据库规模增长
+    if objects:
+        bpy.data.batch_remove(objects)
+    orphans = [item for item in linked if item.users == 0]
+    if not collection.objects and not collection.children:
+        orphans.append(collection)
+    if orphans:
+        bpy.data.batch_remove(orphans)
+
+
 def discard_rig(root):
-    """删除资产的导出集合及其中的物体, 网格, 骨架数据与动画, 并清除绑定与导出记录
+    """删除资产导出集合里的绑定产物, 并清除绑定与导出记录
 
     模拟成果重新烘焙或复位后, 旧绑定里的动画已经与碎块对不上, 留着只会被误当成最新数据导出;
     已经写到磁盘上的 FBX 文件不动, 只是导出记录随之清除; 没有绑定时什么也不做
     root 资产根集合
     """
     collection = rig_collection(root)
-    stale = []
-    # 先收集再批量删除: 逐个删除数据块的代价随数据库规模增长
-    if collection is not None:
-        for obj in collection.objects:
-            animation = obj.animation_data.action if obj.animation_data else None
-            stale.extend(item for item in (obj, obj.data, animation) if item is not None)
-        stale.append(collection)
     # 先清记录再删数据: 记录里的集合指针在删除后会失效
     clear_rig_result(root)
-    if stale:
-        bpy.data.batch_remove(stale)
+    if collection is not None:
+        remove_rig_collection(collection, shards.asset_of(root))
 
 
 def export_record(root):

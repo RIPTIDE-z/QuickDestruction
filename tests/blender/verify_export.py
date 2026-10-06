@@ -8,11 +8,19 @@
     4. 断面 UV: 盒投影只写断面, 外表面 UV 不变; 选择保持时断面 UV 不动
     5. 失败回滚: 校验失败时旧导出, 绑定记录与场景选择原样保留, 没有残留的临时数据
     6. 状态: 构建后输入未变; 重新烘焙后过期; 导出记录随绑定重建而过期; 设置摘要随参数变化
+    6b. 归属: 场景里已有同名集合时文件名仍取资产名; 用户放进导出集合的物体与共用的数据
+        在重新烘焙与重新构建时保留, 插件自己的产物照常删除
     7. 导出: 文件写出, 覆盖需要确认, 轴向冲突, 目录与未保存文件的错误; 过期的绑定拒绝导出;
        导出后选择, 活动物体, 当前帧与帧范围还原
     7b. 文件名: 默认用资产名, 自定义名与占位符, 扩展名与非法字符, 多骨架序号,
         多资产写到同一文件时拒绝
-    8. 往返: 导出的 FBX 重新导入 (动画偏移为 0), 各帧的顶点都能在碎块动画给出的世界顶点上找到
+    7c. 仅允许 ASCII 名称: 资产名非 ASCII 时拒绝构建, 文件名与材质名在导出时再查; 关闭后都放行
+    7d. 导出目录定不下来时由文件浏览器选择, 选好的目录存回面板
+    7e. 原物体切换: 起始帧显示原物体而碎块缩放为 0, 切换帧原物体缩放为 0 而碎块逐帧与动画一致;
+        切换帧就是第一块碎块开始平移的帧; 多出的骨骼计入上限; 源物体被删除时拒绝构建;
+        导出的 FBX 重新导入后起始帧是原物体, 结束帧是碎块, 动画数值都是有限值
+    8. 往返: 导出的 FBX 重新导入 (动画偏移为 0), 各帧的顶点都能在碎块动画给出的世界顶点上找到;
+       FBX 里骨架节点名为 Armature, 骨骼层级的根是 root, 场景里原有的同名物体名字不变
 测试过程:
     在后台 Blender 里注册插件, 用 MeshFracture, Physics, Drivers 与 Simulation 的阶段 API 得到烘焙好的
     资产, 再调用 GameExport 的阶段 API; 每条判据输出 [PASS] 或 [FAIL], 有失败时以非零状态结束
@@ -27,6 +35,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import bpy
+from mathutils import Vector
 from mathutils.kdtree import KDTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,13 +44,21 @@ from harness import check, cube, reset, seeds
 
 from source import registration
 from source.common import asset, drivers
+from source.common import shards as shard_contract
 from source.common.status import CURRENT, NONE, OUTDATED, export_status, rig_status
 from source.tools.Drivers.api import add_driver
-from source.tools.GameExport.api import build_rig, existing_files, export_fbx, export_paths
+from source.tools.GameExport.api import (
+    build_rig,
+    existing_files,
+    export_fbx,
+    export_paths,
+    needs_directory,
+)
 from source.tools.GameExport.api import check as check_rig
 from source.tools.GameExport.core import build as build_core
 from source.tools.GameExport.core import check as check_core
 from source.tools.GameExport.core import interior
+from source.tools.GameExport.core import swap as swap_core
 from source.tools.GameExport.errors import ExportError
 from source.tools.MeshFracture.api import generate_fragments
 from source.tools.Physics.api import apply_physics
@@ -185,11 +202,12 @@ def case_bone_limits():
     check("每段网格归属某个骨架", all(mesh.parent in armatures for mesh in meshes))
     check("逐帧一致 (拆骨架)", skin_error(root) < 1e-4)
     check("多个骨架时没有残留临时数据", leftovers() == 0)
+    # 上限放不下 root 加一块碎块: 报可翻译的领域错误, 而不是内部的 ValueError
     try:
         build_rig(bpy.context, [root], {"max_bones_total": 1})
         failed = False
-    except ValueError:
-        failed = True
+    except ExportError as error:
+        failed = error.values.get("count") == 1
     check("上限小于 2 时拒绝", failed)
 
 
@@ -360,6 +378,42 @@ def case_status():
     check("复位模拟后没有残留的骨架物体", not [o for o in bpy.data.objects if "Rig" in o.name])
 
 
+def case_rig_ownership():
+    """导出集合重名不影响文件名; 只删除插件自己的绑定产物, 用户放进导出集合的东西保留"""
+    root, _shards = baked_asset(count=6)
+    # 场景里先有一个同名集合, 导出集合会被 Blender 改名为 Src_Export.001
+    squatter = bpy.data.collections.new("Src_Export")
+    bpy.context.scene.collection.children.link(squatter)
+    build_rig(bpy.context, [root], {})
+    collection = asset.rig_collection(root)
+    with tempfile.TemporaryDirectory() as directory:
+        paths = export_paths([root], {"directory": directory})
+    check("导出集合重名时被改名", collection.name != "Src_Export", collection.name)
+    check("文件名仍取资产名", paths[0].name == "Src.fbx", paths[0].name)
+    # 用户的物体放进导出集合, 另一个物体共用绑定网格的数据
+    marker = bpy.data.objects.new("MyMarker", None)
+    collection.objects.link(marker)
+    _armatures, meshes = export_parts(root)
+    shared_data = meshes[0].data
+    twin = bpy.data.objects.new("MyTwin", shared_data)
+    bpy.context.scene.collection.objects.link(twin)
+    # 按内存地址记下旧的绑定物体: 新绑定提交后会沿用同样的名字, 按名字比较分不出新旧
+    old_rig = {obj.as_pointer() for obj in collection.objects if obj != marker}
+    build_rig(bpy.context, [root], {})
+    check("重新构建后用户物体还在", bpy.data.objects.get("MyMarker") is not None)
+    check("共用的网格数据没有被删", twin.data is not None and twin.data.name == shared_data.name)
+    alive = {obj.as_pointer() for obj in bpy.data.objects}
+    check("旧的绑定物体被删除", not old_rig & alive, str(len(old_rig & alive)))
+    check("用户物体所在的旧集合保留", marker.users_collection == (collection,))
+    bake(bpy.context, [root], {})
+    check("重新烘焙后用户物体还在", bpy.data.objects.get("MyMarker") is not None)
+    check("重新烘焙后绑定记录清除", asset.rig_record(root) is None)
+    check(
+        "重新烘焙后没有插件的绑定物体",
+        not [obj for obj in collection.objects if obj.get("_qd_stage") == "rig"],
+    )
+
+
 def case_export_files():
     """导出: 文件写出, 覆盖需要确认, 错误情形与现场还原"""
     root, shards = baked_asset(count=8)
@@ -442,10 +496,18 @@ def case_round_trip():
     root, shards = baked_asset(count=8, partial=True)
     build_rig(bpy.context, [root], {})
     scene = bpy.context.scene
+    # 场景里先放一个叫 Armature 的物体: 导出期间它要让出名字, 导出后原样恢复
+    bystander = bpy.data.objects.new("Armature", None)
+    scene.collection.objects.link(bystander)
+    rig_names = sorted(obj.name for obj in asset.rig_collection(root).objects)
     with tempfile.TemporaryDirectory() as directory:
         paths, _issues = export_fbx(
             bpy.context, root, {"directory": directory, "engine": "GENERIC"}
         )
+        check("导出后原有的 Armature 物体名字不变", bystander.name == "Armature", bystander.name)
+        names_after = sorted(obj.name for obj in asset.rig_collection(root).objects)
+        check("导出后骨架与网格的名字还原", names_after == rig_names, str(names_after))
+        bpy.data.objects.remove(bystander)
         before = set(bpy.data.objects)
         bpy.ops.import_scene.fbx(filepath=str(paths[0]), anim_offset=0.0)
     imported = [obj for obj in bpy.data.objects if obj not in before]
@@ -454,6 +516,11 @@ def case_round_trip():
         {obj.type for obj in imported} >= {"ARMATURE", "MESH"},
         str(len(imported)),
     )
+    # 虚幻引擎只跳过名为 Armature 的顶层节点, 这样骨骼层级的根才是 root
+    skeleton = next(obj for obj in imported if obj.type == "ARMATURE")
+    check("FBX 里骨架节点名为 Armature", skeleton.name == "Armature", skeleton.name)
+    tops = [bone.name for bone in skeleton.data.bones if bone.parent is None]
+    check("骨骼层级只有一个根且叫 root", tops == ["root"], str(tops))
     frames = [1, 3, 8, 15, 30]
     worst = 0.0
     for frame in frames:
@@ -564,6 +631,214 @@ def case_file_names():
         check("默认文件名各用各的资产名", names == ["Other.fbx", "Src.fbx"], str(names))
 
 
+def case_ascii_names():
+    """仅允许 ASCII 名称: 默认开启时非 ASCII 的资产名拒绝构建, 文件名与材质名在导出时再查一次"""
+    root, _shards = baked_asset(count=6)
+    # 源物体名换成中文: 导出物体与集合的名字都从它派生
+    root[shard_contract.SOURCE_MARK] = "砖墙"
+    try:
+        build_rig(bpy.context, [root], {})
+        refused = False
+    except ExportError as error:
+        refused = "not ASCII" in error.message and error.values.get("name") == "砖墙"
+    check("资产名非 ASCII 时拒绝构建", refused)
+    check("拒绝后没有绑定也没有残留", asset.rig_record(root) is None and leftovers() == 0)
+    build_rig(bpy.context, [root], {"ascii_names": False})
+    check("关闭选项后可以构建", asset.rig_record(root) is not None)
+    root[shard_contract.SOURCE_MARK] = "Src"
+    build_rig(bpy.context, [root], {})
+    with tempfile.TemporaryDirectory() as directory:
+        config = {"directory": directory, "file_name": "破碎"}
+        try:
+            export_fbx(bpy.context, root, config)
+            refused = False
+        except ExportError as error:
+            refused = "not ASCII" in error.message
+        check("文件名非 ASCII 时导出被拒绝", refused)
+        check("拒绝时什么都没写", not list(Path(directory).iterdir()))
+        material = bpy.data.materials.new("混凝土")
+        _armatures, meshes = export_parts(root)
+        meshes[0].data.materials.append(material)
+        try:
+            export_fbx(bpy.context, root, {"directory": directory})
+            refused = False
+        except ExportError as error:
+            refused = error.values.get("name") == "混凝土"
+        check("材质名非 ASCII 时导出被拒绝", refused)
+        paths, _issues = export_fbx(bpy.context, root, {**config, "ascii_names": False})
+        check("关闭选项后可以导出", paths[0].is_file() and paths[0].name == "破碎.fbx")
+
+
+def case_choose_directory():
+    """导出目录定不下来时 (为空, 或相对路径而文件未保存) 由文件浏览器选择, 选好的目录存回面板"""
+    root, shards = baked_asset(count=6)
+    build_rig(bpy.context, [root], {})
+    check("未保存时相对目录需要选择", needs_directory({"directory": "//export/"}))
+    check("空目录需要选择", needs_directory({"directory": " "}))
+    with tempfile.TemporaryDirectory() as directory:
+        check("绝对目录不需要选择", not needs_directory({"directory": directory}))
+        settings = bpy.context.scene.qd_settings.game_export
+        settings.directory = "//export/"
+        harness.select([shards[0]])
+        # 文件浏览器确认后会带着 directory 执行算子, 这里直接模拟这一步
+        done = bpy.ops.qd_game_export.export("EXEC_DEFAULT", directory=directory)
+        check("带着选好的目录导出成功", done == {"FINISHED"})
+        check("选好的目录存回面板参数", settings.directory == directory, settings.directory)
+        check("文件写进选好的目录", (Path(directory) / "Src.fbx").is_file())
+        settings.directory = "//export/"
+
+
+def mesh_points(obj):
+    """网格物体当前帧求值后的世界顶点"""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = obj.evaluated_get(depsgraph)
+    mesh = evaluated.to_mesh()
+    points = [evaluated.matrix_world @ vertex.co for vertex in mesh.vertices]
+    evaluated.to_mesh_clear()
+    return points
+
+
+def spread(points):
+    """一组点的包围盒对角线长度; 缩放为 0 的部分会塌成一点, 对角线为 0"""
+    if not points:
+        return 0.0
+    low = Vector([min(point[axis] for point in points) for axis in range(3)])
+    high = Vector([max(point[axis] for point in points) for axis in range(3)])
+    return (high - low).length
+
+
+def shard_spreads(meshes):
+    """碎块蒙皮网格里每块碎块的顶点包围盒对角线, 按来源属性分组"""
+    groups = {}
+    for obj in meshes:
+        ids = [0] * len(obj.data.vertices)
+        obj.data.attributes["qd_shard"].data.foreach_get("value", ids)
+        for ordinal, point in zip(ids, mesh_points(obj), strict=True):
+            groups.setdefault(ordinal, []).append(point)
+    return [spread(points) for points in groups.values()]
+
+
+def first_motion(shards, rests, frames):
+    """第一块碎块离开静止位置的帧, 逐帧求值得到, 与构建代码互相独立"""
+    scene = bpy.context.scene
+    for frame in frames:
+        scene.frame_set(frame)
+        for shard, rest in zip(shards, rests, strict=True):
+            if (shard.matrix_world.translation - rest).length > 1e-4:
+                return frame
+    return None
+
+
+def case_swap_rig():
+    """原物体切换: 起始帧显示原物体, 切换帧换成碎块并开始破碎动画"""
+    root, shards = baked_asset(count=8, partial=True)
+    scene = bpy.context.scene
+    source = asset.source_of(root)
+    rests = [asset.rest_matrix(shard).translation.copy() for shard in shards]
+    expected_swap = first_motion(shards, rests, list(range(1, 31)))
+    build_rig(bpy.context, [root], {"rig_mode": "SWAP"})
+    record = asset.rig_record(root)
+    check("记录了绑定方式", record["mode"] == "SWAP")
+    check(
+        "切换帧是第一块碎块开始平移的帧",
+        record["swap"] == expected_swap,
+        f"{record['swap']} / {expected_swap}",
+    )
+    armatures, meshes = export_parts(root)
+    bone_names = {bone.name for bone in armatures[0].data.bones}
+    check("第一个骨架带原物体骨骼与 still 骨骼", {"root", "intact", "still"} <= bone_names)
+    intact = [obj for obj in meshes if swap_core.is_intact(obj)]
+    pieces = [obj for obj in meshes if not swap_core.is_intact(obj)]
+    check(
+        "有一段原物体网格",
+        len(intact) == 1 and intact[0].name == "Src_Intact",
+        str([obj.name for obj in intact]),
+    )
+    check("原物体网格只引用原物体骨骼", [g.name for g in intact[0].vertex_groups] == ["intact"])
+    # 起始帧: 原物体与源物体逐点重合, 每块碎块都塌成一点
+    scene.frame_set(record["frames"][0])
+    source_points = mesh_points(source)
+    shown = mesh_points(intact[0])
+    gap = max((a - b).length for a, b in zip(shown, source_points, strict=True))
+    check("起始帧原物体与源物体重合", gap < 1e-4, f"{gap:.2e}")
+    check("起始帧碎块全部缩放为 0", max(shard_spreads(pieces)) < 1e-6)
+    # 切换前一帧仍是原物体
+    scene.frame_set(record["swap"] - 1)
+    check("切换前一帧仍显示原物体", spread(mesh_points(intact[0])) > 1.0)
+    # 切换帧: 原物体塌成一点, 碎块逐帧与动画一致 (校验只核对切换帧及之后)
+    scene.frame_set(record["swap"])
+    check("切换帧原物体缩放为 0", spread(mesh_points(intact[0])) < 1e-6)
+    error = skin_error(root)
+    check("切换帧及之后蒙皮与碎块动画一致", error < 1e-4, f"{error:.2e}")
+    issues = check_rig(bpy.context, root, {"rig_mode": "SWAP"})
+    errors = [issue.code for issue in issues if issue.level == "ERROR"]
+    check(
+        "检查没有错误, 原物体不报断面 UV",
+        not errors and "INTERIOR_UV" not in [issue.code for issue in issues],
+        str([issue.code for issue in issues]),
+    )
+    # 往返: 导入后起始帧是原物体, 结束帧是碎块, 动画数值有限
+    with tempfile.TemporaryDirectory() as directory:
+        paths, _issues = export_fbx(bpy.context, root, {"directory": directory, "rig_mode": "SWAP"})
+        before = set(bpy.data.objects)
+        bpy.ops.import_scene.fbx(filepath=str(paths[0]), anim_offset=0.0)
+    imported = [obj for obj in bpy.data.objects if obj not in before]
+    skeleton = next(obj for obj in imported if obj.type == "ARMATURE")
+    values = [
+        point.co[1]
+        for bag in skeleton.animation_data.action.layers[0].strips[0].channelbags
+        for curve in bag.fcurves
+        for point in curve.keyframe_points
+    ]
+    check("导入的动画数值都是有限值", all(value == value and abs(value) < 1e9 for value in values))
+    scene.frame_set(record["frames"][0])
+    first_points = imported_points(record["frames"][0], before)
+    tree = KDTree(len(first_points))
+    for index, point in enumerate(first_points):
+        tree.insert(point, index)
+    tree.balance()
+    gap = max(tree.find(point)[2] for point in source_points)
+    check("导入后起始帧显示原物体", gap < ROUND_TRIP_TOLERANCE, f"{gap:.2e}")
+    last = record["frames"][1]
+    scene.frame_set(last)
+    expected = [shard.matrix_world @ v.co for shard in shards for v in shard.data.vertices]
+    points = imported_points(last, before)
+    tree = KDTree(len(points))
+    for index, point in enumerate(points):
+        tree.insert(point, index)
+    tree.balance()
+    gap = max(tree.find(point)[2] for point in expected)
+    check("导入后结束帧显示碎块", gap < ROUND_TRIP_TOLERANCE, f"{gap:.2e}")
+    bpy.data.batch_remove(imported)
+    # 骨骼上限: root, intact, still 三根固定骨骼之外至少还要放下一块碎块
+    try:
+        build_rig(bpy.context, [root], {"rig_mode": "SWAP", "max_bones_total": 3})
+        refused = False
+    except ExportError as error:
+        refused = "above {count}" in error.message and error.values.get("count") == 3
+    check("骨骼上限放不下固定骨骼时拒绝构建", refused)
+    build_rig(bpy.context, [root], {"rig_mode": "SWAP", "max_bones_total": 4})
+    armatures, _meshes = export_parts(root)
+    counts = [len(obj.data.bones) for obj in armatures]
+    check("拆分后每个骨架都不超过上限", max(counts) <= 4 and len(armatures) > 1, str(counts))
+    check("拆分后逐帧仍一致", skin_error(root) < 1e-4)
+    # 改回仅碎块: 原物体网格与额外骨骼都不再出现
+    build_rig(bpy.context, [root], {"rig_mode": "SHARDS"})
+    armatures, meshes = export_parts(root)
+    check("仅碎块没有原物体网格", not [obj for obj in meshes if swap_core.is_intact(obj)])
+    check("仅碎块没有切换帧", asset.rig_record(root)["swap"] is None)
+    # 源物体被删除: 原物体切换拒绝构建, 旧绑定保留
+    rig_id = asset.rig_record(root)["id"]
+    bpy.data.objects.remove(source)
+    try:
+        build_rig(bpy.context, [root], {"rig_mode": "SWAP"})
+        refused = False
+    except ExportError as error:
+        refused = "source object" in error.message
+    check("源物体被删除时拒绝构建", refused)
+    check("拒绝后旧绑定保留且没有残留", asset.rig_record(root)["id"] == rig_id and leftovers() == 0)
+
+
 def main():
     """注册插件后运行全部场景"""
     registration.register()
@@ -580,10 +855,14 @@ CASES = (
     case_failure_rollback,
     case_no_simulation,
     case_status,
+    case_rig_ownership,
     case_export_files,
     case_round_trip,
     case_operators,
     case_file_names,
+    case_ascii_names,
+    case_choose_directory,
+    case_swap_rig,
 )
 
 if __name__ == "__main__":

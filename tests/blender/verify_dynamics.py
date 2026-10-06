@@ -7,7 +7,8 @@
     3. 重复应用不再移动原点; 中途失败时属性, 原点, 静止姿态与新建的刚体全部撤回
     4. 移除物理与重设静止姿态; 刚体被删除后状态变为已过期
     5. 材料下拉的联动: 选择材料写入物理量, 手改后仍保留材料并提示, 预设载入与回滚时后写的物理量生效
-    6. 破坏驱动: 新建驱动的外观, 集合与默认起动帧; 只有空物体能设为驱动; 快照的作用空间与摘要
+    6. 破坏驱动: 新建驱动的外观, 集合与默认起动帧; 只有空物体能设为驱动; 快照的作用空间与摘要;
+       列表里的删除按钮删掉驱动, 子物体保持世界位置, 曲线数据不留孤儿, 普通物体不会被删
     7. 交接精度: 普通, 慢动作, 快动作与分数帧率下起动后第一个动力学帧的速度等于计划速度
     8. 激活方式: 范围外的冻结碎块与锚定碎块全程不动且没有动画;
         自由下落的碎块被再交接后速度等于计划值
@@ -53,7 +54,13 @@ from source.common.status import (
     physics_status,
     simulation_status,
 )
-from source.tools.Drivers.api import add_driver, affected_shards, make_driver, plan_preview
+from source.tools.Drivers.api import (
+    add_driver,
+    affected_shards,
+    make_driver,
+    plan_preview,
+    remove_driver,
+)
 from source.tools.Drivers.errors import DriverError
 from source.tools.Drivers.preview import preview_lines
 from source.tools.MeshFracture.api import generate_fragments
@@ -297,6 +304,32 @@ def case_drivers():
     scene.collection.objects.link(empty)
     make_driver(empty, drivers.PUSH)
     check("空物体设为推力后显示为箭头", empty.empty_display_type == "SINGLE_ARROW")
+    # 删除: 经列表里的删除算子删掉带子物体的驱动, 子物体留在原来的世界位置
+    child = bpy.data.objects.new("Child", None)
+    scene.collection.objects.link(child)
+    child.parent = empty
+    empty.location = (4.0, 0.0, 0.0)
+    child.location = (0.0, 1.0, 0.0)
+    bpy.context.view_layer.update()
+    world = child.matrix_world.translation.copy()
+    done = bpy.ops.qd_drivers.delete(name="Plain")
+    check("删除算子执行成功", done == {"FINISHED"})
+    check("驱动物体被删除", bpy.data.objects.get("Plain") is None)
+    bpy.context.view_layer.update()
+    kept = (child.matrix_world.translation - world).length
+    check("子物体解除父级并保持世界位置", child.parent is None and kept < 1e-6, f"{kept:.2e}")
+    # 曲线驱动: 曲线数据没有别的使用者时一并删除
+    flow = add_driver(bpy.context, drivers.CURVE_FLOW, location=(0.0, 0.0, 0.0))
+    data_name = flow.data.name
+    remove_driver(flow)
+    check("曲线驱动的曲线数据一并删除", bpy.data.curves.get(data_name) is None)
+    # 普通物体不是驱动, 直接调用删除也会被拒绝
+    try:
+        remove_driver(child)
+        check("普通物体不会被当成驱动删除", False)
+    except DriverError as error:
+        check("普通物体不会被当成驱动删除", "not a driver" in error.message)
+    check("被拒绝的物体还在", bpy.data.objects.get("Child") is not None)
 
 
 def sim_scene(gravity=True, fps=24, fps_base=1.0, end=40):
@@ -1253,7 +1286,7 @@ def case_ground():
     bottom = min(v.co.z for v in ground.data.vertices) + ground.location.z
     check("顶面与资产最低点齐平", abs(top - lowest) < 1e-5, f"{top:.4f}/{lowest:.4f}")
     check("地面有厚度", abs((top - bottom) - 1.0) < 1e-5, f"{top - bottom:.3f}")
-    check("地面水平范围覆盖资产", result.size >= 20.0, f"{result.size:.1f}")
+    check("地面水平范围覆盖资产", result.size >= 200.0, f"{result.size:.1f}")
     check("物体缩放保持 1", tuple(ground.scale) == (1.0, 1.0, 1.0))
     again = add_ground(bpy.context, [root])
     check("重复添加不再新建", not again.created and again.ground == ground)

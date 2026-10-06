@@ -12,23 +12,17 @@ from ...common.translate import tr, tr_report
 from ...framework.contract import scene_settings
 from ...framework.operators import ToolOperator
 from ...framework.ui import ToolPanel, draw_fields, label_row, picked_objects
-from .api import add_driver, affected_shards, make_driver
-from .constants import CONTEXT, CURVE_ROLES, ROLE_ICONS, TOOL_ID
+from .api import add_driver, affected_shards, make_driver, remove_driver
+from .constants import CONTEXT, ROLE_ICONS, TOOL_ID
 from .settings import SCHEMA
 
-# 算子的驱动角色选项, 也是按钮的顺序与文字; 前三种是点状或范围型, 后面是路径与区域
+# 界面上提供的驱动角色, 也是按钮的顺序与文字: 只有爆炸与推力
+# 旋涡, 区域, 曲线方向与弹道的数据契约与模拟仍然保留: 旧文件里的这些驱动照常参与模拟,
+# 阶段 API 也仍能新建它们, 只是界面不再提供新建与转换的入口
 ROLE_CHOICES = (
     (drivers.EXPLOSION, "Explosion", "Throw shards outward from the center of the sphere"),
     (drivers.PUSH, "Push", "Push shards along the arrow of the empty"),
-    (drivers.VORTEX, "Vortex", "Swirl shards around the axis of the empty"),
-    (drivers.CURVE_FLOW, "Curve Flow", "Carry shards along a curve"),
-    (drivers.PROJECTILE, "Projectile", "Fire a bullet along the arrow or curve"),
-    (drivers.ZONE, "Zone", "Change how the shards inside behave before the simulation"),
 )
-# 空物体能设成的角色: 除了曲线方向 (只能用曲线) 之外的全部
-EMPTY_ROLES = tuple(item for item in ROLE_CHOICES if item[0] != drivers.CURVE_FLOW)
-# 曲线物体能设成的角色: 曲线方向与弹道
-CURVE_CHOICES = tuple(item for item in ROLE_CHOICES if item[0] in CURVE_ROLES)
 # 作用范围由物体缩放决定的角色: 界面显示半径并提示缩放
 RANGE_ROLES = (drivers.EXPLOSION, drivers.PUSH, drivers.VORTEX, drivers.ZONE)
 
@@ -147,6 +141,38 @@ class QD_DRIVERS_OT_select(ToolOperator, Operator):
         return None
 
 
+class QD_DRIVERS_OT_delete(ToolOperator, Operator):
+    """在驱动列表里删除一个驱动物体"""
+
+    bl_idname = "qd_drivers.delete"
+    bl_label = "Delete Driver"
+    bl_description = "Delete this driver from the scene"
+    bl_translation_context = CONTEXT
+    bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
+    # 要删除的驱动物体名, 由列表里的按钮写入
+    __annotations__ = {
+        "name": StringProperty(
+            name="Driver",
+            description="Name of the driver object to delete",
+            translation_context=CONTEXT,
+            options={"HIDDEN", "SKIP_SAVE"},
+        )
+    }
+
+    def run(self, context):
+        """删除给定名字的驱动物体
+
+        context Blender 上下文
+        返回 报告文字
+        """
+        obj = context.scene.objects.get(self.name)
+        # 列表可能比场景旧 (驱动刚被删除或重命名)
+        if obj is None:
+            return tr_report(CONTEXT, 'Driver "{name}" is not in this scene', name=self.name)
+        remove_driver(obj)
+        return tr_report(CONTEXT, 'Deleted driver "{name}"', name=self.name)
+
+
 def _always(*_args):
     """参数的生效条件: 这里的字段始终可用
 
@@ -154,6 +180,17 @@ def _always(*_args):
     返回 总是为真
     """
     return True
+
+
+def _role_name(role):
+    """驱动角色的界面名称, 取自驱动规格的枚举项, 已按驱动上下文翻译
+
+    role 驱动角色
+    返回 名称; 未知角色返回标识本身
+    """
+    items = drivers.DRIVER_SPECS["role"][1]["items"]
+    name = next((label for key, label, _description in items if key == role), role)
+    return tr(CONTEXT, name)
 
 
 def _role_buttons(layout, operator, choices=ROLE_CHOICES):
@@ -238,8 +275,10 @@ def _draw_driver(layout, context, obj):
     obj 活动的驱动物体
     """
     params = getattr(obj, drivers.ATTRIBUTE)
-    layout.label(text=obj.name, translate=False, icon=ROLE_ICONS[params.role])
-    draw_fields(layout, params, drivers.DRIVER_SCHEMA, ("role", "enabled"), lambda *_args: True)
+    text = tr(CONTEXT, "{name}: {role}", name=obj.name, role=_role_name(params.role))
+    layout.label(text=text, translate=False, icon=ROLE_ICONS[params.role])
+    # 类型画成只读文字而不是下拉框: 下拉框会列出界面不再提供的角色
+    draw_fields(layout, params, drivers.DRIVER_SCHEMA, ("enabled",), lambda *_args: True)
     # 停用的驱动其余参数置灰
     column = layout.column()
     column.active = params.enabled
@@ -270,29 +309,26 @@ class QD_DRIVERS_PT_active(ToolPanel, Panel):
         """
         layout = self.layout
         obj = context.active_object
-        # 四种情形: 已是驱动, 普通空物体, 曲线物体, 其余
+        # 三种情形: 已是驱动, 普通空物体 (可以转换), 其余
         if drivers.role_of(obj) != drivers.NONE:
             _draw_driver(layout, context, obj)
         elif obj is not None and obj.type == "EMPTY":
             layout.label(text="Use the active empty as:", text_ctxt=CONTEXT)
-            _role_buttons(layout, QD_DRIVERS_OT_convert.bl_idname, EMPTY_ROLES)
-        elif obj is not None and obj.type == "CURVE":
-            layout.label(text="Use the active curve as:", text_ctxt=CONTEXT)
-            _role_buttons(layout, QD_DRIVERS_OT_convert.bl_idname, CURVE_CHOICES)
+            _role_buttons(layout, QD_DRIVERS_OT_convert.bl_idname)
         else:
             layout.label(text="Select a driver, or add one above", text_ctxt=CONTEXT, icon="INFO")
 
 
 class QD_DRIVERS_PT_list(ToolPanel, Panel):
-    """场景里的全部驱动, 点击名字选中; 停用的驱动置灰"""
+    """场景里的全部驱动, 点击名字选中, 行尾按钮删除; 停用的驱动置灰"""
 
     bl_label = "Drivers in Scene"
-    bl_description = "All drivers of the scene; click one to select it"
+    bl_description = "All drivers of the scene; click one to select it, or delete it with the button at the end of its row"
     bl_translation_context = CONTEXT
     bl_parent_id = "QD_DRIVERS_PT_main"
 
     def draw(self, context):
-        """每个驱动一行: 名字按钮, 类型与起动帧
+        """每个驱动一行: 名字按钮, 类型与起动帧, 删除按钮
 
         context Blender 上下文
         """
@@ -302,7 +338,6 @@ class QD_DRIVERS_PT_list(ToolPanel, Panel):
             layout.label(text="No drivers in this scene", text_ctxt=CONTEXT)
             return
         column = layout.column(align=True)
-        names = {role: tr(CONTEXT, name) for role, name, _description in ROLE_CHOICES}
         for obj in found:
             params = getattr(obj, drivers.ATTRIBUTE)
             row = column.row(align=True)
@@ -317,8 +352,13 @@ class QD_DRIVERS_PT_list(ToolPanel, Panel):
                 depress=obj == context.active_object,
             )
             button.name = obj.name
-            text = tr(CONTEXT, "{role}, frame {frame}", role=names[params.role], frame=params.frame)
+            text = tr(
+                CONTEXT, "{role}, frame {frame}", role=_role_name(params.role), frame=params.frame
+            )
             row.label(text=text, translate=False)
+            # 行尾的删除按钮只画图标, 节省窄侧栏的宽度
+            remove = row.operator(QD_DRIVERS_OT_delete.bl_idname, text="", icon="X")
+            remove.name = obj.name
 
 
 # 本工具需要注册的全部类, 顺序即注册顺序, 子面板排在主面板之后
@@ -327,6 +367,7 @@ CLASSES = (
     QD_DRIVERS_OT_convert,
     QD_DRIVERS_OT_select_affected,
     QD_DRIVERS_OT_select,
+    QD_DRIVERS_OT_delete,
     QD_DRIVERS_PT_main,
     QD_DRIVERS_PT_active,
     QD_DRIVERS_PT_list,

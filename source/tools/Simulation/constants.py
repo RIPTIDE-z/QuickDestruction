@@ -27,6 +27,6 @@ GROUND_NAME = "QD_Ground"
 # 预设地面的厚度, 米, 按场景单位换算
 GROUND_THICKNESS = 1.0
 # 预设地面水平半边长的下限, 米, 按场景单位换算
-GROUND_MIN_HALF = 10.0
+GROUND_MIN_HALF = 100.0
 # 预设地面水平半边长相对资产最大水平尺寸的倍数
-GROUND_EXTENT_RATIO = 3.0
+GROUND_EXTENT_RATIO = 30.0

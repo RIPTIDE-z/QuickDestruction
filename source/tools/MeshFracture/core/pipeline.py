@@ -1,11 +1,10 @@
 """流程编排 - 逐源首次切割与递归细分, 统一命名和断面收尾, 失败时回收本次新建数据"""
 
-import traceback
 from time import perf_counter
 
 import bpy
 
-from ....common.created_data import CreatedData
+from ....common.created_data import CreatedData, run_all
 from ..constants import BATCH_PARENTS, SHARD_LIMIT
 from ..errors import MeshFractureError
 from ..settings import (
@@ -312,14 +311,6 @@ def run(context, sources, settings, rng):
         context.window_manager.progress_end()
         return cells, source_to_shards, source_to_asset, seconds
     except Exception:
-        # 恢复失败不能覆盖原异常或阻止其他收尾动作
-        for cleanup_action in (
-            tracker.rollback,
-            isolation.release,
-            context.window_manager.progress_end,
-        ):
-            try:
-                cleanup_action()
-            except Exception:
-                traceback.print_exc()
+        # 回收已经生成的数据, 解除隔离, 结束进度条
+        run_all((tracker.rollback, isolation.release, context.window_manager.progress_end))
         raise

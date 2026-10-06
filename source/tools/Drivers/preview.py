@@ -1,7 +1,7 @@
 """计划初始条件预览 - 在视口里给每块会被起动的碎块画一根箭头, 弹道另画路径与撞击点
 
 箭头的方向与长度是交接时给出的速度, 颜色是起动时刻, 不是碰撞之后的轨迹
-计算结果按输入缓存: 驱动, 选中的资产, 物理修订号, 预览设置都没变时, 重绘直接用缓存
+计算结果按输入缓存: 驱动, 选中的资产, 物理修订号, 时间换算, 预览设置都没变时, 重绘直接用缓存
 绘制回调里只读数据, 不写任何 ID; 计算出错时记下原因, 不让异常进入绘制回调
 """
 
@@ -18,7 +18,7 @@ from ...common import asset, ballistics, drivers, impulse, shards
 from ...common.errors import DomainError
 from ...common.status import drivers_signature
 from ...framework.ui import selected_assets
-from .api import compile_assets
+from .api import compile_assets, plan_timing
 from .constants import TOOL_ID
 
 # 箭头头部两条短线占箭杆长度的比例
@@ -188,7 +188,7 @@ def _roots(context):
 
 
 def _key(context, roots, settings):
-    """缓存键: 驱动摘要, 各资产的标识与物理修订号, 预览设置
+    """缓存键: 驱动摘要, 各资产的标识与物理修订号, 时间换算, 预览设置
 
     context Blender 上下文
     roots 资产根集合列表
@@ -198,9 +198,12 @@ def _key(context, roots, settings):
     revisions = tuple(
         (shards.asset_of(root), (asset.physics_record(root) or {}).get("rev")) for root in roots
     )
+    # 时间换算决定起动帧的钳制与波前到达帧: 改模拟的帧范围或时间缩放时预览也要重算
+    timing = plan_timing(context)
     return (
         drivers_signature(context.scene),
         revisions,
+        (timing.frame_start, round(timing.dt, 9)),
         round(settings.preview_scale, 6),
         settings.color_by_time,
     )
@@ -253,11 +256,13 @@ def _draw():
         shader = gpu.shader.from_builtin("FLAT_COLOR")
         gpu.state.line_width_set(LINE_WIDTH)
         gpu.state.blend_set("ALPHA")
-        shader.bind()
-        batch.draw(shader)
-        # 绘制状态用完立即还原, 不影响视口里其他内容
-        gpu.state.line_width_set(1.0)
-        gpu.state.blend_set("NONE")
+        try:
+            shader.bind()
+            batch.draw(shader)
+        finally:
+            # 绘制状态无论成败都还原, 不影响视口里其他内容
+            gpu.state.line_width_set(1.0)
+            gpu.state.blend_set("NONE")
         STATE["error"] = ""
     except Exception:
         # 异常不能进入绘制回调, 否则会反复刷屏; 记下原因供排查

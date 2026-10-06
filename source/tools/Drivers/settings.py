@@ -32,7 +32,7 @@ PROPERTY_SPECS = {
             "name": "Show Plan Preview",
             "description": "Draw an arrow on every shard the drivers start: its direction and "
             "length show the starting velocity, not the final path.",
-            "default": False,
+            "default": True,
             "update": _redraw,
         },
     ),

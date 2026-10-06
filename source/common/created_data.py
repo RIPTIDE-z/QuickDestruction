@@ -1,5 +1,5 @@
 """创建账本与写前快照 - CreatedData 记录本次新建的数据, 失败时只回收这些条目;
-WriteLog 记录本次对已有数据的改动, 失败或取消时按相反顺序撤回
+WriteLog 记录本次对已有数据的改动, 失败或取消时按相反顺序撤回; run_all 执行一串收尾步骤
 """
 
 import traceback
@@ -89,14 +89,28 @@ class CreatedData:
             raise failures[0]
 
 
-def _plain(value):
-    """把自定义属性的值转成普通 Python 值, 撤回时能原样写回
+def run_all(steps):
+    """依次执行收尾步骤; 单步失败只打印堆栈, 不中断其余步骤, 也不覆盖调用方正在处理的原异常
 
-    矩阵, 向量等可复制的值取副本, 否则撤回时拿到的是已被改动的同一个对象
-    注意数据块 (网格等) 也有 copy 方法, 会被复制出一个新的数据块, 所以不要用来记录数据块指针
+    steps 无参函数序列, 按顺序执行
+    """
+    for step in steps:
+        try:
+            step()
+        except Exception:
+            traceback.print_exc()
+
+
+def _plain(value):
+    """把属性的原值转成撤回时能原样写回的值
+
+    矩阵, 向量等可复制的值取副本, 否则撤回时拿到的是已被改动的同一个对象;
+    数据块 (网格, 动作等) 是引用, 原样保存: 它们也有 copy 方法, 调用会复制出一个新的数据块
     value 属性当前的值
     返回 可以安全保存的值
     """
+    if isinstance(value, bpy.types.ID):
+        return value
     # 依次尝试字典, 列表, 通用复制三种转换, 都没有时说明是不可变的基本类型
     for method in ("to_dict", "to_list", "copy"):
         convert = getattr(value, method, None)
@@ -126,34 +140,6 @@ class WriteLog:
         old = _plain(getattr(owner, attribute))
         self.undos.append(lambda: setattr(owner, attribute, old))
         setattr(owner, attribute, value)
-
-    def set_custom(self, holder, key, value):
-        """记下自定义属性的原值后写入新值; 原来没有这个键时撤回就是删除它
-
-        holder 持有自定义属性的数据块
-        key 自定义属性名
-        value 要写入的新值
-        """
-        # 原来就有键: 撤回时写回原值; 原来没有: 撤回时删除, 不能留下新键
-        if key in holder:
-            old = _plain(holder[key])
-            self.undos.append(lambda: holder.__setitem__(key, old))
-        else:
-            self.undos.append(lambda: holder.pop(key, None))
-        holder[key] = value
-
-    def pop_custom(self, holder, key):
-        """记下自定义属性的原值后删除它, 没有这个键时什么也不做
-
-        holder 持有自定义属性的数据块
-        key 自定义属性名
-        """
-        # 没有键就没有改动, 也就没有需要撤回的内容
-        if key not in holder:
-            return
-        old = _plain(holder[key])
-        self.undos.append(lambda: holder.__setitem__(key, old))
-        holder.pop(key)
 
     def add(self, undo):
         """登记一个自定义的撤回动作, 用于集合成员这类不是属性赋值的改动

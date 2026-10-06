@@ -1,12 +1,10 @@
 """长任务算子 - 可取消的模态任务的公共执行流程, 模拟烘焙与绑定构建共用
 
-任务由生成器推进: 每产出一次 Progress 就是一个可以取消的检查点, 返回值是任务结果
+任务由生成器推进: 每产出一次进度 (带 done 与 total 的对象) 就是一个可以取消的检查点, 返回值是任务结果
 脚本经 execute 同步执行到底; 界面经 invoke 先推进第一步, 校验错误立即报告, 之后由定时器逐步推进
 按 Esc 取消时关闭生成器, 生成器的收尾负责撤回本次全部改动
 同一时间只允许一个任务: 运行锁在 common.busy 里, 载入文件与停用插件时经它取消正在运行的任务
 """
-
-from typing import NamedTuple
 
 import bpy
 from bpy.app.handlers import persistent
@@ -31,15 +29,6 @@ NAVIGATION_EVENTS = frozenset(
         "NDOF_MOTION",
     }
 )
-
-
-class Progress(NamedTuple):
-    """任务的进度: 已完成的步数与总步数"""
-
-    # 已完成的步数
-    done: int
-    # 总步数
-    total: int
 
 
 @persistent
@@ -84,7 +73,7 @@ class LongTaskOperator(ToolOperator):
         """读取输入, 返回任务的生成器; 子类实现
 
         context Blender 上下文
-        返回 生成器, 每次产出 Progress, 返回值是任务结果
+        返回 生成器, 每次产出带 done 与 total 的进度, 返回值是任务结果
         """
         raise NotImplementedError
 
@@ -143,14 +132,14 @@ class LongTaskOperator(ToolOperator):
             steps = self.begin(context)
             busy.claim(self._abort)
         except Exception as error:
-            return self._fail(error)
+            return self.fail(error)
         self._steps = steps
         # 第一步里完成输入校验: 校验错误在这里立即抛出, 不必进入模态
         try:
             progress = next(self._steps)
         except Exception as error:
             self._release()
-            return self._fail(error)
+            return self.fail(error)
         manager = self._manager
         self._timer = manager.event_timer_add(TIMER_INTERVAL, window=context.window)
         manager.modal_handler_add(self)
@@ -199,7 +188,7 @@ class LongTaskOperator(ToolOperator):
             return {"FINISHED"}
         except Exception as error:
             self._release()
-            return self._fail(error)
+            return self.fail(error)
         self._show(progress)
         return {"RUNNING_MODAL"}
 
@@ -250,11 +239,3 @@ class LongTaskOperator(ToolOperator):
         """释放全部资源, 包括载入回调; 可以重复调用"""
         self._release_interface()
         _remove_load_handler()
-
-    def _fail(self, error):
-        """报告失败, 与 ToolOperator.execute 的报告格式一致
-
-        error 捕获到的异常
-        返回 {"CANCELLED"}
-        """
-        return self.fail(error)

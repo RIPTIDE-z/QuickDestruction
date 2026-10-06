@@ -69,6 +69,20 @@ def test_capacities():
         partition.capacities(0, 1)
 
 
+def test_capacities_with_fixed_bones():
+    """原物体切换每个骨架有 3 根固定骨骼 (root, intact, still): 骨架容量减 3, 网格段容量仍减 1"""
+    LOG.info("fixed 3: %s", partition.capacities(10, 4, 3))
+    assert partition.capacities(10, 4, 3) == (7, 3)
+    assert partition.capacities(4, 0, 3) == (1, 0)
+    with pytest.raises(ValueError, match="room"):
+        partition.capacities(3, 0, 3)
+    # 划分后每个骨架的会动碎块数不超过上限减固定骨骼数
+    points = [(float(index), 0.0, 0.0) for index in range(10)]
+    armatures = partition.partition(points, 5, 0, 3)
+    assert all(len(armature.segments[0]) <= 2 for armature in armatures)
+    assert sorted(i for a in armatures for s in a.segments for i in s) == list(range(10))
+
+
 @pytest.mark.parametrize(("total", "per_mesh"), [(0, 0), (0, 5), (7, 0), (7, 4), (31, 8), (2, 2)])
 def test_partition_respects_limits_and_covers_everything(total, per_mesh):
     """每个骨架至多 total - 1 块, 每段至多 per_mesh - 1 块, 全部碎块恰好出现一次"""

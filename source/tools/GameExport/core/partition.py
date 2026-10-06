@@ -107,23 +107,24 @@ def _chunks(items, size):
     return [list(items[start : start + size]) for start in range(0, len(items), size)]
 
 
-def capacities(max_total, max_per_mesh):
-    """每个骨架与每段网格最多容纳的会动碎块数: 上限减去 root 占的一个
+def capacities(max_total, max_per_mesh, fixed=1):
+    """每个骨架与每段网格最多容纳的会动碎块数: 上限减去固定骨骼占的个数
 
     max_total 一个骨架的骨骼总数上限, 0 表示不限
     max_per_mesh 一段网格的骨骼数上限, 0 表示不限
-    返回 (骨架容量, 网格段容量), 0 表示不限; 上限小于 2 时没有容量, 抛 ValueError
+    fixed 每个骨架里不对应会动碎块的骨骼数, 至少有 root; 一段网格里只有不动碎块的组占一个
+    返回 (骨架容量, 网格段容量), 0 表示不限; 上限放不下固定骨骼加一块碎块时抛 ValueError
     """
     result = []
-    for limit in (max_total, max_per_mesh):
-        # 上限为 1 只够放 root, 一块碎块也放不下
-        if limit and limit < 2:
-            raise ValueError("A bone limit needs room for the root and at least one shard")
-        result.append(limit - 1 if limit else 0)
+    for limit, reserved in ((max_total, fixed), (max_per_mesh, 1)):
+        # 上限只够放固定骨骼时一块碎块也放不下
+        if limit and limit <= reserved:
+            raise ValueError("A bone limit needs room for the fixed bones and at least one shard")
+        result.append(limit - reserved if limit else 0)
     return tuple(result)
 
 
-def partition(points, max_total, max_per_mesh):
+def partition(points, max_total, max_per_mesh, fixed=1):
     """会动的碎块的划分
 
     先按 Morton 序排好, 按骨架容量顺序切成骨架, 再在每个骨架里按段容量切成段
@@ -131,9 +132,10 @@ def partition(points, max_total, max_per_mesh):
     points 各碎块的静止质心
     max_total 一个骨架的骨骼总数上限, 0 表示不限
     max_per_mesh 一段网格的骨骼数上限, 0 表示不限
+    fixed 每个骨架里不对应会动碎块的骨骼数, 见 capacities
     返回 [Armature, ...], 每个骨架的 segments 是若干段, 每段是 points 的序号元组
     """
-    total_room, mesh_room = capacities(max_total, max_per_mesh)
+    total_room, mesh_room = capacities(max_total, max_per_mesh, fixed)
     ordered = morton_order(points)
     armatures = []
     for group in _chunks(ordered, total_room):

@@ -10,9 +10,16 @@ import bpy
 
 from ....common import asset
 from ....common.created_data import WriteLog
-from ..constants import ASSET_TOKEN, EXPORT_SUFFIX, FBX_EXTENSION, FBX_FIXED
+from ..constants import (
+    ARMATURE_HOLD_NAME,
+    ARMATURE_NODE_NAME,
+    ASSET_TOKEN,
+    FBX_EXTENSION,
+    FBX_FIXED,
+)
 from ..errors import ExportError
-from .check import export_objects
+from .build import asset_label
+from .check import export_objects, material_names
 
 # 没有导出插件时的错误
 NO_ADDON_MESSAGE = "The FBX exporter is disabled; enable the add-on Import-Export: FBX format"
@@ -30,16 +37,6 @@ EXISTS_MESSAGE = "File already exists: {path}"
 INVALID_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
-def _label(root):
-    """资产的显示名: 导出集合名去掉后缀, 没有导出集合时取根集合名
-
-    root 资产根集合
-    返回 显示名
-    """
-    collection = asset.rig_collection(root)
-    return collection.name.removesuffix(EXPORT_SUFFIX) if collection is not None else root.name
-
-
 def _stem(root, values):
     """导出文件名主干: 文件名参数里的占位符换成资产名, 去掉用户多写的扩展名, 非法字符换成下划线
 
@@ -49,11 +46,34 @@ def _stem(root, values):
     返回 不含扩展名的文件名
     """
     pattern = values.file_name.strip() or ASSET_TOKEN
-    name = pattern.replace(ASSET_TOKEN, _label(root))
+    # 与导出物体同一个名字来源; 不从导出集合名反推, 集合重名时它会带上 .001 后缀
+    name = pattern.replace(ASSET_TOKEN, asset_label(root))
     # 用户常把扩展名一并写进去, 去掉避免出现 a.fbx.fbx
     if name.lower().endswith(FBX_EXTENSION):
         name = name[: -len(FBX_EXTENSION)]
     return INVALID_NAME.sub("_", name).strip() or "export"
+
+
+def directory_missing(values):
+    """导出目录是否还定不下来: 为空, 或是 // 开头的相对路径而 blend 文件还没保存
+
+    values 参数值, 提供目录
+    返回 定不下来为真, 此时界面应当让用户选择一个绝对目录
+    """
+    raw = values.directory.strip()
+    return not raw or (raw.startswith("//") and not bpy.data.filepath)
+
+
+def export_names(root, values):
+    """导出会写进 FBX 的名字: 文件名主干, 导出物体名与材质名
+
+    root 资产根集合, 必须已经构建
+    values 参数值, 提供文件名
+    返回 名字列表
+    """
+    armatures, meshes = export_objects(root)
+    objects = [obj.name for obj in (*armatures, *meshes)]
+    return [_stem(root, values), *objects, *material_names(meshes)]
 
 
 def resolve_directory(values):
@@ -124,6 +144,19 @@ def _set_frames(scene, log, first, last):
         log.set(scene, name, first if name == "frame_start" else last)
 
 
+def _take_node_name(armature, log):
+    """导出期间把骨架物体改名为 Armature, 虚幻引擎据此跳过骨骼之上的顶层节点
+
+    场景里别的物体已经叫 Armature 时先把它临时改名, 撤回时按相反顺序恢复两者的名字
+    armature 要导出的骨架物体
+    log 写前快照, 导出结束后由调用方撤回
+    """
+    holder = bpy.data.objects.get(ARMATURE_NODE_NAME)
+    if holder is not None and holder != armature:
+        log.set(holder, "name", ARMATURE_HOLD_NAME)
+    log.set(armature, "name", ARMATURE_NODE_NAME)
+
+
 def _select(context, objects, active):
     """只选中给定物体并设为活动
 
@@ -171,15 +204,21 @@ def export_files(context, root, values, overwrite):
         for armature, path in zip(armatures, paths, strict=True):
             members = [obj for obj in meshes if obj.parent == armature]
             _select(context, [armature, *members], armature)
-            bpy.ops.export_scene.fbx(
-                filepath=str(path),
-                use_selection=True,
-                axis_forward=values.axis_forward,
-                axis_up=values.axis_up,
-                apply_scale_options=values.apply_scale,
-                global_scale=values.global_scale,
-                **FBX_FIXED,
-            )
+            # 每个骨架单独改名并在写完后立刻改回: 同一时刻只能有一个物体叫 Armature
+            names = WriteLog()
+            try:
+                _take_node_name(armature, names)
+                bpy.ops.export_scene.fbx(
+                    filepath=str(path),
+                    use_selection=True,
+                    axis_forward=values.axis_forward,
+                    axis_up=values.axis_up,
+                    apply_scale_options=values.apply_scale,
+                    global_scale=values.global_scale,
+                    **FBX_FIXED,
+                )
+            finally:
+                names.undo()
     finally:
         # 无论成败都还原帧范围, 选择, 活动物体与当前帧
         log.undo()

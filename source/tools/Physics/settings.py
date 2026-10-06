@@ -188,7 +188,7 @@ PROPERTY_SPECS = {
                 ),
                 ("FREE", "Free", "Shards fall under gravity from the first frame."),
             ),
-            "default": "FROZEN",
+            "default": "SLEEPING",
             "description": "How shards behave before a driver reaches them.",
         },
     ),

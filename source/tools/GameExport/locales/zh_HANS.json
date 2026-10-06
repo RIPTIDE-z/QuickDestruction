@@ -70,7 +70,17 @@
     "{current} of {count} assets have current rigs": "{count} 个资产中有 {current} 个绑定输入未变",
     "{errors} errors, {warnings} warnings": "{errors} 个错误，{warnings} 个警告",
     "File Name": "文件名",
-    "Several assets would write the same file {path}; put {asset} in the file name": "几个资产会写到同一个文件 {path}，请在文件名里加入 {asset}"
+    "Several assets would write the same file {path}; put {asset} in the file name": "几个资产会写到同一个文件 {path}，请在文件名里加入 {asset}",
+    "ASCII Names Only": "仅允许 ASCII 名称",
+    "Bones per Skeleton must be above {count} for this rig type": "此绑定方式下，每个骨架骨骼数必须大于 {count}",
+    "Export Settings": "导出设置",
+    "Name \"{name}\" is not ASCII; rename it or turn off ASCII Names Only": "名称“{name}”含有非 ASCII 字符；请改名，或关闭“仅允许 ASCII 名称”",
+    "Rig Settings": "绑定设置",
+    "Rig Type": "绑定方式",
+    "Shards Only": "仅碎块",
+    "Swap from Intact": "原物体切换",
+    "The intact object turns into shards at frame {frame}": "第 {frame} 帧从原物体切换为碎块",
+    "The source object of \"{name}\" was deleted; Swap from Intact needs it": "资产“{name}”的源物体已被删除；原物体切换需要它"
   },
   "tooltips": {
     "Apply the scale to every object, keeping sizes.": "把缩放应用到每个物体上，尺寸保持不变。",
@@ -106,6 +116,11 @@
     "The negative Y axis.": "负 Y 轴。",
     "The Z axis.": "Z 轴。",
     "The negative Z axis.": "负 Z 轴。",
-    "Name of the FBX file without the extension; {asset} is replaced by the name of the source object. With several skeletons a number is added.": "FBX 文件名，不含扩展名；{asset} 会换成源物体名。有多个骨架时会加上序号。"
+    "Name of the FBX file without the extension; {asset} is replaced by the name of the source object. With several skeletons a number is added.": "FBX 文件名，不含扩展名；{asset} 会换成源物体名。有多个骨架时会加上序号。",
+    "Also export the source object: it shows until the first shard moves, then it is scaled to zero while the shards are scaled from zero to one.": "同时导出源物体：第一块碎块开始运动前显示源物体，之后源物体缩放为 0，碎块从 0 缩放为 1。",
+    "Export only the shards, visible from the first frame.": "只导出碎块，从第一帧起可见。",
+    "Folder to write the FBX files to": "FBX 文件写入的文件夹",
+    "Refuse to build or export when the asset, material or file names contain characters outside ASCII, which some game engines cannot import.": "资产名、材质名或文件名含有 ASCII 以外的字符时拒绝构建与导出，部分游戏引擎无法导入这类名称。",
+    "What the exported animation shows before the shards start moving.": "导出的动画在碎块开始运动前显示什么。"
   }
 }

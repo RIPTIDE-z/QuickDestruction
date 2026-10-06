@@ -96,6 +96,8 @@ uv run pytest
 
 也可用 `$env:BLENDER = $blender` 指定路径后运行 `.\install.bat /nopause`。省略 `/nopause` 时，脚本结束后等待按键。
 
+只打包不安装时加 `-package`：`.\install.bat $blender -package /nopause`。扩展包复制到项目根目录（`.gitignore` 忽略根目录的 zip），输出 `PACKAGE SUCCEEDED`；失败时输出 `PACKAGE FAILED`。
+
 安装流程全程使用指定的 Blender，目标由它的用户配置决定。开发验证时，将 `BLENDER_USER_CONFIG`、`BLENDER_USER_EXTENSIONS`、`BLENDER_USER_SCRIPTS` 和 `BLENDER_USER_DATAFILES` 指向 `tmp/output_tmp` 下的独立目录，避免覆盖已有安装与设置。安装分三步：
 
 1. `extension build`：把 `source/` 打包到临时目录；

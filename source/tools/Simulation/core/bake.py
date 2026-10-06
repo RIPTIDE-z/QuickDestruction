@@ -6,7 +6,6 @@
 撤回时参与的碎块也随之移出刚体世界; result 记录对碎块动画与位姿的改动, 只在失败或取消时撤回
 """
 
-import traceback
 import uuid
 from dataclasses import dataclass, replace
 from time import perf_counter
@@ -16,7 +15,7 @@ import bpy
 from mathutils import Vector
 
 from ....common import asset, impulse, rigidbody, shards
-from ....common.created_data import CreatedData, WriteLog
+from ....common.created_data import CreatedData, WriteLog, run_all
 from ..constants import PENDING_PREFIX, PENDING_STAGE, RESULT_PREFIX, STAGE, STATIC_EPSILON
 from . import flight, keys
 from .session import build
@@ -412,12 +411,7 @@ def _finish(session, temp, result, tracker, committed, original_frame):
     # 已提交时保留对碎块的改动; 未提交 (失败或取消) 时全部撤回并回收新建的数据
     steps = [] if committed else [result.undo, tracker.rollback]
     steps += [temp.undo, lambda: session.scene.frame_set(original_frame)]
-    for step in steps:
-        try:
-            step()
-        except Exception:
-            # 清理失败不能覆盖原异常, 也不能阻止其余收尾
-            traceback.print_exc()
+    run_all(steps)
 
 
 def bake_steps(context, roots, values):

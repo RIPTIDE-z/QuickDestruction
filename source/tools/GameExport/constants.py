@@ -15,6 +15,8 @@ BUILDING_PREFIX = "QD_Building_"
 RIG_SUFFIX = "_Rig"
 # 蒙皮网格物体的名字后缀; 网格不止一个时再加序号
 MESH_SUFFIX = "_RigMesh"
+# 原物体切换时原物体网格的名字后缀
+INTACT_SUFFIX = "_Intact"
 # 骨架动作名前缀, 后接骨架名
 ACTION_PREFIX = "QD_Rig_"
 
@@ -66,6 +68,13 @@ ENGINE_PRESETS = {
 }
 # 引擎预设写入的字段, 顺序与上表每一行的数值顺序一致
 ENGINE_FIELDS = ("axis_forward", "axis_up", "apply_scale", "global_scale")
+
+# 导出时骨架物体临时使用的名字: Blender 把骨架物体写成 FBX 里骨骼之上的顶层节点,
+# 虚幻引擎导入时会把这个节点当成多出来的根骨骼, 只有它名为 Armature 时才会跳过,
+# 这样骨骼层级的根才是 root
+ARMATURE_NODE_NAME = "Armature"
+# 场景里已有物体占用 Armature 这个名字时, 导出期间先把它临时改成这个名字
+ARMATURE_HOLD_NAME = "QD_Armature_Hold"
 
 # 导出文件名里被源物体名替换的占位符
 ASSET_TOKEN = "{asset}"

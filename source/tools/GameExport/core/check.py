@@ -22,6 +22,7 @@ from ..constants import (
 from ..errors import ExportError
 from . import interior
 from .partition import BONE_NAME_BYTES
+from .swap import is_intact
 
 # 问题级别: 错误会让导出停止
 ERROR = "ERROR"
@@ -54,6 +55,8 @@ SKIN_MISMATCH_MESSAGE = (
 )
 # 还没有构建绑定
 NOT_BUILT_MESSAGE = "Build the rig first"
+# 开启仅允许 ASCII 名称时, 名字里出现了非 ASCII 字符
+NON_ASCII_MESSAGE = 'Name "{name}" is not ASCII; rename it or turn off ASCII Names Only'
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,25 @@ def issue_text(issue):
     返回 已翻译的文字
     """
     return tr_report(CONTEXT, issue.message, **issue.values)
+
+
+def require_ascii(names):
+    """要求全部名字只含 ASCII 字符, 否则抛 ExportError 并指出第一个不合规的名字
+
+    names 要检查的名字序列
+    """
+    bad = next((name for name in names if not name.isascii()), None)
+    if bad is not None:
+        raise ExportError(NON_ASCII_MESSAGE, name=bad)
+
+
+def material_names(objects):
+    """一组网格物体用到的材质名, 去重后按名字排序
+
+    objects 网格物体序列
+    返回 材质名列表, 空槽位不计
+    """
+    return sorted({slot.name for obj in objects for slot in obj.data.materials if slot})
 
 
 def export_objects(root):
@@ -246,6 +268,9 @@ def _interior_issues(meshes, config):
     """
     issues = []
     for obj in meshes:
+        # 原物体网格本来就没有断面
+        if is_intact(obj):
+            continue
         faces = interior.interior_faces(obj.data)
         # 没有断面标记: 选了盒投影才需要提示, 保持不变时本来就不处理
         if faces is None:
@@ -279,7 +304,7 @@ def _settle_issues(context, root):
     return [Issue(WARNING, "SETTLE", SETTLE_MESSAGE, {"seconds": seconds})]
 
 
-def _frame_samples(first, last, count):
+def frame_samples(first, last, count):
     """首尾加上均匀取的若干帧, 去重后升序
 
     first 起始帧
@@ -293,10 +318,25 @@ def _frame_samples(first, last, count):
     return sorted({first + round((last - first) * step / (count - 1)) for step in range(count)})
 
 
+def _visible_frames(record, frames):
+    """碎块可见的核对帧: 原物体切换时去掉切换帧之前的帧, 并补上切换帧
+
+    record 绑定记录, 可以为 None
+    frames 要核对的帧号列表
+    返回 帧号列表, 升序
+    """
+    swap = None if record is None else record.get("swap")
+    if swap is None:
+        return list(frames)
+    # 切换帧一定核对: 它是碎块第一次出现的帧, 最容易暴露缩放开关写错
+    return sorted({*(frame for frame in frames if frame >= swap), swap})
+
+
 def verify_skin(context, root, frames):
     """逐帧核对蒙皮网格与碎块动画
 
     蒙皮网格求值后的顶点与碎块动画给出的世界顶点逐个比较; 对应关系由来源属性给出, 不用最近点
+    原物体切换时碎块在切换帧之前缩放为 0, 只核对切换帧及之后的帧; 原物体网格没有来源属性, 不核对
     context Blender 上下文
     root 资产根集合
     frames 要核对的帧号列表
@@ -304,12 +344,15 @@ def verify_skin(context, root, frames):
     """
     items = asset.shards_of(root)
     _armatures, meshes = export_objects(root)
+    frames = _visible_frames(asset.rig_record(root), frames)
     # 每个网格的顶点到 (碎块序号, 碎块内原顶点序号) 的对应
     mapping = []
     for obj in meshes:
         vertex_ids = _int_attribute(obj.data, SHARD_ATTRIBUTE, "POINT")
         local_ids = _int_attribute(obj.data, VERTEX_ATTRIBUTE, "POINT")
-        mapping.append((obj, vertex_ids, local_ids))
+        # 没有来源属性的网格 (原物体网格) 无法对回碎块
+        if vertex_ids is not None and local_ids is not None:
+            mapping.append((obj, vertex_ids, local_ids))
     scene = context.scene
     original = scene.frame_current
     worst, worst_frame = 0.0, frames[0] if frames else 0
@@ -366,7 +409,7 @@ def check_rig(context, root, config, sample_frames=3):
     issues += _bone_issues(armatures, meshes, config)
     # 逐帧蒙皮核对最耗时, 构建时已经核对过, 这里可以关闭
     if sample_frames:
-        frames = _frame_samples(record["frames"][0], record["frames"][1], sample_frames)
+        frames = frame_samples(record["frames"][0], record["frames"][1], sample_frames)
         error, frame = verify_skin(context, root, frames)
         if error > skin_tolerance(record):
             values = {"error": error, "frame": frame}
@@ -378,7 +421,3 @@ def check_rig(context, root, config, sample_frames=3):
     issues += _interior_issues(meshes, config)
     issues += _settle_issues(context, root)
     return tuple(issues)
-
-
-# 供 build 抽样帧用
-frame_samples = _frame_samples

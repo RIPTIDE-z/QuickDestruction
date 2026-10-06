@@ -1,6 +1,7 @@
 """参数规格 - 游戏导出的场景参数: 引擎预设与轴向缩放, 绑定构建的阈值与骨骼上限, 导出目录
 
 engine 必须排在轴向与缩放之前: 预设载入与回滚都按规格顺序写入, 后写的字段会覆盖引擎联动写入的值
+轴向与缩放的默认值必须等于默认引擎的预设值: 默认值不会触发引擎的联动回调
 """
 
 from ...common.schema import Schema
@@ -59,6 +60,24 @@ def _axis_item(axis):
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 PROPERTY_SPECS = {
+    # 绑定方式: 仅碎块, 或先显示原物体到切换帧再换成碎块
+    "rig_mode": (
+        "EnumProperty",
+        {
+            "name": "Rig Type",
+            "items": (
+                ("SHARDS", "Shards Only", "Export only the shards, visible from the first frame."),
+                (
+                    "SWAP",
+                    "Swap from Intact",
+                    "Also export the source object: it shows until the first shard moves, then "
+                    "it is scaled to zero while the shards are scaled from zero to one.",
+                ),
+            ),
+            "default": "SHARDS",
+            "description": "What the exported animation shows before the shards start moving.",
+        },
+    ),
     # 目标引擎, 选择后自动填入下面的轴向与缩放
     "engine": (
         "EnumProperty",
@@ -80,7 +99,7 @@ PROPERTY_SPECS = {
                 ),
                 ("CUSTOM", "Custom", "Keep the axes and scale below as they are."),
             ),
-            "default": "GENERIC",
+            "default": "UNREAL",
             "update": _load_engine,
             "description": "Choosing an engine fills in the axes and scale below; they can "
             "still be edited afterwards.",
@@ -92,7 +111,7 @@ PROPERTY_SPECS = {
         {
             "name": "Forward Axis",
             "items": tuple(_axis_item(axis) for axis in AXES),
-            "default": "-Z",
+            "default": "-Y",
             "description": "Axis that points forward in the exported file.",
         },
     ),
@@ -102,7 +121,7 @@ PROPERTY_SPECS = {
         {
             "name": "Up Axis",
             "items": tuple(_axis_item(axis) for axis in AXES),
-            "default": "Y",
+            "default": "Z",
             "description": "Axis that points up in the exported file; it must differ from "
             "the forward axis.",
         },
@@ -122,7 +141,7 @@ PROPERTY_SPECS = {
                 ("FBX_SCALE_ALL", "All", "Apply the scale to every object, keeping sizes."),
                 ("FBX_SCALE_CUSTOM", "Custom", "Use only the global scale below."),
             ),
-            "default": "FBX_SCALE_NONE",
+            "default": "FBX_SCALE_UNITS",
             "description": "How the scale is written into the file.",
         },
     ),
@@ -216,6 +235,16 @@ PROPERTY_SPECS = {
             "default": 1.0,
         },
     ),
+    # 是否只允许 ASCII 名称: 开启时资产名, 材质名或文件名含非 ASCII 字符就拒绝构建与导出
+    "ascii_names": (
+        "BoolProperty",
+        {
+            "name": "ASCII Names Only",
+            "description": "Refuse to build or export when the asset, material or file names "
+            "contain characters outside ASCII, which some game engines cannot import.",
+            "default": True,
+        },
+    ),
     # 导出文件名, 不含扩展名; {asset} 换成源物体名
     "file_name": (
         "StringProperty",
@@ -256,6 +285,7 @@ ACTIVE_WHEN = {"interior_uv_scale": _box_projection}
 
 # 绑定构建改变产物的字段: 它们变了绑定就该重建, 记在绑定记录里与面板比较
 BUILD_FIELDS = (
+    "rig_mode",
     "static_distance",
     "static_angle",
     "max_bones_per_mesh",

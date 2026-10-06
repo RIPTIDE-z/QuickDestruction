@@ -1,11 +1,11 @@
 """构建流程 - 读轨迹, 分类, 划分, 建骨架与蒙皮网格, 写动画, 校验后提交
 
 两阶段提交: 新绑定先建在 QD_Building_ 前缀的临时集合里, 校验全部通过才删除旧导出集合并改成最终名字
+绑定方式为原物体切换时, 第一个骨架另带原物体骨骼与原物体网格, 全部碎块骨骼带缩放开关, 见 swap 模块
 任何一步失败都回收本次新建的数据与对场景的改动, 旧导出原样保留
 每个阶段产出一次进度, 供可取消的界面任务使用
 """
 
-import traceback
 import uuid
 from dataclasses import dataclass
 from time import perf_counter
@@ -14,7 +14,7 @@ from typing import NamedTuple
 import bpy
 
 from ....common import asset, shards
-from ....common.created_data import CreatedData, WriteLog
+from ....common.created_data import CreatedData, WriteLog, run_all
 from ....common.status import CURRENT, simulation_status
 from ....common.translate import tr_report
 from ..constants import (
@@ -22,15 +22,16 @@ from ..constants import (
     BUILDING_PREFIX,
     CONTEXT,
     EXPORT_SUFFIX,
+    INTACT_SUFFIX,
     MESH_SUFFIX,
     RIG_SUFFIX,
     VERIFY_FRAMES,
 )
 from ..errors import ExportError
 from ..settings import BUILD_FIELDS
-from . import bones, check, interior, merge, tracks, transfer
+from . import bones, check, interior, merge, swap, tracks, transfer
 from .merge import Entry
-from .partition import bone_name, fallback_name, partition
+from .partition import ROOT_BONE, bone_name, fallback_name, partition
 
 # 没有模拟成果时的错误
 NO_SIMULATION_MESSAGE = 'Asset "{name}" has no current simulation; bake it first'
@@ -40,6 +41,8 @@ PARENTED_MESSAGE = 'Shard "{name}" has a parent; unparent it first'
 NO_REST_MESSAGE = 'Shard "{name}" has no rest pose; apply physics again'
 # 校验失败时的错误
 VERIFY_FAILED_MESSAGE = "The rig failed its checks: {detail}"
+# 骨架骨骼上限放不下固定骨骼加一块碎块时的错误
+BONE_ROOM_MESSAGE = "Bones per Skeleton must be above {count} for this rig type"
 
 # 一个资产构建的总阶段数: 读取分类, 骨架, 网格, 动画, 校验, 提交
 # 骨架, 网格与动画在同一步里建成, 所以进度依次是 1, 4, 5, 6
@@ -79,6 +82,19 @@ class RigResult:
     seconds: float
 
 
+class SwapPlan(NamedTuple):
+    """原物体切换的构建输入"""
+
+    # 源物体, 做成原物体网格
+    source: object
+    # 模拟起始帧, 缩放开关的第一个关键帧
+    start: int
+    # 切换帧
+    frame: int
+    # 原物体与不动碎块骨骼的头部位置, 世界坐标
+    pivot: object
+
+
 @dataclass(frozen=True)
 class Pending:
     """已构建并校验通过, 等待提交的绑定"""
@@ -102,7 +118,7 @@ def build_digest(values):
     return [[key, repr(getattr(values, key))] for key in BUILD_FIELDS]
 
 
-def _label(root):
+def asset_label(root):
     """导出物体与集合用的名字: 源物体名, 源已删除时用根集合名
 
     root 资产根集合
@@ -162,35 +178,35 @@ def _bone_names(items, moving):
     return names
 
 
-def _make_collection(tracker, name):
+def _make_collection(context, tracker, name):
     """建临时集合并链接进场景
 
+    context Blender 上下文, 提供场景
     tracker 创建账本
     name 集合名
     返回 集合
     """
     collection = tracker.track("collections", bpy.data.collections.new(name))
-    bpy.context.scene.collection.children.link(collection)
+    context.scene.collection.children.link(collection)
     return collection
 
 
-def _segment_entries(items, rests, names, moving, segment, statics):
+def _segment_entries(inputs, segment, statics, still_group):
     """一段网格要合并的碎块: 本段会动的碎块各归自己的骨骼, statics 是要并入这一段的不动碎块
 
-    items 碎块列表
-    rests 静止矩阵列表, 与 items 同序
-    names 会动的碎块的骨骼名, 与 moving 同序
-    moving 会动的碎块在 items 里的序号
+    inputs 构建输入元组, 见 _build_geometry
     segment 本段包含的会动碎块在 moving 里的位置
     statics 并入本段的不动碎块在 items 里的序号
+    still_group 不动碎块归属的顶点组名
     返回 Entry 列表
     """
+    items, rests, names, moving = inputs[:4]
     entries = [
         Entry(items[moving[position]], rests[moving[position]], names[position], moving[position])
         for position in segment
     ]
-    # 不动的碎块全部归 root 顶点组
-    entries += [Entry(items[index], rests[index], "root", index) for index in statics]
+    # 不动的碎块全部归同一个顶点组: 仅碎块时是 root, 原物体切换时是能被隐藏的 still
+    entries += [Entry(items[index], rests[index], still_group, index) for index in statics]
     return entries
 
 
@@ -202,12 +218,13 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
     collection 临时集合, 新物体都链接进它
     label 物体名用的主干, 含临时前缀
     plan 划分结果, Armature 列表
-    inputs (碎块, 静止矩阵, 骨骼名, 会动序号, 不动序号, 轨迹) 的元组
+    inputs (碎块, 静止矩阵, 骨骼名, 会动序号, 不动序号, 轨迹, SwapPlan 或 None) 的元组
     values 参数值
     asset_id 资产标识, 写到动作上
     返回 (骨架列表, 网格列表, {骨骼名: 碎块名}, 每个骨架包含的会动碎块位置列表)
     """
-    items, rests, names, moving, still, tracked = inputs
+    items, rests, names, moving, still, tracked, plan_swap = inputs
+    still_group = ROOT_BONE if plan_swap is None else swap.STILL_BONE
     armature_objects, mesh_objects, mapping, per_armature = [], [], {}, []
     for armature_index, armature in enumerate(plan):
         members = [position for segment in armature.segments for position in segment]
@@ -222,6 +239,12 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
             for position in members
         ]
         lengths = [spec[2] for spec in specs]
+        # 原物体切换: 第一个骨架另带原物体骨骼, 有不动碎块时再带 still 骨骼, 头部都在资产中心
+        if plan_swap is not None and armature_index == 0:
+            length = max(lengths, default=1.0)
+            specs.append((swap.INTACT_BONE, plan_swap.pivot, length))
+            if still:
+                specs.append((swap.STILL_BONE, plan_swap.pivot, length))
         obj = bones.make_armature(
             context, tracker, armature_name, collection, specs, max(lengths, default=1.0)
         )
@@ -232,7 +255,7 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
         for segment_index, segment in enumerate(armature.segments):
             # 不动的碎块并入第一个骨架的第一段
             statics = still if armature_index == 0 and segment_index == 0 else ()
-            entries = _segment_entries(items, rests, names, moving, segment, statics)
+            entries = _segment_entries(inputs, segment, statics, still_group)
             mesh_name = _numbered(label + MESH_SUFFIX, segment_index, len(armature.segments))
             # 多个骨架时网格名带骨架序号与段序号, 避免不同骨架的网格重名
             if len(plan) > 1:
@@ -241,29 +264,89 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
             if values.interior_uv == "BOX":
                 interior.box_project(mesh.data, values.interior_uv_scale)
             mesh_objects.append(mesh)
+        # 原物体网格单独一段, 归第一个骨架, 只引用原物体骨骼
+        if plan_swap is not None and armature_index == 0:
+            intact = swap.build_intact(
+                context, tracker, label + INTACT_SUFFIX, collection, plan_swap.source
+            )
+            merge.bind(intact, obj)
+            mesh_objects.append(intact)
     # 动画在全部骨架建好之后写: 写动画不再需要进入编辑模式
-    for obj, members in zip(armature_objects, per_armature, strict=True):
+    for index, (obj, members) in enumerate(zip(armature_objects, per_armature, strict=True)):
         animated = [
             (names[position], tracked[items[moving[position]].name], rests[moving[position]])
             for position in members
         ]
-        action = transfer.write_action(tracker, obj, animated)
+        toggles = _toggles(plan_swap, [names[position] for position in members], index, still)
+        action = transfer.write_action(tracker, obj, animated, toggles)
         asset.claim(action, asset_id, asset.RIG_STAGE)
     return armature_objects, mesh_objects, mapping, per_armature
 
 
-def _last_start(items, rests, moving, tracked):
-    """全部会动的碎块里最晚的起动帧
+def _toggles(plan_swap, bone_names, armature_index, still):
+    """一个骨架上的缩放开关: 碎块骨骼切换前隐藏, 原物体骨骼切换后隐藏
+
+    plan_swap SwapPlan; 仅碎块时为 None, 此时没有开关
+    bone_names 这个骨架里会动碎块的骨骼名
+    armature_index 骨架序号, 原物体与 still 骨骼只在第一个骨架里
+    still 不动碎块的序号列表, 为空时没有 still 骨骼
+    返回 [(骨骼名, [(帧, 缩放), ...]), ...]
+    """
+    if plan_swap is None:
+        return []
+    start, frame = plan_swap.start, plan_swap.frame
+    hidden = list(bone_names)
+    toggles = []
+    if armature_index == 0:
+        toggles.append((swap.INTACT_BONE, swap.toggle_keys(start, frame, True)))
+        if still:
+            hidden.append(swap.STILL_BONE)
+    toggles += [(name, swap.toggle_keys(start, frame, False)) for name in hidden]
+    return toggles
+
+
+def _starts(items, rests, moving, tracked):
+    """全部会动的碎块的起动帧
 
     items 碎块列表
     rests 静止矩阵列表
     moving 会动的碎块序号
     tracked {碎块名: 轨迹}
-    返回 帧号; 都没有时为 None
+    返回 帧号列表, 只旋转不平移的碎块没有起动帧, 不在其中
     """
     starts = [tracks.motion_start(tracked[items[i].name], rests[i]) for i in moving]
-    starts = [start for start in starts if start is not None]
-    return max(starts) if starts else None
+    return [start for start in starts if start is not None]
+
+
+def _swap_plan(root, values, result, rests, starts):
+    """原物体切换的构建输入; 仅碎块时为 None
+
+    root 资产根集合
+    values 参数值, 提供绑定方式
+    result 模拟记录, 提供帧范围
+    rests 全部碎块的静止世界矩阵
+    starts 会动碎块的起动帧列表
+    返回 SwapPlan 或 None; 源物体已被删除时抛 ExportError
+    """
+    if values.rig_mode != swap.SWAP:
+        return None
+    start, end = result["frame_start"], result["frame_end"]
+    frame = swap.swap_frame(start, end, min(starts, default=None))
+    return SwapPlan(swap.source_object(root), start, frame, swap.pivot(rests))
+
+
+def _partition(points, values):
+    """按骨骼上限划分会动的碎块; 原物体切换时每个骨架多留原物体与 still 两根骨骼
+
+    points 会动碎块的静止质心
+    values 参数值
+    返回 划分结果; 上限放不下固定骨骼时抛 ExportError
+    """
+    fixed = 1 + (swap.SWAP_BONES if values.rig_mode == swap.SWAP else 0)
+    try:
+        return partition(points, values.max_bones_total, values.max_bones_per_mesh, fixed)
+    except ValueError as error:
+        raise ExportError(BONE_ROOM_MESSAGE, count=fixed) from error
 
 
 def _claim_all(collection, asset_id):
@@ -309,14 +392,20 @@ def _build_one(context, root, values, tracker, log):
     moving, still = tracks.classify(
         items, rests, tracked, values.static_distance, values.static_angle
     )
+    starts = _starts(items, rests, moving, tracked)
+    plan_swap = _swap_plan(root, values, result, rests, starts)
+    # 导出物体与集合的名字由资产名派生, 材质名原样进入 FBX: 在建任何东西之前先检查
+    if values.ascii_names:
+        sources = items if plan_swap is None else [*items, plan_swap.source]
+        check.require_ascii([asset_label(root), *check.material_names(sources)])
     names = _bone_names(items, moving)
     points = [tuple(rests[index].translation) for index in moving]
-    plan = partition(points, values.max_bones_total, values.max_bones_per_mesh)
+    plan = _partition(points, values)
     yield Progress(1, STAGES)
-    label = _label(root)
+    label = asset_label(root)
     asset_id = shards.asset_of(root)
-    building = _make_collection(tracker, BUILDING_PREFIX + label)
-    inputs = (items, rests, names, moving, still, tracked)
+    building = _make_collection(context, tracker, BUILDING_PREFIX + label)
+    inputs = (items, rests, names, moving, still, tracked, plan_swap)
     # 物体先用带前缀的临时名, 提交时旧导出已删, 再改回最终名字, 避免与旧导出重名得到 .001 后缀
     armatures, meshes, mapping, _members = _build_geometry(
         context, tracker, building, BUILDING_PREFIX + label, plan, inputs, values, asset_id
@@ -334,7 +423,10 @@ def _build_one(context, root, values, tracker, log):
         "armatures": len(armatures),
         "meshes": len(meshes),
         "bones": sum(len(obj.data.bones) for obj in armatures),
-        "last_start": _last_start(items, rests, moving, tracked),
+        "last_start": max(starts, default=None),
+        # 绑定方式与切换帧: 仅碎块时切换帧为 None; 校验只核对切换帧及之后的碎块
+        "mode": values.rig_mode,
+        "swap": None if plan_swap is None else plan_swap.frame,
         "map": mapping,
         # 蒙皮误差的容差: 不动阈值允许的位移加转角在碎块尺度上的位移
         "tolerance": values.static_distance
@@ -385,33 +477,16 @@ def _restore_rig(root, previous):
         asset.set_rig_result(root, record, collection)
 
 
-def _stale_items(collection):
-    """导出集合连同其中物体, 物体数据与动作, 供一次批量删除
-
-    collection 要删除的导出集合
-    返回 数据块列表
-    """
-    stale = []
-    for obj in collection.objects:
-        animation = obj.animation_data.action if obj.animation_data else None
-        stale.extend(item for item in (obj, obj.data, animation) if item is not None)
-    stale.append(collection)
-    return stale
-
-
 def _commit(pending):
     """全部资产都校验通过后提交: 删除旧导出, 把临时名改成最终名字
 
     pending Pending 列表
     """
-    stale = []
     for item in pending:
-        # 旧导出与新建的临时集合不是同一个才需要删除
+        # 旧导出与新建的临时集合不是同一个才需要删除; 用户放进旧集合的物体保留
         if item.old is not None and item.old != item.collection:
-            stale.extend(_stale_items(item.old))
+            asset.remove_rig_collection(item.old, shards.asset_of(item.root))
     # 先删旧的再改名: 否则新旧同名, 改名会得到 .001 后缀
-    if stale:
-        bpy.data.batch_remove(stale)
     for item in pending:
         collection = item.collection
         for obj in collection.objects:
@@ -420,7 +495,7 @@ def _commit(pending):
             obj.data.name = final
             if obj.animation_data and obj.animation_data.action:
                 obj.animation_data.action.name = ACTION_PREFIX + final
-        collection.name = _label(item.root) + EXPORT_SUFFIX
+        collection.name = asset_label(item.root) + EXPORT_SUFFIX
 
 
 def build_steps(context, roots, values):
@@ -449,10 +524,5 @@ def build_steps(context, roots, values):
         # 失败或被取消时撤回对记录的改动并回收新建的数据; 成功时只还原现场
         steps = [] if committed else [log.undo, tracker.rollback]
         steps.append(lambda: _restore_view(context, selection, active, frame))
-        for step in steps:
-            try:
-                step()
-            except Exception:
-                # 清理失败不能覆盖原异常, 也不能阻止其余收尾
-                traceback.print_exc()
+        run_all(steps)
     return [item.result for item in pending]

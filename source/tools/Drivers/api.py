@@ -125,7 +125,27 @@ def make_driver(obj, role):
     return obj
 
 
-def _timing(context):
+def remove_driver(obj):
+    """删除驱动物体; 子物体保持世界姿态留在场景里, 只属于它的曲线数据一起删除
+
+    obj 要删除的驱动物体, 含停用的驱动
+    """
+    # 只删驱动: 防止列表过期时误删同名的普通物体
+    if drivers.role_of(obj) == drivers.NONE:
+        raise DriverError('"{name}" is not a driver', name=obj.name)
+    # 先解除子物体的父级并保持世界姿态: 直接删除父物体会让子物体跳回父级空间里的位置
+    for child in obj.children:
+        world = child.matrix_world.copy()
+        child.parent = None
+        child.matrix_world = world
+    data = obj.data
+    bpy.data.objects.remove(obj)
+    # 曲线驱动的曲线数据没有别的使用者时一并删除, 不留孤儿数据
+    if data is not None and data.users == 0:
+        bpy.data.batch_remove([data])
+
+
+def plan_timing(context):
     """预览用的时间换算: 帧范围与时间缩放取模拟烘焙的设置, 与烘焙一致; 模拟设置不存在时取场景值
 
     context Blender 上下文
@@ -154,7 +174,7 @@ def compile_assets(context, roots, refresh=True):
         context.view_layer.update()
     snapshots = [drivers.snapshot(obj) for obj in drivers.driver_objects(context.scene)]
     depsgraph = context.evaluated_depsgraph_get()
-    timing = _timing(context)
+    timing = plan_timing(context)
     return [planning.compile_asset(root, snapshots, timing, depsgraph) for root in roots]
 
 

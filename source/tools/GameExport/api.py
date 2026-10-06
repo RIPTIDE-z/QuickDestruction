@@ -22,6 +22,7 @@ __all__ = (
     "existing_files",
     "export_fbx",
     "export_paths",
+    "needs_directory",
 )
 
 # 导出前绑定已过期时的错误
@@ -102,6 +103,15 @@ def export_paths(roots, config):
     return fbx.all_targets(list(roots), _values(config))
 
 
+def needs_directory(config):
+    """导出目录是否还定不下来: 为空, 或是相对路径而 blend 文件还没保存
+
+    config 配置字典, 缺失字段取默认值
+    返回 定不下来为真
+    """
+    return fbx.directory_missing(_values(config))
+
+
 def export_fbx(context, root, config, overwrite=False):
     """导出资产的绑定; 绑定过期或检查有错误时拒绝导出
 
@@ -120,6 +130,9 @@ def export_fbx(context, root, config, overwrite=False):
         raise ExportError(_check.NOT_BUILT_MESSAGE)
     if rig_status(root, context.scene).state != CURRENT:
         raise ExportError(STALE_MESSAGE)
+    # 构建时检查过名字, 导出前再查一次: 文件名与材质名可能在构建之后才改
+    if values.ascii_names:
+        _check.require_ascii(fbx.export_names(root, values))
     issues = _check.check_rig(context, root, values)
     errors = [issue for issue in issues if issue.level == _check.ERROR]
     # 只拿第一条错误报告: 一次说一件事, 用户修复后再检查

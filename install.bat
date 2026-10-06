@@ -5,6 +5,8 @@ rem
 rem  Usage:
 rem    install.bat <blender.exe>            build, install and enable
 rem    install.bat <blender.exe> /nopause   do not wait for a key press at the end
+rem    install.bat <blender.exe> -package   only build the package, copy it to the
+rem                                         repository root and stop; nothing is installed
 rem    set BLENDER=<blender.exe>            the path can also come from BLENDER
 rem
 rem  Steps, all done by the given Blender so the package always goes into the
@@ -24,10 +26,20 @@ set "PAUSE_AT_END=1"
 set "RESULT=1"
 set "BUILD="
 set "PACKAGE="
+set "PACKAGE_ONLY="
 
+rem Options may come in any order; anything that is not an option is the Blender path
 :parse_args
 if "%~1"=="" goto args_done
-if /i "%~1"=="/nopause" (set "PAUSE_AT_END=") else (set "BLENDER=%~1")
+if /i "%~1"=="/nopause" (
+  set "PAUSE_AT_END="
+) else if /i "%~1"=="-package" (
+  set "PACKAGE_ONLY=1"
+) else if /i "%~1"=="/package" (
+  set "PACKAGE_ONLY=1"
+) else (
+  set "BLENDER=%~1"
+)
 shift
 goto parse_args
 :args_done
@@ -52,6 +64,16 @@ if not defined PACKAGE (
   goto failed
 )
 
+rem Package only: keep the zip in the repository root (ignored by git) and skip install
+if defined PACKAGE_ONLY (
+  copy /y "%PACKAGE%" "%ROOT%" >nul
+  if errorlevel 1 goto failed
+  for %%F in ("%PACKAGE%") do echo Package: %ROOT%%%~nxF
+  echo PACKAGE SUCCEEDED
+  set "RESULT=0"
+  goto finish
+)
+
 echo [2/3] Installing and enabling
 "%BLENDER%" -c extension install-file -r user_default -e "%PACKAGE%"
 
@@ -65,7 +87,7 @@ set "RESULT=0"
 goto finish
 
 :failed
-echo INSTALL FAILED
+if defined PACKAGE_ONLY (echo PACKAGE FAILED) else (echo INSTALL FAILED)
 
 :finish
 if defined BUILD if exist "%BUILD%" rd /s /q "%BUILD%"

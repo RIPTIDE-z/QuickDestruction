@@ -5,6 +5,7 @@
 姿态基矩阵就是
     basis = B⁻¹ · Mt · M0⁻¹ · B
 位置取它的平移, 旋转取它的四元数并保持相邻帧同一符号; 只写会动的骨骼
+原物体切换的缩放开关另写成常量插值的 scale 关键帧, 不参与上面的换算
 """
 
 import bpy
@@ -12,6 +13,8 @@ from mathutils import Matrix
 
 from ..constants import ACTION_PREFIX
 
+# 常量插值在关键帧枚举里的值: 保持到下一个关键帧再跳变
+CONSTANT = 0
 # 线性插值在关键帧枚举里的值
 LINEAR = 1
 
@@ -53,15 +56,16 @@ def basis_samples(track, rest):
     return locations, rotations
 
 
-def _write_channel(action, armature, path, frames, values, size):
-    """写一个变换通道的全部分量曲线, 每条曲线一次批量写入线性关键帧
+def _write_channel(action, armature, path, frames, values, size, interpolation=LINEAR):
+    """写一个变换通道的全部分量曲线, 每条曲线一次批量写入关键帧
 
     action 动作
     armature 骨架物体, 动作已赋给它
     path 通道的 data_path
     frames 帧号列表
     values 每帧的值, 位置或四元数
-    size 分量数, 位置为 3, 四元数为 4
+    size 分量数, 位置与缩放为 3, 四元数为 4
+    interpolation 关键帧插值的枚举值
     """
     for axis in range(size):
         curve = action.fcurve_ensure_for_datablock(armature, path, index=axis)
@@ -71,17 +75,18 @@ def _write_channel(action, armature, path, frames, values, size):
         for frame, value in zip(frames, values, strict=True):
             flat.extend((frame, value[axis]))
         curve.keyframe_points.foreach_set("co", flat)
-        curve.keyframe_points.foreach_set("interpolation", [LINEAR] * len(frames))
+        curve.keyframe_points.foreach_set("interpolation", [interpolation] * len(frames))
         curve.update()
 
 
-def write_action(tracker, armature, animated):
+def write_action(tracker, armature, animated, toggles=()):
     """为骨架建动作并写入
 
     动作先赋给骨架再建曲线, 槽位随之自动建立并分配
     tracker 创建账本
     armature 骨架物体
     animated [(骨骼名, 轨迹, 静止世界矩阵), ...], 只含会动的碎块
+    toggles [(骨骼名, [(帧, 缩放), ...]), ...], 原物体切换的缩放开关; 仅碎块时为空
     返回 动作
     """
     action = tracker.track("actions", bpy.data.actions.new(ACTION_PREFIX + armature.name))
@@ -102,4 +107,10 @@ def write_action(tracker, armature, animated):
             rotations,
             4,
         )
+    # 缩放开关用常量插值: 在 Blender 里切换帧之前保持原值, 到切换帧才跳变
+    for bone_name, keys in toggles:
+        frames = [frame for frame, _scale in keys]
+        scales = [(scale, scale, scale) for _frame, scale in keys]
+        path = _pose_path(bone_name, "scale")
+        _write_channel(action, armature, path, frames, scales, 3, CONSTANT)
     return action

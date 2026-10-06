@@ -6,14 +6,13 @@
 地面是环境里的被动刚体, 模拟烘焙会自动让它参与碰撞与受阻判定; 它的变化会让依赖它的模拟成果过期
 """
 
-import traceback
 from dataclasses import dataclass
 
 import bpy
 from mathutils import Vector
 
 from ....common import asset, rigidbody
-from ....common.created_data import CreatedData, WriteLog
+from ....common.created_data import CreatedData, WriteLog, run_all
 from ..constants import GROUND_EXTENT_RATIO, GROUND_MIN_HALF, GROUND_NAME, GROUND_THICKNESS
 from ..errors import SimulationError
 
@@ -110,19 +109,6 @@ def _new_ground(context, world, tracker, mesh):
     return obj
 
 
-def _undo(log, tracker):
-    """撤回本次改动并回收新建的数据; 清理失败不覆盖原异常
-
-    log 写前快照
-    tracker 创建账本
-    """
-    for step in (log.undo, tracker.rollback):
-        try:
-            step()
-        except Exception:
-            traceback.print_exc()
-
-
 def add_ground(context, roots):
     """在资产下方添加预设地面, 已有时重新对齐; 失败时撤回本次全部改动
 
@@ -154,16 +140,15 @@ def add_ground(context, roots):
             ground = _new_ground(context, world, tracker, mesh)
         else:
             old_mesh = ground.data
-            # 不能用 log.set 记网格: 它会把网格当成可复制的值取副本
-            log.add(lambda: setattr(ground, "data", old_mesh))
-            ground.data = mesh
+            log.set(ground, "data", mesh)
             # 地面可能被用户移出过刚体世界, 重新对齐时一并放回
             rigidbody.link(world, [ground])
         log.set(ground, "location", location)
         log.set(ground, "rotation_euler", (0.0, 0.0, 0.0))
         log.set(ground, "scale", (1.0, 1.0, 1.0))
     except Exception:
-        _undo(log, tracker)
+        # 撤回本次改动并回收新建的数据
+        run_all((log.undo, tracker.rollback))
         raise
     # 旧网格没有使用者了才删, 提交之后再做, 失败撤回时它还在
     if old_mesh is not None and old_mesh.users == 0:
