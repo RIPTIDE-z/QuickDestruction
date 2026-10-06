@@ -17,10 +17,11 @@ from .tools.Drivers.tool import TOOL as DRIVERS
 from .tools.GameExport.tool import TOOL as GAME_EXPORT
 from .tools.MeshFracture.tool import TOOL as MESH_FRACTURE
 from .tools.Physics.tool import TOOL as PHYSICS
+from .tools.Rig.tool import TOOL as RIG
 from .tools.Simulation.tool import TOOL as SIMULATION
 
 # 工具清单: 元组顺序即注册顺序, 也就是侧栏里面板的上下顺序
-TOOLS = (MESH_FRACTURE, PHYSICS, DRIVERS, SIMULATION, GAME_EXPORT)
+TOOLS = (MESH_FRACTURE, PHYSICS, DRIVERS, SIMULATION, RIG, GAME_EXPORT)
 
 # 已完成的注册步骤的逆操作, 停用时逆序执行
 _undo_steps = []

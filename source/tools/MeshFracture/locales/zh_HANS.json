@@ -72,7 +72,8 @@
     "Asset \"{name}\" now has its own identity": "资产“{name}”已拥有独立身份",
     "This asset was duplicated": "此资产被复制过",
     "Other tools refuse to work on it until it is unique": "在重建身份之前，其他工具不会处理它",
-    "The active object is not part of a duplicated asset": "活动物体不属于被复制过的资产"
+    "The active object is not part of a duplicated asset": "活动物体不属于被复制过的资产",
+    "Hide Source": "隐藏源物体"
   },
   "tooltips": {
     "Where the cut seeds come from; several sources can be combined. Without any point, the source mesh vertices are used.": "切割种子的来源，可多选组合；没有找到任何点时使用源网格的顶点。",
@@ -110,8 +111,9 @@
     "Create a DebugPoints object for every cut showing its seeds after jitter. It is not a shard.": "每次切割都创建一个 DebugPoints 物体，显示扰动后的种子。它不是碎块。",
     "Redraw after every cell and show the cut object as wireframe. Much slower; no effect in background mode.": "每生成一个胞体就重绘，并把被切物体显示为线框。会慢很多；后台模式下无效。",
     "Keep the Boolean modifiers on the convex cells instead of applying them. Skips recursion, island splitting, face merging and interior finishing.": "在凸胞体上保留布尔修改器而不应用。跳过递归、孤岛拆分、面合并和断面收尾。",
-    "Generate fragments from selected editable meshes; source objects are kept": "将选中的可编辑网格生成碎块，保留源物体",
+    "Generate fragments from selected editable meshes; source objects are kept and, by default, hidden": "从选中的可编辑网格生成碎块；源物体会保留，默认隐藏",
     "Cut selected meshes into fragments with a Voronoi pattern": "按 Voronoi 图案把选中的网格切成碎块",
-    "Give the duplicated asset of the active object its own identity; its physics and simulation results are cleared and must be applied again": "为活动物体所在的副本资产生成独立身份；它的物理与模拟结果会被清除，需要重新应用"
+    "Give the duplicated asset of the active object its own identity; its physics and simulation results are cleared and must be applied again": "为活动物体所在的副本资产生成独立身份；它的物理与模拟结果会被清除，需要重新应用",
+    "Hide each source object in the viewport and in renders once its shards are created. The source is kept and can be shown again.": "碎块生成后在视口与渲染中隐藏源物体。源物体仍然保留，可以重新显示。"
   }
 }

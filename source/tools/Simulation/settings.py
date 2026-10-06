@@ -20,7 +20,7 @@ PROPERTY_SPECS = {
             "name": "Use Scene Range",
             "description": "Bake from the start to the end frame of the scene; turn off to set "
             "the range here.",
-            "default": True,
+            "default": False,
         },
     ),
     # 自定义范围的起始帧, 碎块在这一帧处于静止姿态
@@ -30,7 +30,7 @@ PROPERTY_SPECS = {
             "name": "Start Frame",
             "description": "First frame of the simulation; shards are at rest on this frame.",
             "min": 0,
-            "default": 1,
+            "default": 0,
         },
     ),
     # 自定义范围的结束帧
@@ -40,7 +40,7 @@ PROPERTY_SPECS = {
             "name": "End Frame",
             "description": "Last frame of the simulation.",
             "min": 1,
-            "default": 120,
+            "default": 90,
         },
     ),
     # 质量档: 预览或终稿

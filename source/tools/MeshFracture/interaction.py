@@ -9,7 +9,15 @@ from ...common.blender_context import restore_selection
 from ...common.translate import tr, tr_report
 from ...framework.contract import scene_settings
 from ...framework.operators import ToolOperator
-from ...framework.ui import CheckGrid, ParamGroup, ToolPanel, label_row, parameter_panels
+from ...framework.ui import (
+    CheckGrid,
+    ParamGroup,
+    ToolPanel,
+    active_rule,
+    label_row,
+    parameter_panels,
+    primary_button,
+)
 from .api import generate_fragments, make_asset_unique, source_issues
 from .constants import CONTEXT, TOOL_ID
 from .core.diagnosis import NOT_CLOSED, SELF_INTERSECTING
@@ -64,22 +72,15 @@ GROUPS = (
     ),
     ParamGroup(
         "Output",
-        ("collection_name", "shard_suffix", "shard_index_padding"),
+        ("collection_name", "hide_source", "shard_suffix", "shard_index_padding"),
         popover=True,
     ),
     ParamGroup("Debug", ("use_debug_redraw", "use_debug_points", "use_debug_bool"), popover=True),
 )
 
 
-def _param_active(owner, key):
-    """参数的生效条件成立时才可用, 否则置灰但仍可编辑; 规则与流水线共用, 见 settings.ACTIVE_WHEN
-
-    owner 参数组
-    key 字段名
-    返回 生效为真, 没有条件的字段总是生效
-    """
-    rule = ACTIVE_WHEN.get(key)
-    return rule is None or rule(owner)
+# 参数的生效条件: 条件不成立时置灰但仍可编辑; 规则与计算层共用, 见 settings.ACTIVE_WHEN
+_param_active = active_rule(ACTIVE_WHEN)
 
 
 def _can_apply(context):
@@ -100,11 +101,14 @@ DIALOG_WIDTH = 420
 
 
 class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
-    """按侧栏参数切割选中的网格, 保留源物体并支持撤销"""
+    """按侧栏参数切割选中的网格, 保留源物体 (默认隐藏) 并支持撤销"""
 
     bl_idname = "qd_mesh_fracture.generate"
     bl_label = "Generate Fragments"
-    bl_description = "Generate fragments from selected editable meshes; source objects are kept"
+    bl_description = (
+        "Generate fragments from selected editable meshes; source objects are kept and, by "
+        "default, hidden"
+    )
     bl_translation_context = CONTEXT
     # UNDO 让整次生成进入撤销栈; INTERNAL 只由侧栏按钮调用, 不进入算子搜索, 也没有重做面板
     bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
@@ -234,10 +238,7 @@ class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
         """
         layout = self.layout
         ready = _can_apply(context)
-        button = layout.column()
-        button.enabled = ready
-        button.scale_y = 1.4
-        button.operator(QD_MESH_FRACTURE_OT_generate.bl_idname, icon="MOD_EXPLODE")
+        primary_button(layout, QD_MESH_FRACTURE_OT_generate.bl_idname, "MOD_EXPLODE", ready)
         if not ready:
             # 置灰时说明原因, 否则只看到一个灰按钮
             layout.label(

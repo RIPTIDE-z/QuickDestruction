@@ -1,7 +1,8 @@
 """QuickDestruction 算子与注册测试 - 从用户入口走完整条路径
 
 测试目的:
-    1. 生成算子: 读取场景里的参数, 成功时生成并选中碎块, 失败时报出可翻译的错误并保持场景不变,
+    1. 生成算子: 读取场景里的参数, 成功时生成并选中碎块, 源物体默认在视口与渲染里隐藏 (可关闭),
+       失败时报出可翻译的错误并保持场景不变 (源物体不隐藏),
        交互调用时干净的网格直接切割 (有问题的网格弹确认框需要真实窗口, 在 verify_ui_draw.py 里测)
     2. 预设算子: 保存, 覆盖保护, 载入, 删除, 坏文件与不合规文件的报告, 失败时参数保持不变
        首次切割种子数与碎块总数上限: 界面上改动一方时另一方跟着调整, 预设违反顺序时被拒绝
@@ -96,6 +97,14 @@ def case_generate_success():
     check("只选中碎块", selected == {obj.name for obj in shards}, str(sorted(selected)[:3]))
     check("活动物体是碎块", bpy.context.view_layer.objects.active in shards)
     check("源物体保留", "Src" in bpy.data.objects and source.name in bpy.data.objects)
+    check("源物体在视口里隐藏", source.hide_get())
+    check("源物体在渲染里隐藏", source.hide_render)
+    check("隐藏的源物体没有被重新选中", not source.select_get())
+    # 关闭隐藏源物体: 源物体保持可见
+    source = prepare_scene(6)
+    settings().hide_source = False
+    bpy.ops.qd_mesh_fracture.generate("EXEC_DEFAULT")
+    check("关闭选项时源物体仍然可见", not source.hide_get() and not source.hide_render)
 
 
 def case_generate_failures():
@@ -116,6 +125,8 @@ def case_generate_failures():
     text = fail_text(lambda: bpy.ops.qd_mesh_fracture.generate("EXEC_DEFAULT"))
     check("材质槽不存在时报错", text is not None and "Material slot 5" in text, str(text))
     check("失败后选择集仍是源物体", [o.name for o in bpy.context.selected_objects] == ["Src"])
+    source = bpy.data.objects["Src"]
+    check("失败后源物体没有被隐藏", not source.hide_get() and not source.hide_render)
 
     prepare_scene(6)
     original = interaction.generate_fragments

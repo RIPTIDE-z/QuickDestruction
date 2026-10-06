@@ -1,4 +1,4 @@
-"""参数规格 - 游戏导出的场景参数: 引擎预设与轴向缩放, 绑定构建的阈值与骨骼上限, 导出目录
+"""参数规格 - 游戏导出的场景参数: 引擎预设与轴向缩放, 导出目录与文件名
 
 engine 必须排在轴向与缩放之前: 预设载入与回滚都按规格顺序写入, 后写的字段会覆盖引擎联动写入的值
 轴向与缩放的默认值必须等于默认引擎的预设值: 默认值不会触发引擎的联动回调
@@ -60,24 +60,6 @@ def _axis_item(axis):
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 PROPERTY_SPECS = {
-    # 绑定方式: 仅碎块, 或先显示原物体到切换帧再换成碎块
-    "rig_mode": (
-        "EnumProperty",
-        {
-            "name": "Rig Type",
-            "items": (
-                ("SHARDS", "Shards Only", "Export only the shards, visible from the first frame."),
-                (
-                    "SWAP",
-                    "Swap from Intact",
-                    "Also export the source object: it shows until the first shard moves, then "
-                    "it is scaled to zero while the shards are scaled from zero to one.",
-                ),
-            ),
-            "default": "SHARDS",
-            "description": "What the exported animation shows before the shards start moving.",
-        },
-    ),
     # 目标引擎, 选择后自动填入下面的轴向与缩放
     "engine": (
         "EnumProperty",
@@ -157,94 +139,6 @@ PROPERTY_SPECS = {
             "default": 1.0,
         },
     ),
-    # 不动判定的位移阈值, Blender 单位
-    "static_distance": (
-        "FloatProperty",
-        {
-            "name": "Still Distance",
-            "description": "Shards that never move farther than this and never turn more than "
-            "Still Angle are merged into the root and get no bone.",
-            "min": 0.0,
-            "soft_max": 0.1,
-            "default": 0.001,
-            "precision": 4,
-            "subtype": "DISTANCE",
-            "unit": "LENGTH",
-        },
-    ),
-    # 不动判定的转角阈值, 弧度, 默认约 0.5 度
-    "static_angle": (
-        "FloatProperty",
-        {
-            "name": "Still Angle",
-            "description": "Largest turn of a shard that still counts as standing still.",
-            "min": 0.0,
-            "soft_max": 0.0872665,
-            "default": 0.0087266,
-            "subtype": "ANGLE",
-        },
-    ),
-    # 一段蒙皮网格最多使用的骨骼数, 0 表示不限
-    "max_bones_per_mesh": (
-        "IntProperty",
-        {
-            "name": "Bones per Mesh",
-            "description": "Most bones, including the root, one skinned mesh may use; the "
-            "mesh is split into several when needed. 0 is no limit.",
-            "min": 0,
-            "default": 0,
-        },
-    ),
-    # 一个骨架最多的骨骼数, 0 表示不限
-    "max_bones_total": (
-        "IntProperty",
-        {
-            "name": "Bones per Skeleton",
-            "description": "Most bones, including the root, one skeleton may have; shards "
-            "beyond it go to extra skeletons exported to separate files. 0 is no limit.",
-            "min": 0,
-            "default": 0,
-        },
-    ),
-    # 断面 UV 的处理方式
-    "interior_uv": (
-        "EnumProperty",
-        {
-            "name": "Interior UV",
-            "items": (
-                ("KEEP", "Keep", "Leave the UVs of the interior faces as they are."),
-                (
-                    "BOX",
-                    "Box Projection",
-                    "Project the interior faces onto the axis their normal points along.",
-                ),
-            ),
-            "default": "BOX",
-            "description": "UVs for the faces created by cutting, so a material can be put on "
-            "them in the engine.",
-        },
-    ),
-    # 盒投影时每单位距离对应的 UV 长度
-    "interior_uv_scale": (
-        "FloatProperty",
-        {
-            "name": "UV Scale",
-            "description": "UV length per unit of distance for the box projection.",
-            "min": 0.001,
-            "soft_max": 10.0,
-            "default": 1.0,
-        },
-    ),
-    # 是否只允许 ASCII 名称: 开启时资产名, 材质名或文件名含非 ASCII 字符就拒绝构建与导出
-    "ascii_names": (
-        "BoolProperty",
-        {
-            "name": "ASCII Names Only",
-            "description": "Refuse to build or export when the asset, material or file names "
-            "contain characters outside ASCII, which some game engines cannot import.",
-            "default": True,
-        },
-    ),
     # 导出文件名, 不含扩展名; {asset} 换成源物体名
     "file_name": (
         "StringProperty",
@@ -271,28 +165,5 @@ PROPERTY_SPECS = {
 }
 
 
-def _box_projection(values):
-    """UV 缩放只在盒投影时生效
-
-    values 参数组
-    返回 生效为真
-    """
-    return values.interior_uv == "BOX"
-
-
-# 参数的生效条件: 字段名 -> 条件函数; 条件不成立时界面置灰但仍可编辑
-ACTIVE_WHEN = {"interior_uv_scale": _box_projection}
-
-# 绑定构建改变产物的字段: 它们变了绑定就该重建, 记在绑定记录里与面板比较
-BUILD_FIELDS = (
-    "rig_mode",
-    "static_distance",
-    "static_angle",
-    "max_bones_per_mesh",
-    "max_bones_total",
-    "interior_uv",
-    "interior_uv_scale",
-)
-
-# 绑定翻译上下文的参数规格
+# 游戏导出的参数规格
 SCHEMA = Schema(PROPERTY_SPECS, CONTEXT)

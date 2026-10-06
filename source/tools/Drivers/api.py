@@ -32,13 +32,14 @@ def driver_collection(scene):
     return collection
 
 
-def default_frame(scene):
-    """新驱动的起动帧: 当前帧, 但不早于场景起始帧之后的第一帧
+def default_frame(context):
+    """新驱动的起动帧: 当前帧, 但不早于烘焙起始帧之后的第一帧; 烘焙起始帧取模拟烘焙的设置
 
-    scene 场景
+    起始帧是静止姿态, 起动最早在它的下一帧, 与烘焙时的起动帧钳制一致
+    context Blender 上下文
     返回 帧号
     """
-    return max(scene.frame_start + 1, scene.frame_current)
+    return max(plan_timing(context).frame_start + 1, context.scene.frame_current)
 
 
 def _new_object(role):
@@ -80,7 +81,7 @@ def add_driver(context, role, *, location=None, **params):
     obj = _new_object(role)
     obj.location = scene.cursor.location if location is None else location
     driver_collection(scene).objects.link(obj)
-    values = {"role": role, "frame": default_frame(scene), **params}
+    values = {"role": role, "frame": default_frame(context), **params}
     try:
         drivers.DRIVER_SCHEMA.write(getattr(obj, drivers.ATTRIBUTE), values)
     except Exception:

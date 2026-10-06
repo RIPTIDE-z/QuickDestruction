@@ -429,6 +429,32 @@ def rig_collection(root):
     return root.get(RIG_COLLECTION_MARK)
 
 
+def source_label(root):
+    """资产的名字主干: 源物体名, 源物体已删除时用根集合名; 导出物体, 集合与文件名都由它派生
+
+    root 资产根集合
+    返回 名字
+    """
+    return root.get(shards.SOURCE_MARK) or root.name
+
+
+def rig_objects(root):
+    """资产导出集合里的骨架与蒙皮网格
+
+    root 资产根集合
+    返回 (骨架列表, 网格列表), 各自按名字排序, 多个骨架时序号与文件名的对应保持稳定;
+         没有导出集合时为 None
+    """
+    collection = rig_collection(root)
+    if collection is None:
+        return None
+    objects = sorted(collection.objects, key=lambda obj: obj.name)
+    return (
+        [obj for obj in objects if obj.type == "ARMATURE"],
+        [obj for obj in objects if obj.type == "MESH"],
+    )
+
+
 def set_rig_result(root, record, collection):
     """写入资产的绑定记录与导出集合引用
 

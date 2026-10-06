@@ -1,4 +1,4 @@
-"""游戏导出的划分与命名单元测试
+"""绑定构建的划分与命名单元测试
 
 测试目的:
     1. 骨骼命名: b_ 加逐层序号, 只含 ASCII, 超过 63 字节时返回 None, 退回顺序号命名
@@ -6,9 +6,9 @@
     3. 容量: 上限减去 root 占的一个, 0 表示不限, 小于 2 的上限没有容量
     4. 划分: 每个骨架与每段网格都不超过容量, 不重不漏, 没有会动的碎块时仍有一个只有 root 的骨架
 测试过程:
-    手工构造点列, 直接调用 source.tools.GameExport.core.partition, 不需要 Blender
+    手工构造点列, 直接调用 source.tools.Rig.core.partition, 不需要 Blender
 运行方式 (仓库根目录):
-    uv run pytest tests/unit/test_export_partition.py
+    uv run pytest tests/unit/test_rig_partition.py
 """
 
 import logging
@@ -17,7 +17,7 @@ from itertools import pairwise
 
 import pytest
 
-from source.tools.GameExport.core import partition
+from source.tools.Rig.core import partition
 
 LOG = logging.getLogger(__name__)
 

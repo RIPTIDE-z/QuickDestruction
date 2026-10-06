@@ -107,7 +107,7 @@ def write_action(tracker, armature, animated, toggles=()):
             rotations,
             4,
         )
-    # 缩放开关用常量插值: 在 Blender 里切换帧之前保持原值, 到切换帧才跳变
+    # 缩放开关用常量插值: 开关帧之前保持原值, 到开关帧才跳变
     for bone_name, keys in toggles:
         frames = [frame for frame, _scale in keys]
         scales = [(scale, scale, scale) for _frame, scale in keys]

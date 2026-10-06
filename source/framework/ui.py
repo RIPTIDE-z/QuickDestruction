@@ -110,6 +110,26 @@ def _draw_checks(layout, owner, keys, active):
         cell.prop(owner, key)
 
 
+def active_rule(rules):
+    """由生效条件表生成判断函数: 表里有条件的字段按条件判断, 其余字段总是生效
+
+    rules {字段名: 条件函数 rule(owner)}; 没有条件的工具传空字典
+    返回 判断函数 active(owner, key), 供 draw_fields 与 parameter_panels 使用
+    """
+
+    def active(owner, key):
+        """字段是否生效; 不生效时置灰但仍可编辑
+
+        owner 参数组
+        key 字段名
+        返回 生效为真
+        """
+        rule = rules.get(key)
+        return rule is None or rule(owner)
+
+    return active
+
+
 def label_row(layout, text, *, text_ctxt="", translate=True):
     """自绘字段的一行: 左侧是右对齐的标签列, 右侧放控件
 
@@ -222,6 +242,21 @@ def draw_stage_status(layout, title, status):
     if status.state == OUTDATED:
         reason = label_row(column, "", translate=False)
         reason.label(text=tr(CONTEXT, status.reason), translate=False)
+
+
+def primary_button(layout, operator, icon, enabled=True):
+    """工具的主按钮: 加高并画成按下状态, 按下状态取主题的强调色 (默认主题是蓝色)
+
+    Blender 不能给按钮指定任意颜色, 按下状态是突出主按钮最接近的办法, 点击行为不变
+    layout 要绘制到的布局
+    operator 算子 ID
+    icon 图标名
+    enabled 为假时整个按钮置灰
+    """
+    column = layout.column()
+    column.enabled = enabled
+    column.scale_y = 1.4
+    column.operator(operator, icon=icon, depress=True)
 
 
 def picked_objects(context):

@@ -68,10 +68,29 @@ def generate_fragments(context, sources, config, *, rng=None):
     sources = tuple(sources)
     with preserve_selection(context):
         shards, by_source, by_asset, seconds = run(context, sources, settings, rng)
+    # 全部成功后才隐藏: 失败时源物体保持原样; 放在恢复选择之后, 隐藏的物体不会被重新选中
+    if settings.hide_source:
+        hide_sources(context, by_source)
     # 映射包成只读视图, 调用方不能改动结果
     return MeshFractureResult(
         tuple(shards), MappingProxyType(by_source), MappingProxyType(by_asset), seconds
     )
+
+
+def hide_sources(context, sources):
+    """在视口与渲染里隐藏源物体; 不在当前视图层里的源物体只隐藏渲染
+
+    视口隐藏用 hide_set, 与大纲里的眼睛图标一致, 用户点一下就能重新显示;
+    不用 hide_viewport: 它对全部视图层生效, 而且大纲默认不显示它的开关, 用户不容易找回
+    context Blender 上下文, 提供视图层
+    sources 源物体序列
+    """
+    layer = context.view_layer.objects
+    for obj in sources:
+        obj.hide_render = True
+        # 不在当前视图层里的物体不能 hide_set, 它本来也不显示
+        if obj.name in layer:
+            obj.hide_set(True)
 
 
 def make_asset_unique(obj):

@@ -10,6 +10,7 @@ import bpy
 
 from ....common import asset
 from ....common.created_data import WriteLog
+from ....common.names import material_names
 from ..constants import (
     ARMATURE_HOLD_NAME,
     ARMATURE_NODE_NAME,
@@ -18,9 +19,9 @@ from ..constants import (
     FBX_FIXED,
 )
 from ..errors import ExportError
-from .build import asset_label
-from .check import export_objects, material_names
 
+# 资产还没有构建绑定时的错误
+NOT_BUILT_MESSAGE = "Build the rig first in the Rig panel"
 # 没有导出插件时的错误
 NO_ADDON_MESSAGE = "The FBX exporter is disabled; enable the add-on Import-Export: FBX format"
 # 轴向冲突时的错误
@@ -37,6 +38,18 @@ EXISTS_MESSAGE = "File already exists: {path}"
 INVALID_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
+def export_objects(root):
+    """资产导出集合里的骨架与蒙皮网格, 由绑定构建工具建立
+
+    root 资产根集合
+    返回 (骨架列表, 网格列表), 各自按名字排序; 没有导出集合时抛 ExportError
+    """
+    found = asset.rig_objects(root)
+    if found is None:
+        raise ExportError(NOT_BUILT_MESSAGE)
+    return found
+
+
 def _stem(root, values):
     """导出文件名主干: 文件名参数里的占位符换成资产名, 去掉用户多写的扩展名, 非法字符换成下划线
 
@@ -47,7 +60,7 @@ def _stem(root, values):
     """
     pattern = values.file_name.strip() or ASSET_TOKEN
     # 与导出物体同一个名字来源; 不从导出集合名反推, 集合重名时它会带上 .001 后缀
-    name = pattern.replace(ASSET_TOKEN, asset_label(root))
+    name = pattern.replace(ASSET_TOKEN, asset.source_label(root))
     # 用户常把扩展名一并写进去, 去掉避免出现 a.fbx.fbx
     if name.lower().endswith(FBX_EXTENSION):
         name = name[: -len(FBX_EXTENSION)]

@@ -18,6 +18,7 @@ flowchart TB
         PH[Physics 物理设置]
         DR[Drivers 破坏驱动]
         SI[Simulation 模拟烘焙]
+        RG[Rig 绑定构建]
         GE[GameExport 游戏导出]
     end
     subgraph framework
@@ -149,15 +150,15 @@ TOOL = ToolSpec(
 | 根集合 | `_qd_source_ref`、`_qd_source`、`_qd_gap` | 网格破碎 | 源物体的 ID 指针、生成时的源名、切割间隙 |
 | 根集合 | `_qd_physics` | 物理设置 | 实际使用的物理配置与修订号 `rev`、碎块数 |
 | 根集合 | `_qd_sim`、`_qd_sim_action` | 模拟烘焙 | 会话标识、当时的物理修订号与成果动作 |
-| 根集合 | `_qd_rig`、`_qd_rig_collection` | 游戏导出 | 绑定记录（标识、模拟会话与物理修订号、构建参数摘要、帧范围、骨骼与网格数、骨骼到碎块的映射、绑定方式与切换帧）与导出集合的指针 |
+| 根集合 | `_qd_rig`、`_qd_rig_collection` | 绑定构建 | 绑定记录（标识、模拟会话与物理修订号、构建参数摘要、帧范围、骨骼与网格数、骨骼到碎块的映射、绑定方式与两个开关帧、构建时是否要求 ASCII 名称）与导出集合的指针；游戏导出只读 |
 | 根集合 | `_qd_export` | 游戏导出 | 导出的文件列表与它对应的绑定标识 |
 | 碎块 | `_qd_source`、`_qd_level`、`_qd_path`、`_qd_parent`、`_qd_asset` | 网格破碎 | 来源、层级、路径、父碎块、所属资产 |
-| 碎块网格 | 面属性 `qd_interior` | 网格破碎 | 为真的面是切割新生成的断面；游戏导出据此做断面 UV |
-| 蒙皮网格 | 点属性 `qd_shard`、`qd_vertex`，面属性 `qd_shard_face` | 游戏导出 | 顶点与面来自哪块碎块（资产内序号）与碎块里的原顶点序号；检查与测试靠它们逐块对回碎块，不进入 FBX |
+| 碎块网格 | 面属性 `qd_interior` | 网格破碎 | 为真的面是切割新生成的断面；绑定构建据此做断面 UV |
+| 蒙皮网格 | 点属性 `qd_shard`、`qd_vertex`，面属性 `qd_shard_face` | 绑定构建 | 顶点与面来自哪块碎块（资产内序号）与碎块里的原顶点序号；检查与测试靠它们逐块对回碎块，不进入 FBX |
 | 预设地面物体 | `_qd_ground` | 模拟烘焙 | 场景里的预设地面标记，一个场景一块 |
 | 碎块 | `_qd_rest` | 物理设置 | 首次应用物理时的静止世界矩阵 |
 | 场景 | `_qd_sim_runs` | 模拟烘焙 | 会话标识到参与资产、驱动、环境刚体、场景设置签名与求解设置的记录；只保留仍被资产引用的会话 |
-| 插件自有的动作与导出物体 | `_qd_asset`、`_qd_stage` | 模拟烘焙、游戏导出 | 删除或替换前按资产标识与阶段一起核对归属；导出集合本身不能带 `_qd_asset`，否则会被当成资产根集合 |
+| 插件自有的动作与导出物体 | `_qd_asset`、`_qd_stage` | 模拟烘焙、绑定构建 | 删除或替换前按资产标识与阶段一起核对归属；导出集合本身不能带 `_qd_asset`，否则会被当成资产根集合 |
 
 `asset.resolve(objects)` 从选中物体得到资产根集合，以下情况都会直接报错，不做含糊推断：
 - 资产被复制、两个根集合共用标识；
@@ -176,7 +177,7 @@ TOOL = ToolSpec(
 | 碎块原点（移到质心，世界几何不变）、`_qd_rest`、刚体固有属性、`_qd_physics` | 物理设置 | 模拟烘焙 |
 | `Object.qd_driver` 与驱动物体的变换 | 破坏驱动与用户 | 模拟烘焙 |
 | 刚体世界设置、碎块是否在刚体世界里、刚体类型与休眠开关、成果动作、会话记录、预设地面 | 模拟烘焙 | 状态判定 |
-| 绑定记录、导出集合、导出记录 | 游戏导出 | 状态判定；模拟烘焙在提交成果或复位时清除它们（`asset.discard_rig`），只删带本资产绑定阶段标记的物体与因此没有使用者的数据 |
+| 绑定记录、导出集合、导出记录 | 绑定构建、游戏导出 | 状态判定；游戏导出经 `asset.rig_objects` 与 `asset.source_label` 读取导出集合与名字；模拟烘焙在提交成果或复位时清除它们（`asset.discard_rig`），只删带本资产绑定阶段标记的物体与因此没有使用者的数据 |
 
 每份数据只有一个写入方。工具之间不传 Python 对象，跨操作的成果都落在 .blend 数据上，经 `common` 的访问器读写。
 
@@ -257,7 +258,8 @@ from bl_ext.user_default.quick_destruction.common import drivers
 from bl_ext.user_default.quick_destruction.tools.Drivers.api import add_driver
 from bl_ext.user_default.quick_destruction.tools.MeshFracture.api import generate_fragments
 from bl_ext.user_default.quick_destruction.tools.Physics.api import apply_physics
-from bl_ext.user_default.quick_destruction.tools.GameExport.api import build_rig, export_fbx
+from bl_ext.user_default.quick_destruction.tools.GameExport.api import export_fbx
+from bl_ext.user_default.quick_destruction.tools.Rig.api import build_rig
 from bl_ext.user_default.quick_destruction.tools.Simulation.api import bake
 
 context = bpy.context
@@ -268,7 +270,7 @@ apply_physics(context, [root], {"material": "CONCRETE", "activation": "FROZEN"})
 add_driver(context, drivers.EXPLOSION, location=source.location, frame=10)
 result = bake(context, [root], {})
 build_rig(context, [root], {})
-paths, issues = export_fbx(context, root, {"engine": "UNREAL", "directory": "D:/out"})
+paths = export_fbx(context, root, {"engine": "UNREAL", "directory": "D:/out"})
 ```
 
 - **变换求值**：`apply_physics`、`reset_rest` 与 `bake` 读取世界矩阵前会先刷新视图层。脚本改了碎块或驱动的变换后，不必手动调用 `context.view_layer.update()`。
@@ -281,7 +283,8 @@ paths, issues = export_fbx(context, root, {"engine": "UNREAL", "directory": "D:/
 | `apply_physics`、`remove_physics`、`reset_rest` | 见[物理设置](../使用说明/Physics.md#阶段-api) |
 | `add_driver`、`make_driver` | 见[破坏驱动](../使用说明/Drivers.md#阶段-api) |
 | `bake`、`bake_steps`、`reset`、`add_ground` | 见[模拟烘焙](../使用说明/Simulation.md#阶段-api) |
-| `build_rig`、`build_rig_steps`、`check`、`export_fbx`、`existing_files`、`export_paths` | 见[游戏导出](../使用说明/GameExport.md#阶段-api) |
+| `build_rig`、`build_rig_steps`、`check` | 见[绑定构建](../使用说明/Rig.md#阶段-api) |
+| `export_fbx`、`existing_files`、`export_paths`、`needs_directory` | 见[游戏导出](../使用说明/GameExport.md#阶段-api) |
 
 `generate_fragments` 的参数：
 
@@ -325,12 +328,13 @@ API 在退出时尝试恢复原选择和活动物体；生成算子成功后另�
 | Simulation | `core/keys.py` | 交接关键帧与烘焙关键帧的写入 |
 | Simulation | `core/bake.py` | 写入、推进、写成果、提交与两阶段撤回 |
 | Simulation | `core/reset.py`、`core/task.py` | 复位；运行锁的转发 |
-| GameExport | `core/tracks.py` | 从成果动作的关键帧直接读出每块碎块的逐帧位姿；动静分类与起动帧 |
-| GameExport | `core/partition.py` | 骨骼命名、Morton 序与容量受限的划分；纯数值，单元测试直接覆盖 |
-| GameExport | `core/bones.py`、`core/merge.py` | 建骨架（骨骼头部在静止质心、`matrix_local` 为纯平移）；复制碎块、加顶点组与来源属性后受控 `join` |
-| GameExport | `core/transfer.py` | 世界轨迹换算成姿态基矩阵 `B⁻¹·Mt·M0⁻¹·B`，批量写线性关键帧；原物体切换的缩放开关写成常量插值 |
-| GameExport | `core/swap.py` | 原物体切换：源物体做成原物体网格，切换帧、缩放开关与骨骼头部位置 |
-| GameExport | `core/interior.py` | 断面盒投影 UV，断面由碎块网格上的面属性 `qd_interior` 标出 |
-| GameExport | `core/build.py` | 构建流程、临时集合、校验、两阶段提交与撤回 |
-| GameExport | `core/check.py`、`core/fbx.py` | 检查与逐帧蒙皮核对；FBX 导出封装与现场还原 |
+| Rig | `core/tracks.py` | 从成果动作的关键帧直接读出每块碎块的逐帧位姿；动静分类与起动帧 |
+| Rig | `core/partition.py` | 骨骼命名、Morton 序与容量受限的划分；纯数值，单元测试直接覆盖 |
+| Rig | `core/bones.py`、`core/merge.py` | 建骨架（骨骼头部在静止质心、`matrix_local` 为纯平移）；复制碎块、加顶点组与来源属性后受控 `join` |
+| Rig | `core/transfer.py` | 世界轨迹换算成姿态基矩阵 `B⁻¹·Mt·M0⁻¹·B`，批量写线性关键帧；原物体切换的缩放开关写成常量插值 |
+| Rig | `core/swap.py` | 原物体切换：源物体做成原物体网格，按隐藏帧与出现帧给出缩放开关与骨骼头部位置 |
+| Rig | `core/interior.py` | 断面盒投影 UV，断面由碎块网格上的面属性 `qd_interior` 标出 |
+| Rig | `core/build.py` | 构建流程、临时集合、校验、两阶段提交与撤回 |
+| Rig | `core/check.py` | 检查与逐帧蒙皮核对 |
+| GameExport | `core/fbx.py` | 目标文件、FBX 导出封装、骨架节点名与现场还原 |
 | framework | `longtask.py` | 可取消模态长任务的公共流程，模拟烘焙与绑定构建共用；运行锁在 `common/busy.py` |

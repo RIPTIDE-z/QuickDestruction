@@ -1,7 +1,7 @@
 """检查 - 绑定验收: 碎块守恒, 逐帧蒙皮几何, 骨骼名与上限, 变换, 断面 UV, 结算时间
 
 检查只读数据; 每条问题带级别, 代码与英文消息键, 消息按本工具的翻译上下文翻译
-错误级问题会让导出停止, 警告级只提示
+错误级问题会让构建失败而不提交, 警告级只提示
 """
 
 from dataclasses import dataclass, field
@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from mathutils import Matrix
 
 from ....common import asset
+from ....common.names import first_non_ascii
 from ....common.status import CURRENT, rig_status
 from ....common.translate import tr_report
 from ..constants import (
@@ -19,7 +20,7 @@ from ..constants import (
     VERIFY_TOLERANCE,
     VERTEX_ATTRIBUTE,
 )
-from ..errors import ExportError
+from ..errors import RigError
 from . import interior
 from .partition import BONE_NAME_BYTES
 from .swap import is_intact
@@ -83,39 +84,25 @@ def issue_text(issue):
 
 
 def require_ascii(names):
-    """要求全部名字只含 ASCII 字符, 否则抛 ExportError 并指出第一个不合规的名字
+    """要求全部名字只含 ASCII 字符, 否则抛 RigError 并指出第一个不合规的名字
 
     names 要检查的名字序列
     """
-    bad = next((name for name in names if not name.isascii()), None)
+    bad = first_non_ascii(names)
     if bad is not None:
-        raise ExportError(NON_ASCII_MESSAGE, name=bad)
-
-
-def material_names(objects):
-    """一组网格物体用到的材质名, 去重后按名字排序
-
-    objects 网格物体序列
-    返回 材质名列表, 空槽位不计
-    """
-    return sorted({slot.name for obj in objects for slot in obj.data.materials if slot})
+        raise RigError(NON_ASCII_MESSAGE, name=bad)
 
 
 def export_objects(root):
     """取资产导出集合里的骨架与蒙皮网格
 
     root 资产根集合
-    返回 (骨架列表, 蒙皮网格列表), 各自按名字排序; 没有导出集合时抛 ExportError
+    返回 (骨架列表, 蒙皮网格列表), 各自按名字排序; 没有导出集合时抛 RigError
     """
-    collection = asset.rig_collection(root)
-    if collection is None:
-        raise ExportError(NOT_BUILT_MESSAGE)
-    # 按名字排序: 多个骨架时序号与文件名的对应保持稳定
-    objects = sorted(collection.objects, key=lambda obj: obj.name)
-    return (
-        [obj for obj in objects if obj.type == "ARMATURE"],
-        [obj for obj in objects if obj.type == "MESH"],
-    )
+    found = asset.rig_objects(root)
+    if found is None:
+        raise RigError(NOT_BUILT_MESSAGE)
+    return found
 
 
 def _int_attribute(mesh, name, domain):
@@ -319,24 +306,26 @@ def frame_samples(first, last, count):
 
 
 def _visible_frames(record, frames):
-    """碎块可见的核对帧: 原物体切换时去掉切换帧之前的帧, 并补上切换帧
+    """碎块以原尺寸出现的核对帧: 原物体切换时去掉出现帧之前的帧, 并补上出现帧
 
     record 绑定记录, 可以为 None
     frames 要核对的帧号列表
     返回 帧号列表, 升序
     """
-    swap = None if record is None else record.get("swap")
-    if swap is None:
+    show = None if record is None else record.get("show_frame")
+    if show is None:
         return list(frames)
-    # 切换帧一定核对: 它是碎块第一次出现的帧, 最容易暴露缩放开关写错
-    return sorted({*(frame for frame in frames if frame >= swap), swap})
+    first, last = record["frames"]
+    # 出现帧落在模拟范围里时一定核对: 它是碎块第一次出现的帧, 最容易暴露缩放开关写错
+    extra = {show} if first <= show <= last else set()
+    return sorted({*(frame for frame in frames if frame >= show), *extra})
 
 
 def verify_skin(context, root, frames):
     """逐帧核对蒙皮网格与碎块动画
 
     蒙皮网格求值后的顶点与碎块动画给出的世界顶点逐个比较; 对应关系由来源属性给出, 不用最近点
-    原物体切换时碎块在切换帧之前缩放为 0, 只核对切换帧及之后的帧; 原物体网格没有来源属性, 不核对
+    原物体切换时碎块在出现帧之前是隐藏缩放, 只核对出现帧及之后; 原物体网格没有来源属性, 不核对
     context Blender 上下文
     root 资产根集合
     frames 要核对的帧号列表
@@ -397,11 +386,11 @@ def check_rig(context, root, config, sample_frames=3):
     root 资产根集合
     config 参数值
     sample_frames 逐帧蒙皮核对抽取的帧数, 0 表示不核对
-    返回 Issue 元组; 没有构建过时抛 ExportError
+    返回 Issue 元组; 没有构建过时抛 RigError
     """
     record = asset.rig_record(root)
     if record is None:
-        raise ExportError(NOT_BUILT_MESSAGE)
+        raise RigError(NOT_BUILT_MESSAGE)
     armatures, meshes = export_objects(root)
     items = asset.shards_of(root)
     issues = []

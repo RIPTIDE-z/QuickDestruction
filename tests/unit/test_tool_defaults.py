@@ -3,7 +3,9 @@
 测试目的:
     几个工具的默认值决定了新场景的开箱体验, 而且彼此有一致性要求:
     物理设置默认休眠, 计划预览默认显示, 游戏导出默认面向虚幻引擎且轴向缩放的默认值等于引擎预设,
-    默认只允许 ASCII 名称, 预设地面足够大
+    默认只允许 ASCII 名称, 预设地面足够大, 烘焙默认 0 到 90 帧而不跟随场景,
+    原物体切换的隐藏缩放默认 0.01 (虚幻引擎不接受 0 缩放) 且两个开关帧默认第 1 帧,
+    生成碎块后默认隐藏源物体
     轴向缩放的默认值不会触发引擎联动回调, 两者不一致时新场景的面板会显示一个引擎却用另一套轴向导出
 测试过程:
     直接读各工具的参数规格与常量, 不启动 Blender
@@ -16,8 +18,11 @@ import logging
 from source.tools.Drivers import settings as drivers_settings
 from source.tools.GameExport import settings as export_settings
 from source.tools.GameExport.constants import ENGINE_FIELDS, ENGINE_PRESETS
+from source.tools.MeshFracture import settings as fracture_settings
 from source.tools.Physics import settings as physics_settings
+from source.tools.Rig import settings as rig_settings
 from source.tools.Simulation import constants as simulation_constants
+from source.tools.Simulation import settings as simulation_settings
 
 LOG = logging.getLogger(__name__)
 
@@ -47,7 +52,7 @@ def test_export_defaults_match_unreal_preset():
 
 def test_ascii_names_required_by_default():
     """默认只允许 ASCII 名称"""
-    assert export_settings.SCHEMA.defaults()["ascii_names"] is True
+    assert rig_settings.SCHEMA.defaults()["ascii_names"] is True
 
 
 def test_ground_is_large():
@@ -59,3 +64,35 @@ def test_ground_is_large():
     )
     assert simulation_constants.GROUND_MIN_HALF == 100.0
     assert simulation_constants.GROUND_EXTENT_RATIO == 30.0
+
+
+def test_bake_range_defaults_to_0_90():
+    """烘焙默认不跟随场景帧范围, 而是 0 到 90 帧: 第 0 帧是静止姿态, 引擎里动画也从 0 开始"""
+    defaults = simulation_settings.SCHEMA.defaults()
+    LOG.info(
+        "scene range %s, %s to %s",
+        defaults["use_scene_range"],
+        defaults["frame_start"],
+        defaults["frame_end"],
+    )
+    assert defaults["use_scene_range"] is False
+    assert (defaults["frame_start"], defaults["frame_end"]) == (0, 90)
+
+
+def test_swap_defaults():
+    """原物体切换的隐藏缩放默认 0.01 而不是 0; 原物体隐藏帧与碎块出现帧默认都是第 1 帧"""
+    defaults = rig_settings.SCHEMA.defaults()
+    LOG.info(
+        "hidden scale %s, hide %s, show %s",
+        defaults["hidden_scale"],
+        defaults["intact_hide_frame"],
+        defaults["shards_show_frame"],
+    )
+    assert defaults["hidden_scale"] == 0.01
+    assert defaults["intact_hide_frame"] == 1
+    assert defaults["shards_show_frame"] == 1
+
+
+def test_source_hidden_by_default():
+    """生成碎块后默认隐藏源物体"""
+    assert fracture_settings.SCHEMA.defaults()["hide_source"] is True

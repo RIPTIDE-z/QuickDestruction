@@ -22,10 +22,12 @@ from ...framework.operators import ToolOperator
 from ...framework.ui import (
     ParamGroup,
     ToolPanel,
+    active_rule,
     draw_assets,
     draw_stage_status,
     parameter_panels,
     picked_objects,
+    primary_button,
 )
 from .api import add_ground, bake_steps, reset
 from .constants import CONTEXT, SUBSTEP_LIMIT, TOOL_ID
@@ -42,15 +44,8 @@ GROUPS = (
 )
 
 
-def _param_active(owner, key):
-    """参数的生效条件成立时才可用, 否则置灰但仍可编辑
-
-    owner 参数组
-    key 字段名
-    返回 生效为真, 没有条件的字段总是生效
-    """
-    rule = ACTIVE_WHEN.get(key)
-    return rule is None or rule(owner)
+# 参数的生效条件: 条件不成立时置灰但仍可编辑; 规则与计算层共用, 见 settings.ACTIVE_WHEN
+_param_active = active_rule(ACTIVE_WHEN)
 
 
 def _report_text(result):
@@ -349,7 +344,7 @@ class QD_SIMULATION_PT_main(ToolPanel, Panel):
     tool_id = TOOL_ID
 
     def draw(self, context):
-        """资产与状态在上, 烘焙按钮加高, 复位与添加地面在下; 烘焙进行中时按钮置灰并提示取消方式
+        """资产与状态在上, 然后是添加地面, 加高的烘焙按钮与复位; 烘焙进行中时按钮置灰并提示取消方式
 
         context Blender 上下文
         """
@@ -363,16 +358,15 @@ class QD_SIMULATION_PT_main(ToolPanel, Panel):
         # 烘焙进行中: 提示取消方式, 三个按钮置灰
         if running:
             layout.label(text="Baking, press Esc to cancel", text_ctxt=CONTEXT, icon="TIME")
-        button = layout.column()
-        button.enabled = bool(roots) and not running
-        button.scale_y = 1.4
-        button.operator(QD_SIMULATION_OT_bake.bl_idname, icon="RENDER_ANIMATION")
+        ready = bool(roots) and not running
+        # 地面要在烘焙之前加, 按钮按使用顺序排在烘焙上面
         row = layout.row()
-        row.enabled = bool(roots) and not running
-        row.operator(QD_SIMULATION_OT_reset.bl_idname, icon="LOOP_BACK")
-        row = layout.row()
-        row.enabled = bool(roots) and not running
+        row.enabled = ready
         row.operator(QD_SIMULATION_OT_add_ground.bl_idname, icon="MESH_PLANE")
+        primary_button(layout, QD_SIMULATION_OT_bake.bl_idname, "RENDER_ANIMATION", ready)
+        row = layout.row()
+        row.enabled = ready
+        row.operator(QD_SIMULATION_OT_reset.bl_idname, icon="LOOP_BACK")
 
 
 # 参数子面板: 挂在主面板下, 按分组顺序排列

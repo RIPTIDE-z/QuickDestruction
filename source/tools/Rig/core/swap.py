@@ -1,7 +1,9 @@
-"""原物体切换 - 绑定方式为原物体切换时, 把源物体做成一段蒙皮网格, 并给出切换帧与各骨骼的缩放开关
+"""原物体切换 - 绑定方式为原物体切换时, 把源物体做成一段蒙皮网格, 并给出各骨骼的缩放开关
 
-起始帧显示完整的原物体, 碎块全部缩放为 0; 到切换帧原物体缩放为 0, 碎块缩放为 1 并开始破碎动画
-缩放是骨骼上的常量插值关键帧: 原物体与不动碎块的骨骼头部在资产中心, 会动碎块的骨骼头部在各自的静止质心,
+原物体从起始帧显示到隐藏帧之前, 隐藏帧起缩到隐藏缩放; 碎块在出现帧之前是隐藏缩放, 出现帧起恢复原尺寸
+两个帧分开设置: 可以让两者重叠一段, 也可以中间空一段; 默认都是第 1 帧, 配合从第 0 帧开始的烘焙
+隐藏缩放默认 0.01 而不是 0: 部分引擎 (虚幻) 不接受零缩放的骨骼
+缩放是骨骼上的常量插值关键帧: 原物体与不动碎块的骨骼头部在资产中心, 会动碎块的在各自的静止质心,
 引擎在相邻两帧之间插值时每块都绕自己的中心缩放, 不会从世界原点飞过来
 """
 
@@ -9,12 +11,8 @@ import bpy
 from mathutils import Vector
 
 from ....common import asset
-from ..errors import ExportError
+from ..errors import RigError
 
-# 绑定方式: 只导出碎块
-SHARDS = "SHARDS"
-# 绑定方式: 先显示原物体, 到切换帧换成碎块
-SWAP = "SWAP"
 # 原物体蒙皮网格归属的骨骼名
 INTACT_BONE = "intact"
 # 原物体切换时不动碎块归属的骨骼名: 它们也要在切换前隐藏, 所以不能像仅碎块那样归 root
@@ -30,37 +28,24 @@ def source_object(root):
     """原物体切换要用的源物体
 
     root 资产根集合
-    返回 源物体; 已被删除时抛 ExportError
+    返回 源物体; 已被删除时抛 RigError
     """
     source = asset.source_of(root)
     if source is None:
-        raise ExportError(NO_SOURCE_MESSAGE, name=root.name)
+        raise RigError(NO_SOURCE_MESSAGE, name=root.name)
     return source
 
 
-def swap_frame(frame_start, frame_end, first_start):
-    """切换帧: 第一块碎块离开静止姿态的那一帧, 至少比起始帧晚一帧, 保证起始帧显示原物体
-
-    frame_start 模拟起始帧
-    frame_end 模拟结束帧
-    first_start 会动碎块里最早的起动帧; 没有碎块平移过时为 None, 此时在起始帧之后一帧切换
-    返回 帧号; 帧范围只有一帧时就是起始帧
-    """
-    if frame_end <= frame_start:
-        return frame_start
-    frame = frame_start + 1 if first_start is None else max(first_start, frame_start + 1)
-    return min(frame, frame_end)
-
-
-def toggle_keys(frame_start, frame, visible_before):
+def toggle_keys(frame_start, frame, visible_before, hidden):
     """一根骨骼的缩放开关关键帧
 
     frame_start 模拟起始帧
-    frame 切换帧
-    visible_before 为真时切换前缩放为 1, 切换后为 0 (原物体); 为假时相反 (碎块)
-    返回 [(帧, 缩放), ...]; 切换帧不晚于起始帧时只有切换后的一帧
+    frame 开关帧: 原物体的隐藏帧或碎块的出现帧
+    visible_before 为真时开关前缩放为 1, 开关后为隐藏缩放 (原物体); 为假时相反 (碎块)
+    hidden 隐藏时的缩放
+    返回 [(帧, 缩放), ...]; 开关帧不晚于起始帧时只有开关后的一帧
     """
-    before, after = (1.0, 0.0) if visible_before else (0.0, 1.0)
+    before, after = (1.0, hidden) if visible_before else (hidden, 1.0)
     if frame <= frame_start:
         return [(frame_start, after)]
     return [(frame_start, before), (frame, after)]

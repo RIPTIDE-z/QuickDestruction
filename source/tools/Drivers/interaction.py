@@ -11,7 +11,13 @@ from ...common.blender_context import select_only
 from ...common.translate import tr, tr_report
 from ...framework.contract import scene_settings
 from ...framework.operators import ToolOperator
-from ...framework.ui import ToolPanel, draw_fields, label_row, picked_objects
+from ...framework.ui import (
+    ToolPanel,
+    active_rule,
+    draw_fields,
+    label_row,
+    picked_objects,
+)
 from .api import add_driver, affected_shards, make_driver, remove_driver
 from .constants import CONTEXT, ROLE_ICONS, TOOL_ID
 from .settings import SCHEMA
@@ -173,13 +179,8 @@ class QD_DRIVERS_OT_delete(ToolOperator, Operator):
         return tr_report(CONTEXT, 'Deleted driver "{name}"', name=self.name)
 
 
-def _always(*_args):
-    """参数的生效条件: 这里的字段始终可用
-
-    _args draw_fields 传入的 (参数组, 字段名), 不使用
-    返回 总是为真
-    """
-    return True
+# 驱动工具的字段都总是生效
+_always = active_rule({})
 
 
 def _role_name(role):
@@ -278,14 +279,14 @@ def _draw_driver(layout, context, obj):
     text = tr(CONTEXT, "{name}: {role}", name=obj.name, role=_role_name(params.role))
     layout.label(text=text, translate=False, icon=ROLE_ICONS[params.role])
     # 类型画成只读文字而不是下拉框: 下拉框会列出界面不再提供的角色
-    draw_fields(layout, params, drivers.DRIVER_SCHEMA, ("enabled",), lambda *_args: True)
+    draw_fields(layout, params, drivers.DRIVER_SCHEMA, ("enabled",), _always)
     # 停用的驱动其余参数置灰
     column = layout.column()
     column.active = params.enabled
     # 时间, 强度与衰减, 方向, 自转与随机各成一组, 组间留空
     for group in drivers.ROLE_FIELDS[params.role]:
         column.separator()
-        draw_fields(column, params, drivers.DRIVER_SCHEMA, group, lambda *_args: True)
+        draw_fields(column, params, drivers.DRIVER_SCHEMA, group, _always)
     column.separator()
     # 有半径的角色显示半径; 路径与区域给出调整方式的提示
     if params.role in RANGE_ROLES:

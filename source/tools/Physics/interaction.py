@@ -13,11 +13,13 @@ from ...framework.ui import (
     Expand,
     ParamGroup,
     ToolPanel,
+    active_rule,
     draw_assets,
     draw_fields,
     draw_stage_status,
     parameter_panels,
     picked_objects,
+    primary_button,
 )
 from .api import apply_physics, remove_physics, reset_rest
 from .constants import CONTEXT, TOOL_ID
@@ -28,15 +30,8 @@ from .settings import ACTIVE_WHEN, SCHEMA, material_edited
 STATUS_ROWS = 6
 
 
-def _param_active(owner, key):
-    """参数的生效条件成立时才可用, 否则置灰但仍可编辑
-
-    owner 参数组
-    key 字段名
-    返回 生效为真, 没有条件的字段总是生效
-    """
-    rule = ACTIVE_WHEN.get(key)
-    return rule is None or rule(owner)
+# 参数的生效条件: 条件不成立时置灰但仍可编辑; 规则与计算层共用, 见 settings.ACTIVE_WHEN
+_param_active = active_rule(ACTIVE_WHEN)
 
 
 # 材料子面板里的字段: 材料在前, 后面是它联动写入的物理量
@@ -305,10 +300,7 @@ class QD_PHYSICS_PT_main(ToolPanel, Panel):
         roots = draw_assets(layout, context)
         if roots:
             _draw_statuses(layout, context, roots)
-        button = layout.column()
-        button.enabled = bool(roots)
-        button.scale_y = 1.4
-        button.operator(QD_PHYSICS_OT_apply.bl_idname, icon="PHYSICS")
+        primary_button(layout, QD_PHYSICS_OT_apply.bl_idname, "PHYSICS", bool(roots))
         row = layout.row(align=True)
         row.enabled = bool(roots)
         row.operator(QD_PHYSICS_OT_remove.bl_idname, icon="X")

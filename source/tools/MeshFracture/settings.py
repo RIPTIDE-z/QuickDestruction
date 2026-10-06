@@ -294,6 +294,16 @@ PROPERTY_SPECS = {
             "default": "cell_collection",
         },
     ),
+    # 生成成功后是否隐藏源物体
+    "hide_source": (
+        "BoolProperty",
+        {
+            "name": "Hide Source",
+            "description": "Hide each source object in the viewport and in renders once its "
+            "shards are created. The source is kept and can be shown again.",
+            "default": True,
+        },
+    ),
     # 碎块名后缀
     "shard_suffix": (
         "StringProperty",
