@@ -13,33 +13,20 @@ BONE_NAME_BYTES = 63
 ROOT_BONE = "root"
 # Morton 码每个轴的位数, 三个轴交错后共 30 位
 MORTON_BITS = 10
-# 路径每段序号的最小位数
-PATH_PADDING = 3
-# 退回顺序号命名时的位数
-FALLBACK_PADDING = 5
+# 碎块骨骼序号的最小位数, 不足补零, 碎块更多时照写
+BONE_PADDING = 3
 
 # 一个骨架的划分: segments 是各段网格, 每段是会动的碎块在输入序列里的序号
 Armature = namedtuple("Armature", ["segments"])
 
 
-def bone_name(path, padding=PATH_PADDING):
-    """碎块路径对应的骨骼名: b_ 加逐层序号, 例如 b_003_002; 只含 ASCII
+def bone_name(number):
+    """会动碎块的骨骼名: b_ 加从 1 开始的顺序号, 例如 b_001; 只含 ASCII
 
-    path 碎块路径, 逐层序号的序列
-    padding 每个序号补零到的位数
-    返回 骨骼名; 超过字节上限时返回 None
-    """
-    name = "b_" + "_".join(f"{index:0{padding}d}" for index in path)
-    return name if len(name.encode("ascii")) <= BONE_NAME_BYTES else None
-
-
-def fallback_name(number):
-    """路径过长时退回的骨骼名: b_ 加 5 位顺序号; 映射由调用方记在骨架上
-
-    number 顺序号
+    number 从 0 开始的顺序号
     返回 骨骼名
     """
-    return f"b_{number:0{FALLBACK_PADDING}d}"
+    return f"b_{number + 1:0{BONE_PADDING}d}"
 
 
 def _spread(low, high, bits):

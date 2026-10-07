@@ -56,6 +56,9 @@ SKIN_MISMATCH_MESSAGE = (
 )
 # 还没有构建绑定
 NOT_BUILT_MESSAGE = "Build the rig first"
+# 原物体切换的骨架丢了待机动作, 导出时就少了待机文件
+IDLE_MISSING_MESSAGE = 'Skeleton "{name}" has lost its Idle animation; build the rig again'
+
 # 开启仅允许 ASCII 名称时, 名字里出现了非 ASCII 字符
 NON_ASCII_MESSAGE = 'Name "{name}" is not ASCII; rename it or turn off ASCII Names Only'
 
@@ -199,6 +202,22 @@ def _geometry_issues(items, meshes):
             )
         )
     return issues
+
+
+def _idle_issues(armatures, record):
+    """原物体切换的每个骨架都要有待机动作
+
+    armatures 骨架物体列表
+    record 绑定记录
+    返回 Issue 列表; 仅碎块的绑定没有要求
+    """
+    if record.get("idle_length") is None:
+        return []
+    return [
+        Issue(ERROR, "IDLE_MISSING", IDLE_MISSING_MESSAGE, {"name": armature.name})
+        for armature in armatures
+        if asset.idle_action(armature) is None
+    ]
 
 
 def _bone_issues(armatures, meshes, config):
@@ -395,6 +414,7 @@ def check_rig(context, root, config, sample_frames=3):
     items = asset.shards_of(root)
     issues = []
     issues += _geometry_issues(items, meshes)
+    issues += _idle_issues(armatures, record)
     issues += _bone_issues(armatures, meshes, config)
     # 逐帧蒙皮核对最耗时, 构建时已经核对过, 这里可以关闭
     if sample_frames:

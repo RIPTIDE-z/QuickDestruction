@@ -4,7 +4,7 @@
     1. 构建: 每块碎块都进了蒙皮网格 (几何守恒), 会动的碎块各有一根骨骼, 不动的并入 root;
        逐帧 (全部帧) 蒙皮网格与碎块动画的世界顶点一致; 命名, 集合, 材质与记录正确; 构建不留临时数据
     2. 骨骼上限: 每段网格骨骼数与每个骨架骨骼总数的上限生效, 拆分后仍逐帧一致
-    3. 骨骼名: 路径名符合规则; 路径名不可用时退回顺序号并记录映射
+    3. 骨骼名: 平铺编号 b_001 起, 按碎块路径顺序, 记录映射
     4. 断面 UV: 盒投影只写断面, 外表面 UV 不变; 选择保持时断面 UV 不动
     5. 失败回滚: 校验失败时旧导出, 绑定记录与场景选择原样保留, 没有残留的临时数据
     6. 状态: 构建后输入未变; 重新烘焙后过期; 导出记录随绑定重建而过期; 设置摘要随参数变化
@@ -16,8 +16,9 @@
         多资产写到同一文件时拒绝
     7c. 仅允许 ASCII 名称: 资产名非 ASCII 时拒绝构建, 文件名与材质名在导出时再查; 关闭后都放行
     7d. 导出目录定不下来时由文件浏览器选择, 选好的目录存回面板
-    7e. 原物体切换: 原物体从隐藏帧起缩到隐藏缩放 (默认 0.01, 可设为 0), 碎块在出现帧之前是隐藏缩放,
-        出现帧起逐帧与动画一致; 两帧可以错开, 默认都是第 1 帧, 不晚于起始帧时从第一帧起生效;
+    7e. 原物体切换: 待机动作只显示原物体 (碎块缩到隐藏缩放), 导出成单独的 _Idle 文件;
+        破碎动作里原物体从隐藏帧起缩到隐藏缩放 (默认 0.001, 可设为 0), 碎块在出现帧之前是隐藏缩放,
+        出现帧起逐帧与动画一致, 导出成 _Destruction 文件; 两帧可以错开, 默认都是第 0 帧;
         多出的骨骼计入上限; 源物体被删除时拒绝构建;
         导出的 FBX 重新导入后起始帧是原物体, 结束帧是碎块, 动画数值都是有限值
     8. 往返: 导出的 FBX 重新导入 (动画偏移为 0), 各帧的顶点都能在碎块动画给出的世界顶点上找到;
@@ -72,6 +73,8 @@ FRACTURE = {"source": {"VERT_CHILD"}, "first_cut_seeds": 0, "source_noise": 0.0}
 ROUND_TRIP_TOLERANCE = 1e-3
 # 烘焙配置: 跟随场景的 1 到 30 帧; 阶段 API 的默认范围是 0 到 90, 测试用短范围更快
 BAKE = {"use_scene_range": True}
+# 原物体切换的默认隐藏缩放
+HIDDEN = 0.001
 # 原物体切换的配置: 碎块第 3 帧出现, 原物体第 5 帧隐藏, 两者错开以分别验证
 SWAP = {"rig_mode": "SWAP", "intact_hide_frame": 5, "shards_show_frame": 3}
 
@@ -217,20 +220,22 @@ def case_bone_limits():
     check("上限小于 2 时拒绝", failed)
 
 
-def case_bone_name_fallback():
-    """路径名不可用时退回顺序号, 映射记在绑定记录里"""
+def case_bone_names():
+    """骨骼名平铺编号 b_001, b_002, ... 按碎块路径顺序; 映射记在绑定记录里"""
     root, shards = baked_asset(count=8)
-    with patch.object(build_core, "bone_name", return_value=None):
-        build_rig(bpy.context, [root], {})
+    build_rig(bpy.context, [root], {})
     armatures, _meshes = export_parts(root)
     names = sorted(bone.name for bone in armatures[0].data.bones if bone.name != "root")
-    check("退回 b_ 加五位顺序号", names[0] == "b_00000", names[0])
+    expected = [f"b_{number:03d}" for number in range(1, len(names) + 1)]
+    check("骨骼名是从 b_001 起的连续编号", names == expected, str(names[:3]))
     mapping = asset.rig_record(root)["map"]
     check(
         "记录了骨骼到碎块的映射",
         set(mapping) == set(names) and set(mapping.values()) <= {s.name for s in shards},
     )
-    check("退回命名后逐帧一致", skin_error(root) < 1e-4)
+    # 编号按碎块路径的顺序: 映射到的碎块路径随编号递增
+    paths = [shard_contract.path_of(bpy.data.objects[mapping[name]]) for name in names]
+    check("编号顺序与碎块路径顺序一致", paths == sorted(paths))
 
 
 def uv_of(mesh, face):
@@ -745,29 +750,62 @@ def scale_errors(spreads, shards):
     return ratios
 
 
+def check_idle_file(imported, before, source_points, first):
+    """待机文件导入后: 起始帧显示原物体; 原物体骨骼缩放为 1, 碎块骨骼缩放为默认隐藏缩放
+
+    imported 导入的物体
+    before 导入前已有的物体
+    source_points 源物体的世界顶点
+    first 待机动画的起始帧
+    """
+    skeleton = next(obj for obj in imported if obj.type == "ARMATURE")
+    scales = {}
+    for bag in skeleton.animation_data.action.layers[0].strips[0].channelbags:
+        for curve in bag.fcurves:
+            # 只看缩放通道: pose.bones["名字"].scale
+            if curve.data_path.endswith(".scale"):
+                bone = curve.data_path.split('"')[1]
+                scales.setdefault(bone, []).extend(p.co[1] for p in curve.keyframe_points)
+    intact_ok = all(abs(value - 1.0) < 1e-4 for value in scales.get("origin", [0.0]))
+    shard_values = [v for bone, values in scales.items() if bone.startswith("b_") for v in values]
+    check("待机文件里原物体骨骼缩放为 1", intact_ok, str(scales.get("origin", [])[:3]))
+    check(
+        "待机文件里碎块骨骼缩放为隐藏缩放",
+        shard_values and all(abs(value - HIDDEN) < 1e-6 for value in shard_values),
+    )
+    points = imported_points(first, before)
+    tree = KDTree(len(points))
+    for index, point in enumerate(points):
+        tree.insert(point, index)
+    tree.balance()
+    gap = max(tree.find(point)[2] for point in source_points)
+    check("待机文件导入后显示原物体", gap < ROUND_TRIP_TOLERANCE, f"{gap:.2e}")
+
+
 def case_swap_rig():
     """原物体切换: 原物体从隐藏帧起缩小, 碎块从出现帧起恢复; 两帧可以错开, 默认都是第 1 帧"""
     root, shards = baked_asset(count=8, partial=True)
     scene = bpy.context.scene
     source = asset.source_of(root)
-    # 默认两帧都是第 1 帧, 而测试的烘焙从第 1 帧开始: 起始帧就已经是碎块
+    # 默认两帧都是第 0 帧, 不晚于测试烘焙的起始帧 1: 破碎动画一开始就已经是碎块
     build_rig(bpy.context, [root], {"rig_mode": "SWAP"})
     record = asset.rig_record(root)
     check("记录了绑定方式", record["mode"] == "SWAP")
-    check("两个开关帧默认都是第 1 帧", (record["hide_frame"], record["show_frame"]) == (1, 1))
+    check("两个开关帧默认都是第 0 帧", (record["hide_frame"], record["show_frame"]) == (0, 0))
+    check("待机长度默认 2 帧", record["idle_length"] == 2)
     _armatures, meshes = export_parts(root)
     intact = [obj for obj in meshes if swap_core.is_intact(obj)]
     scene.frame_set(record["frames"][0])
     source_points = mesh_points(source)
     ratio = spread(mesh_points(intact[0])) / spread(source_points)
-    check("开关帧不晚于起始帧时原物体从第一帧起隐藏", abs(ratio - 0.01) < 1e-4, f"{ratio:.4f}")
+    check("开关帧不晚于起始帧时原物体从第一帧起隐藏", abs(ratio - HIDDEN) < 1e-5, f"{ratio:.5f}")
     # 碎块第 3 帧出现, 原物体第 5 帧才隐藏: 中间两者重叠
     build_rig(bpy.context, [root], SWAP)
     record = asset.rig_record(root)
     check("记录了自定义的开关帧", (record["hide_frame"], record["show_frame"]) == (5, 3))
     armatures, meshes = export_parts(root)
     bone_names = {bone.name for bone in armatures[0].data.bones}
-    check("第一个骨架带原物体骨骼与 still 骨骼", {"root", "intact", "still"} <= bone_names)
+    check("第一个骨架带原物体骨骼与 still 骨骼", {"root", "origin", "still"} <= bone_names)
     intact = [obj for obj in meshes if swap_core.is_intact(obj)]
     pieces = [obj for obj in meshes if not swap_core.is_intact(obj)]
     check(
@@ -775,26 +813,26 @@ def case_swap_rig():
         len(intact) == 1 and intact[0].name == "Src_Intact",
         str([obj.name for obj in intact]),
     )
-    check("原物体网格只引用原物体骨骼", [g.name for g in intact[0].vertex_groups] == ["intact"])
-    # 起始帧: 原物体与源物体逐点重合, 每块碎块缩到默认的隐藏缩放 0.01 (各自绕质心)
+    check("原物体网格只引用原物体骨骼", [g.name for g in intact[0].vertex_groups] == ["origin"])
+    # 起始帧: 原物体与源物体逐点重合, 每块碎块缩到默认的隐藏缩放 (各自绕质心)
     scene.frame_set(record["frames"][0])
     shown = mesh_points(intact[0])
     gap = max((a - b).length for a, b in zip(shown, source_points, strict=True))
     check("起始帧原物体与源物体重合", gap < 1e-4, f"{gap:.2e}")
     ratios = scale_errors(shard_spreads(pieces), shards)
-    worst = max(abs(ratio - 0.01) for ratio in ratios)
-    check("起始帧碎块缩放为默认隐藏缩放 0.01", worst < 1e-4, f"偏差 {worst:.2e}")
+    worst = max(abs(ratio - HIDDEN) for ratio in ratios)
+    check("起始帧碎块缩放为默认隐藏缩放", worst < 1e-5, f"偏差 {worst:.2e}")
     # 出现帧前一帧: 碎块仍是隐藏缩放
     scene.frame_set(record["show_frame"] - 1)
     ratios = scale_errors(shard_spreads(pieces), shards)
-    check("出现帧之前碎块仍隐藏", max(ratios) < 0.011, f"{max(ratios):.4f}")
+    check("出现帧之前碎块仍隐藏", max(ratios) < HIDDEN * 1.1, f"{max(ratios):.5f}")
     # 出现帧: 碎块恢复原尺寸, 原物体还在 (两者重叠)
     scene.frame_set(record["show_frame"])
     check("出现帧原物体仍显示", spread(mesh_points(intact[0])) > 1.0)
     # 隐藏帧: 原物体缩到隐藏缩放
     scene.frame_set(record["hide_frame"])
     ratio = spread(mesh_points(intact[0])) / spread(source_points)
-    check("隐藏帧原物体缩放为 0.01", abs(ratio - 0.01) < 1e-4, f"{ratio:.4f}")
+    check("隐藏帧原物体缩放为隐藏缩放", abs(ratio - HIDDEN) < 1e-5, f"{ratio:.5f}")
     error = skin_error(root)
     check("出现帧及之后蒙皮与碎块动画一致", error < 1e-4, f"{error:.2e}")
     issues = check_rig(bpy.context, root, SWAP)
@@ -804,11 +842,35 @@ def case_swap_rig():
         not errors and "INTERIOR_UV" not in [issue.code for issue in issues],
         str([issue.code for issue in issues]),
     )
-    # 往返: 导入后起始帧是原物体, 结束帧是碎块, 动画数值有限
+    # 待机动作: 换上它时起始帧原物体完整, 碎块缩到隐藏缩放; 骨架的当前动作仍是破碎动作
+    skeleton_rig = armatures[0]
+    destruction = skeleton_rig.animation_data.action
+    idle = asset.idle_action(skeleton_rig)
+    check("骨架带待机动作", idle is not None and idle.name.endswith("_Idle"), str(idle))
+    check("待机动作的帧范围是起始帧加待机长度", tuple(idle.frame_range) == (1.0, 3.0))
+    check("骨架的当前动作是破碎动作", destruction is not None and destruction != idle)
+    skeleton_rig.animation_data.action = idle
+    scene.frame_set(2)
+    ratio = spread(mesh_points(intact[0])) / spread(source_points)
+    check("待机时原物体完整", abs(ratio - 1.0) < 1e-4, f"{ratio:.4f}")
+    ratios = scale_errors(shard_spreads(pieces), shards)
+    check("待机时碎块缩到隐藏缩放", max(abs(r - HIDDEN) for r in ratios) < 1e-5)
+    skeleton_rig.animation_data.action = destruction
+    # 往返: 待机与破碎两个文件; 破碎文件导入后起始帧是原物体, 结束帧是碎块, 动画数值有限
     with tempfile.TemporaryDirectory() as directory:
         paths = export_fbx(bpy.context, root, {"directory": directory})
+        names = [path.name for path in paths]
+        check(
+            "导出待机与破碎两个文件", names == ["Src_Idle.fbx", "Src_Destruction.fbx"], str(names)
+        )
+        check("导出后骨架换回破碎动作", skeleton_rig.animation_data.action == destruction)
         before = set(bpy.data.objects)
         bpy.ops.import_scene.fbx(filepath=str(paths[0]), anim_offset=0.0)
+        idle_imported = [obj for obj in bpy.data.objects if obj not in before]
+        check_idle_file(idle_imported, before, source_points, record["frames"][0])
+        bpy.data.batch_remove(idle_imported)
+        before = set(bpy.data.objects)
+        bpy.ops.import_scene.fbx(filepath=str(paths[1]), anim_offset=0.0)
     imported = [obj for obj in bpy.data.objects if obj not in before]
     skeleton = next(obj for obj in imported if obj.type == "ARMATURE")
     values = [
@@ -860,6 +922,18 @@ def case_swap_rig():
     armatures, meshes = export_parts(root)
     check("仅碎块没有原物体网格", not [obj for obj in meshes if swap_core.is_intact(obj)])
     check("仅碎块没有开关帧", asset.rig_record(root)["show_frame"] is None)
+    check(
+        "仅碎块没有待机动作, 旧的待机动作已删除",
+        all(asset.idle_action(obj) is None for obj in armatures)
+        and not [action for action in bpy.data.actions if action.name.endswith("_Idle")],
+    )
+    # 待机动作被删掉: 检查报错
+    build_rig(bpy.context, [root], SWAP)
+    armatures, _meshes = export_parts(root)
+    bpy.data.actions.remove(asset.idle_action(armatures[0]))
+    codes = [issue.code for issue in check_rig(bpy.context, root, SWAP, sample_frames=0)]
+    check("丢了待机动作时检查报错", "IDLE_MISSING" in codes, str(codes))
+    build_rig(bpy.context, [root], {"rig_mode": "SHARDS"})
     # 源物体被删除: 原物体切换拒绝构建, 旧绑定保留
     rig_id = asset.rig_record(root)["id"]
     bpy.data.objects.remove(source)
@@ -883,7 +957,7 @@ CASES = (
     case_build_basics,
     case_build_all_moving,
     case_bone_limits,
-    case_bone_name_fallback,
+    case_bone_names,
     case_interior_uv,
     case_failure_rollback,
     case_no_simulation,

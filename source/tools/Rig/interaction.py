@@ -36,7 +36,7 @@ STATUS_ROWS = 6
 # 面板里最多列出的问题条数
 ISSUE_ROWS = 5
 # 绑定设置第一层的字段: 决定导出动画是什么样子, 最常调整
-MAIN_FIELDS = ("rig_mode", "hidden_scale", "intact_hide_frame", "shards_show_frame")
+MAIN_FIELDS = ("rig_mode", "hidden_scale", "idle_length", "intact_hide_frame", "shards_show_frame")
 # 详细设置里的字段, 按用途分成几组, 组间留空: 不动判定, 骨骼上限, 断面 UV, 名字限制
 DETAIL_GROUPS = (
     ("static_distance", "static_angle"),
@@ -56,7 +56,7 @@ _param_active = active_rule(ACTIVE_WHEN)
 
 
 def _draw_settings(layout, owner):
-    """绑定设置: 绑定方式与原物体切换的三项在上, 其余收进默认收起的详细设置
+    """绑定设置: 绑定方式与原物体切换的四项在上, 其余收进默认收起的详细设置
 
     layout 子面板的布局
     owner 参数组
@@ -255,11 +255,12 @@ def _draw_summary(layout, root):
         static=record["static"],
     )
     layout.label(text=text, translate=False, icon="ARMATURE_DATA")
-    # 原物体切换: 写明原物体哪一帧隐藏, 碎块哪一帧出现
-    if record.get("show_frame") is not None:
+    # 原物体切换: 写明待机长度, 以及破碎动画里原物体哪一帧隐藏, 碎块哪一帧出现
+    if record.get("idle_length") is not None:
         text = tr(
             CONTEXT,
-            "Intact hides at frame {hide}, shards show at frame {show}",
+            "Idle {length} frames; destruction: intact hides at {hide}, shards show at {show}",
+            length=record["idle_length"],
             hide=record["hide_frame"],
             show=record["show_frame"],
         )

@@ -305,7 +305,7 @@ API 在退出时尝试恢复原选择和活动物体；生成算子成功后另�
 | `api.py` | 显式输入、切割前体检、结果对象、重建副本身份 |
 | `core/pipeline.py` | 输入检查、首次切割、递归、收尾、硬上限与失败清理 |
 | `core/sampling.py`、`cells.py`、`cell_objects.py` | 种子采样、半空间求交、凸包及材质和数据层初始化 |
-| `core/boolean.py`、`intersect.py` | 求值快照、Exact 求交、结果校验与布尔烘焙；封闭性判定在 `common/geometry.py` |
+| `core/boolean.py`、`intersect.py` | 求值快照、Exact 求交、结果校验（越界与内外复核）与布尔烘焙；封闭性判定在 `common/geometry.py` |
 | `core/recursion.py`、`allocation.py` | 候选选择与碎块预算分配；后者是纯数值逻辑 |
 | `core/cleanup.py`、`islands.py` | 焊接、清理、非平面面三角化、孤岛拆分及最终面合并 |
 | `core/isolation.py` | 临时排除已完成碎块，当前父块与新碎块使用工作集合；实时重绘时停用 |

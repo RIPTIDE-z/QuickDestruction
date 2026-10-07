@@ -5,7 +5,7 @@ from .constants import CONTEXT
 
 # 绑定方式的取值: 只导出碎块
 SHARDS = "SHARDS"
-# 绑定方式的取值: 先显示原物体, 按两个开关帧换成碎块
+# 绑定方式的取值: 另外导出原物体, 分成待机与破碎两段动画
 SWAP = "SWAP"
 
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
@@ -20,8 +20,9 @@ PROPERTY_SPECS = {
                 (
                     SWAP,
                     "Swap from Intact",
-                    "Also export the source object: it shows until its hide frame, and the "
-                    "shards show from their show frame.",
+                    "Also export the source object, in two files: Idle, a still loop showing "
+                    "only the source object, and Destruction, where the source object hides at "
+                    "its hide frame and the shards show from their show frame.",
                 ),
             ),
             "default": SHARDS,
@@ -38,28 +39,41 @@ PROPERTY_SPECS = {
             "Unreal, do not accept a scale of zero.",
             "min": 0.0,
             "max": 0.5,
-            "default": 0.01,
+            "default": 0.001,
             "precision": 3,
         },
     ),
-    # 原物体从这一帧起缩到隐藏缩放
+    # 待机动画的长度, 帧
+    "idle_length": (
+        "IntProperty",
+        {
+            "name": "Idle Length",
+            "description": "Length in frames of the Idle animation, a still loop that shows "
+            "only the source object while the shards stay hidden.",
+            "min": 1,
+            "default": 2,
+        },
+    ),
+    # 破碎动画里原物体从这一帧起缩到隐藏缩放
     "intact_hide_frame": (
         "IntProperty",
         {
             "name": "Intact Hide Frame",
-            "description": "Frame from which the source object is scaled down to the hidden "
-            "scale. At or before the start of the bake it is hidden from the first frame.",
-            "default": 1,
+            "description": "Frame of the Destruction animation from which the source object is "
+            "scaled down to the hidden scale. At or before the start of the bake it is hidden "
+            "from the first frame.",
+            "default": 0,
         },
     ),
-    # 碎块从这一帧起恢复原尺寸
+    # 破碎动画里碎块从这一帧起恢复原尺寸
     "shards_show_frame": (
         "IntProperty",
         {
             "name": "Shards Show Frame",
-            "description": "Frame from which the shards are shown at full size. At or before "
-            "the start of the bake they are shown from the first frame.",
-            "default": 1,
+            "description": "Frame of the Destruction animation from which the shards are shown "
+            "at full size. At or before the start of the bake they are shown from the first "
+            "frame.",
+            "default": 0,
         },
     ),
     # 不动判定的位移阈值, Blender 单位
@@ -155,7 +169,7 @@ PROPERTY_SPECS = {
 
 
 def _swapping(values):
-    """隐藏缩放与两个开关帧只在原物体切换时生效
+    """隐藏缩放, 待机长度与两个开关帧只在原物体切换时生效
 
     values 参数组
     返回 生效为真
@@ -175,6 +189,7 @@ def _box_projection(values):
 # 参数的生效条件: 字段名 -> 条件函数; 条件不成立时界面置灰但仍可编辑
 ACTIVE_WHEN = {
     "hidden_scale": _swapping,
+    "idle_length": _swapping,
     "intact_hide_frame": _swapping,
     "shards_show_frame": _swapping,
     "interior_uv_scale": _box_projection,
@@ -184,6 +199,7 @@ ACTIVE_WHEN = {
 BUILD_FIELDS = (
     "rig_mode",
     "hidden_scale",
+    "idle_length",
     "intact_hide_frame",
     "shards_show_frame",
     "static_distance",

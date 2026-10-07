@@ -49,9 +49,11 @@
     "Hidden Scale": "隐藏缩放",
     "Details": "详细设置",
     "Intact Hide Frame": "原物体隐藏帧",
-    "Intact hides at frame {hide}, shards show at frame {show}": "原物体第 {hide} 帧隐藏，碎块第 {show} 帧出现",
+    "Idle {length} frames; destruction: intact hides at {hide}, shards show at {show}": "待机 {length} 帧；破碎动画里原物体第 {hide} 帧隐藏，碎块第 {show} 帧出现",
     "Rigging": "绑定构建",
-    "Shards Show Frame": "碎块出现帧"
+    "Shards Show Frame": "碎块出现帧",
+    "Idle Length": "待机长度",
+    "Skeleton \"{name}\" has lost its Idle animation; build the rig again": "骨架“{name}”的待机动画丢失，请重新构建绑定"
   },
   "tooltips": {
     "Build a skeleton and skinned meshes from the baked simulation of the selected assets; press Esc to cancel and restore the scene": "根据选中资产烘焙好的模拟建立骨架与蒙皮网格；按 Esc 取消并恢复场景",
@@ -66,11 +68,12 @@
     "UVs for the faces created by cutting, so a material can be put on them in the engine.": "给切割新生成的断面生成 UV，便于在引擎里单独铺材质。",
     "Export only the shards, visible from the first frame.": "只导出碎块，从第一帧起可见。",
     "What the exported animation shows before the shards start moving.": "导出的动画在碎块开始运动前显示什么。",
-    "Also export the source object: it shows until its hide frame, and the shards show from their show frame.": "同时导出源物体：源物体显示到隐藏帧之前，碎块从出现帧起显示。",
+    "Also export the source object, in two files: Idle, a still loop showing only the source object, and Destruction, where the source object hides at its hide frame and the shards show from their show frame.": "同时导出源物体，分成两个文件：待机，只显示源物体的静止循环；破碎，源物体在隐藏帧隐藏，碎块从出现帧起显示。",
     "Build a skeleton and skinned meshes from the baked simulation": "由烘焙好的模拟建立骨架与蒙皮网格",
-    "Frame from which the shards are shown at full size. At or before the start of the bake they are shown from the first frame.": "碎块从这一帧起以原尺寸显示。不晚于烘焙起始帧时，碎块从第一帧起就显示。",
-    "Frame from which the source object is scaled down to the hidden scale. At or before the start of the bake it is hidden from the first frame.": "源物体从这一帧起缩到隐藏缩放。不晚于烘焙起始帧时，源物体从第一帧起就隐藏。",
+    "Frame of the Destruction animation from which the shards are shown at full size. At or before the start of the bake they are shown from the first frame.": "破碎动画里碎块从这一帧起以原尺寸显示。不晚于烘焙起始帧时，碎块从第一帧起就显示。",
+    "Frame of the Destruction animation from which the source object is scaled down to the hidden scale. At or before the start of the bake it is hidden from the first frame.": "破碎动画里源物体从这一帧起缩到隐藏缩放。不晚于烘焙起始帧时，源物体从第一帧起就隐藏。",
     "Refuse to build when the asset or material names contain characters outside ASCII, which some game engines cannot import; the export checks the file and object names again.": "资产名或材质名含有 ASCII 以外的字符时拒绝构建，部分游戏引擎无法导入这类名称；导出时还会再检查文件名与物体名。",
-    "Scale of the hidden part in Swap from Intact: the shards before their show frame and the source object from its hide frame. Some engines, such as Unreal, do not accept a scale of zero.": "原物体切换时被隐藏部分的缩放：出现帧之前的碎块与隐藏帧起的源物体。部分引擎（例如虚幻引擎）不接受 0 缩放。"
+    "Scale of the hidden part in Swap from Intact: the shards before their show frame and the source object from its hide frame. Some engines, such as Unreal, do not accept a scale of zero.": "原物体切换时被隐藏部分的缩放：出现帧之前的碎块与隐藏帧起的源物体。部分引擎（例如虚幻引擎）不接受 0 缩放。",
+    "Length in frames of the Idle animation, a still loop that shows only the source object while the shards stay hidden.": "待机动画的长度（帧）：只显示源物体、碎块保持隐藏的静止循环。"
   }
 }

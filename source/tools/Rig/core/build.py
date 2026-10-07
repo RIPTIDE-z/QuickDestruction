@@ -24,6 +24,7 @@ from ..constants import (
     BUILDING_PREFIX,
     CONTEXT,
     EXPORT_SUFFIX,
+    IDLE_SUFFIX,
     INTACT_SUFFIX,
     MESH_SUFFIX,
     RIG_SUFFIX,
@@ -33,7 +34,7 @@ from ..errors import RigError
 from ..settings import BUILD_FIELDS, SWAP
 from . import bones, check, interior, merge, swap, tracks, transfer
 from .merge import Entry
-from .partition import ROOT_BONE, bone_name, fallback_name, partition
+from .partition import ROOT_BONE, bone_name, partition
 
 # 没有模拟成果时的错误
 NO_SIMULATION_MESSAGE = 'Asset "{name}" has no current simulation; bake it first'
@@ -95,6 +96,8 @@ class SwapPlan(NamedTuple):
     hide: int
     # 碎块的出现帧
     show: int
+    # 待机动作的长度, 帧
+    length: int
     # 原物体与不动碎块骨骼的头部位置, 世界坐标
     pivot: object
     # 隐藏时的缩放
@@ -176,22 +179,14 @@ def _read(root):
     return result, items, rests, tracks.read_tracks(items)
 
 
-def _bone_names(items, moving):
-    """给会动的碎块起骨骼名: 路径名, 路径过长或重名时退回顺序号
+def _bone_names(moving):
+    """给会动的碎块起骨骼名: 按碎块路径的顺序平铺编号, b_001, b_002, ...
 
-    items 碎块列表
-    moving 会动的碎块在 items 里的序号
+    碎块列表已按路径排序, 所以编号确定; 骨骼到碎块的映射另记在绑定记录里
+    moving 会动的碎块在碎块列表里的序号
     返回 与 moving 同序的骨骼名列表
     """
-    names, used = [], set()
-    for number, index in enumerate(moving):
-        name = bone_name(shards.path_of(items[index]))
-        # 路径名超过字节上限, 或与已用的重名时, 用顺序号保证唯一
-        if name is None or name in used:
-            name = fallback_name(number)
-        used.add(name)
-        names.append(name)
-    return names
+    return [bone_name(number) for number in range(len(moving))]
 
 
 def _make_collection(context, tracker, name):
@@ -239,7 +234,7 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
     asset_id 资产标识, 写到动作上
     返回 (骨架列表, 网格列表, {骨骼名: 碎块名}, 每个骨架包含的会动碎块位置列表)
     """
-    items, rests, names, moving, still, tracked, plan_swap = inputs
+    items, rests, names, moving, still, _tracked, plan_swap = inputs
     still_group = ROOT_BONE if plan_swap is None else swap.STILL_BONE
     armature_objects, mesh_objects, mapping, per_armature = [], [], {}, []
     for armature_index, armature in enumerate(plan):
@@ -289,37 +284,77 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
             mesh_objects.append(intact)
     # 动画在全部骨架建好之后写: 写动画不再需要进入编辑模式
     for index, (obj, members) in enumerate(zip(armature_objects, per_armature, strict=True)):
-        animated = [
-            (names[position], tracked[items[moving[position]].name], rests[moving[position]])
-            for position in members
-        ]
-        toggles = _toggles(plan_swap, [names[position] for position in members], index, still)
-        action = transfer.write_action(tracker, obj, animated, toggles)
-        asset.claim(action, asset_id, asset.RIG_STAGE)
+        _write_animations(tracker, obj, index, members, inputs, asset_id)
     return armature_objects, mesh_objects, mapping, per_armature
 
 
-def _toggles(plan_swap, bone_names, armature_index, still):
-    """一个骨架上的缩放开关: 碎块骨骼在出现帧之前是隐藏缩放, 原物体骨骼从隐藏帧起缩到隐藏缩放
+def _write_animations(tracker, obj, index, members, inputs, asset_id):
+    """给一个骨架写动作: 仅碎块时只有破碎动作; 原物体切换时先写待机动作
 
+    写动作会把它设为骨架的当前动作, 所以待机先写, 最后写的破碎动作才是当前动作
+    tracker 创建账本
+    obj 骨架物体
+    index 骨架序号
+    members 这个骨架里会动碎块在 moving 里的位置
+    inputs 构建输入
+    asset_id 资产标识, 写到动作上
+    """
+    plan_swap = inputs.swap
+    # 每块会动碎块: (骨骼名, 碎块序号)
+    bones_here = [(inputs.names[position], inputs.moving[position]) for position in members]
+    bone_names = [name for name, _index in bones_here]
+    if plan_swap is not None:
+        still_poses = [
+            (
+                name,
+                swap.idle_track(inputs.rests[i], plan_swap.start, plan_swap.length),
+                inputs.rests[i],
+            )
+            for name, i in bones_here
+        ]
+        toggles = _toggles(plan_swap, bone_names, index, inputs.still, idle=True)
+        idle = transfer.write_action(tracker, obj, still_poses, toggles, IDLE_SUFFIX)
+        asset.claim(idle, asset_id, asset.RIG_STAGE)
+        asset.set_idle_action(obj, idle)
+    animated = [
+        (name, inputs.tracked[inputs.items[i].name], inputs.rests[i]) for name, i in bones_here
+    ]
+    toggles = _toggles(plan_swap, bone_names, index, inputs.still)
+    action = transfer.write_action(tracker, obj, animated, toggles)
+    asset.claim(action, asset_id, asset.RIG_STAGE)
+
+
+def _toggles(plan_swap, bone_names, armature_index, still, idle=False):
+    """一个骨架上的缩放开关
+
+    破碎动作: 碎块骨骼在出现帧之前是隐藏缩放, 原物体骨骼从隐藏帧起缩到隐藏缩放
+    待机动作: 原物体骨骼一直是 1, 碎块骨骼一直是隐藏缩放
     plan_swap SwapPlan; 仅碎块时为 None, 此时没有开关
     bone_names 这个骨架里会动碎块的骨骼名
     armature_index 骨架序号, 原物体与 still 骨骼只在第一个骨架里
     still 不动碎块的序号列表, 为空时没有 still 骨骼
+    idle 为真时给出待机动作的开关
     返回 [(骨骼名, [(帧, 缩放), ...]), ...]
     """
     if plan_swap is None:
         return []
     start, scale = plan_swap.start, plan_swap.hidden
+
+    def keys(frame, visible):
+        """一根骨骼的缩放关键帧; visible 为真表示它在开关帧之前显示 (原物体)"""
+        if idle:
+            return swap.idle_keys(start, plan_swap.length, visible, scale)
+        return swap.toggle_keys(start, frame, visible, scale)
+
     # 出现帧之前要隐藏的骨骼: 本骨架会动的碎块, 第一个骨架再加上不动碎块的 still
     hidden = list(bone_names)
     toggles = []
     # 原物体与 still 骨骼只建在第一个骨架里
     if armature_index == 0:
-        toggles.append((swap.INTACT_BONE, swap.toggle_keys(start, plan_swap.hide, True, scale)))
+        toggles.append((swap.INTACT_BONE, keys(plan_swap.hide, True)))
         if still:
             hidden.append(swap.STILL_BONE)
-    toggles += [(name, swap.toggle_keys(start, plan_swap.show, False, scale)) for name in hidden]
+    toggles += [(name, keys(plan_swap.show, False)) for name in hidden]
     return toggles
 
 
@@ -352,6 +387,7 @@ def _swap_plan(root, values, result, rests):
         start=result["frame_start"],
         hide=values.intact_hide_frame,
         show=values.shards_show_frame,
+        length=values.idle_length,
         pivot=swap.pivot(rests),
         hidden=values.hidden_scale,
     )
@@ -420,7 +456,7 @@ def _build_one(context, root, values, tracker, log):
     if values.ascii_names:
         sources = items if plan_swap is None else [*items, plan_swap.source]
         check.require_ascii([asset.source_label(root), *material_names(sources)])
-    names = _bone_names(items, moving)
+    names = _bone_names(moving)
     points = [tuple(rests[index].translation) for index in moving]
     plan = _partition(points, values)
     yield Progress(1, STAGES)
@@ -450,6 +486,7 @@ def _build_one(context, root, values, tracker, log):
         "mode": values.rig_mode,
         "hide_frame": None if plan_swap is None else plan_swap.hide,
         "show_frame": None if plan_swap is None else plan_swap.show,
+        "idle_length": None if plan_swap is None else plan_swap.length,
         # 构建时是否要求 ASCII 名称: 游戏导出据此在写文件前再查一次文件名与物体名
         "ascii": values.ascii_names,
         "map": mapping,
@@ -520,6 +557,9 @@ def _commit(pending):
             obj.data.name = final
             if obj.animation_data and obj.animation_data.action:
                 obj.animation_data.action.name = ACTION_PREFIX + final
+            idle = asset.idle_action(obj)
+            if idle is not None:
+                idle.name = ACTION_PREFIX + final + IDLE_SUFFIX
         collection.name = asset.source_label(item.root) + EXPORT_SUFFIX
 
 

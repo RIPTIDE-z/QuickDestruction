@@ -22,6 +22,8 @@
     14. 种子扰动: 扰动改变结果, 同一随机种子可复现
     15. 材质与数据层: 碎块保留材质槽与链接方式, UV 与颜色层, 断面材质只落在断面上
     16. 布尔策略: 封闭网格不启用容错求解, 越界与非有限坐标的结果被拒绝, 没有面的网格无法切割
+    16b. 内外复核: 默认参数切割圆环不缺碎块 (关掉复核时会缺); 空结果与整块结果按表面相交与
+        中心位置复核, 远离原点的物体不误报
     17. 求交结果整理: 焊接重合顶点, 清掉散边散点, 立方体的面保持不变
     18. 依赖图隔离: 递归期间已完成的碎块移出视图层, 结果与不隔离时完全一致,
         结束后不留排除与工作集合,
@@ -72,6 +74,8 @@ BASE = {"source": {"VERT_CHILD"}, "first_cut_seeds": 0, "source_noise": 0.0, "ma
 VOLUME_TOLERANCE = 1e-4
 # 默认参数切割猴头时单个父块允许丢失的体积: 高于切面内缩造成的缝隙, 远低于求交出错时的损失
 TOUCH_LOSS_LIMIT = 0.005
+# 默认参数切割圆环时单个父块允许丢失的体积比例: 切面内缩的缝隙约 2%, 内外判反时曾丢掉 21%
+TORUS_LOSS_RATIO = 0.05
 
 
 def cut(sources, config, collection=""):
@@ -345,6 +349,84 @@ def case_touching_parts():
     # 切面内缩留出的缝隙每块约丢 0.001 量级; 出错时曾一次丢掉 0.0437, 约为父块的一半
     check("封闭父块的体积被子块接住", worst < TOUCH_LOSS_LIMIT, f"{worst:.4f}")
     check("没有空碎块", not empty, str(empty[:3]))
+
+
+def parent_losses(result):
+    """每个封闭父块被子块接住之后丢失的体积比例
+
+    result 开启保留父碎块时的切割结果
+    返回 [(父块名, 丢失比例), ...]
+    """
+    parents = [obj for obj in bpy.data.objects if obj.get(shard_contract.PARENT_MARK)]
+    children = {}
+    for shard in result.shards:
+        children.setdefault(shard_contract.parent_path(shard), []).append(shard)
+    losses = []
+    for parent in parents:
+        # 开放的父块没有确定的体积, 只比较封闭的
+        if not closed_mesh(parent):
+            continue
+        kids = children.get(tuple(parent[shard_contract.PATH_MARK]), [])
+        whole = volume(parent)
+        losses.append((parent.name, (whole - sum(map(volume, kids))) / whole))
+    return losses
+
+
+def case_torus_defaults(use_check=True):
+    """默认参数切割圆环: 细分时 Exact 求交偶尔把整块胞体的内外判反, 复核后每个父块的体积都被子块接住
+
+    use_check 为假时关掉内外复核, 用来确认这个场景确实会触发判反
+    """
+    reset()
+    # 与 reference/circle.blend 里的环体同样尺寸与分段: 外径 2.5, 管径 0.5, 576 个顶点
+    bpy.ops.mesh.primitive_torus_add(
+        major_radius=1.0, minor_radius=0.25, major_segments=48, minor_segments=12
+    )
+    source = bpy.context.active_object
+    with ExitStack() as stack:
+        if not use_check:
+            stack.enter_context(patch.object(boolean, "misclassified", return_value=False))
+        result = cut([source], {"use_keep_parents": True}, "Out")
+    losses = parent_losses(result)
+    worst = max(losses, key=lambda item: item[1], default=("", 0.0))
+    print(
+        f"   {len(result.shards)} 块碎块, {len(losses)} 个封闭父块, 最多丢失 {worst[1]:.1%} ({worst[0]})"
+    )
+    return worst[1]
+
+
+def case_torus_hole():
+    """圆环默认参数不缺碎块; 关掉复核时同一场景会缺, 说明用例确实覆盖了这个问题"""
+    without = case_torus_defaults(use_check=False)
+    check("关掉复核时确实会丢几何 (用例有效)", without > TORUS_LOSS_RATIO, f"{without:.1%}")
+    worst = case_torus_defaults()
+    check("复核后每个父块的体积都被子块接住", worst < TORUS_LOSS_RATIO, f"{worst:.1%}")
+
+
+def case_misclassified():
+    """内外复核本身: 空结果与整块结果按表面相交与中心位置复核, 远离原点时也不误报"""
+    reset()
+    depsgraph_of = bpy.context.evaluated_depsgraph_get
+    # 放在 x = 10: 世界坐标的浮点精度约 1e-6, 射线步长取得太小会反复命中同一个面而误判
+    big = cube("Big", half=2.0, location=(10.0, 0.0, 0.0))
+    inner = cube("Inner", half=0.5, location=(10.0, 0.0, 0.0))
+    outer = cube("Outer", half=0.5, location=(20.0, 0.0, 0.0))
+    across = cube("Across", half=0.5, location=(12.0, 0.0, 0.0))
+    bpy.context.view_layer.update()
+    snapshot = boolean.inspect_source(big, depsgraph_of())
+    shape = boolean.source_shape(big, depsgraph_of(), snapshot)
+    empty = bpy.data.meshes.new("Empty")
+    cases = (
+        ("整块在内的胞体得到整块结果", inner, inner.data, False),
+        ("整块在内的胞体得到空结果", inner, empty, True),
+        ("整块在外的胞体得到空结果", outer, empty, False),
+        ("整块在外的胞体得到整块结果", outer, outer.data, True),
+        ("表面相交的胞体得到空结果", across, empty, True),
+        ("表面相交的胞体得到整块结果", across, across.data, True),
+    )
+    for label, cell, mesh, expected in cases:
+        found = boolean.misclassified(cell, mesh, cell.matrix_world, shape)
+        check(f"{label}: {'判错' if expected else '可信'}", found == expected)
 
 
 def torus_source(seed_count=None):
@@ -1263,6 +1345,8 @@ CASES = (
     case_seed_jitter,
     case_materials_layers,
     case_boolean_policy,
+    case_torus_hole,
+    case_misclassified,
     case_weld_cleanup,
     case_isolation,
     case_batching,

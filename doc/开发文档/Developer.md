@@ -36,12 +36,11 @@ ruff 还会检查圈复杂度（上限 10）与函数参数个数（上限 8）�
 文档字符串示例：
 
 ```python
-def bone_name(path, padding=PATH_PADDING):
-    """碎块路径对应的骨骼名: b_ 加逐层序号, 例如 b_003_002; 只含 ASCII
+def bone_name(number):
+    """会动碎块的骨骼名: b_ 加从 1 开始的顺序号, 例如 b_001; 只含 ASCII
 
-    path 碎块路径, 逐层序号的序列
-    padding 每个序号补零到的位数
-    返回 骨骼名; 超过字节上限时返回 None
+    number 从 0 开始的顺序号
+    返回 骨骼名
     """
 ```
 

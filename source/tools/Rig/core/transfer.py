@@ -79,17 +79,19 @@ def _write_channel(action, armature, path, frames, values, size, interpolation=L
         curve.update()
 
 
-def write_action(tracker, armature, animated, toggles=()):
-    """为骨架建动作并写入
+def write_action(tracker, armature, animated, toggles=(), suffix=""):
+    """为骨架建动作, 设为骨架的当前动作并写入
 
     动作先赋给骨架再建曲线, 槽位随之自动建立并分配
     tracker 创建账本
     armature 骨架物体
     animated [(骨骼名, 轨迹, 静止世界矩阵), ...], 只含会动的碎块
     toggles [(骨骼名, [(帧, 缩放), ...]), ...], 原物体切换的缩放开关; 仅碎块时为空
+    suffix 动作名后缀, 待机动作用它与破碎动作区分
     返回 动作
     """
-    action = tracker.track("actions", bpy.data.actions.new(ACTION_PREFIX + armature.name))
+    name = ACTION_PREFIX + armature.name + suffix
+    action = tracker.track("actions", bpy.data.actions.new(name))
     armature.animation_data_create().action = action
     for bone_name, track, rest in animated:
         pose_bone = armature.pose.bones[bone_name]

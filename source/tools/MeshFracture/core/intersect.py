@@ -29,17 +29,18 @@ def _add_intersection(cell, obj, snapshot, hide_faces):
     return modifier
 
 
-def _bake_intersection(cell, modifier, snapshot, depsgraph, tracker):
+def _bake_intersection(cell, modifier, sources, depsgraph, tracker):
     """取布尔求值结果替换胞体网格并移除修改器; 旧网格登记为待删
 
     cell 胞体物体
     modifier 它的布尔修改器
-    snapshot BooleanSource
+    sources (BooleanSource, SourceShape)
     depsgraph 求值用的依赖图
     tracker 回收账本
     返回 新网格
     """
-    with boolean.validated_evaluation(cell, modifier, snapshot, depsgraph) as evaluated:
+    snapshot, shape = sources
+    with boolean.validated_evaluation(cell, modifier, snapshot, depsgraph, shape) as evaluated:
         # 直接复制依赖图里已求值的网格, 避免按全部数据层重新求值修改器栈
         mesh = tracker.track("meshes", bpy.data.meshes.new_from_object(evaluated))
     old_mesh = cell.data
@@ -84,9 +85,11 @@ def collect(snapshot, cells, modifiers, settings, batch, depsgraph):
     tracker = batch.naming.tracker
     bake = bakes_booleans(settings)
     results, multi = [], set()
+    # 被切物体的世界网格只建一次, 这一批胞体复核内外判定时共用
+    shape = boolean.source_shape(modifiers[0].object, depsgraph, snapshot) if modifiers else None
     for cell, modifier in zip(cells, modifiers, strict=True):
         if bake:
-            mesh = _bake_intersection(cell, modifier, snapshot, depsgraph, tracker)
+            mesh = _bake_intersection(cell, modifier, (snapshot, shape), depsgraph, tracker)
             parts = cleanup.weld_intersection(mesh, snapshot.weld_distance)
             if not mesh.polygons:
                 # 求交为空说明胞体落在源物体之外
@@ -96,8 +99,8 @@ def collect(snapshot, cells, modifiers, settings, batch, depsgraph):
             if parts > 1:
                 multi.add(cell)
         else:
-            # 保留修改器, 只校验求值结果是否越界
-            with boolean.validated_evaluation(cell, modifier, snapshot, depsgraph):
+            # 保留修改器, 只校验求值结果; 需要时修改器会开启自交处理并留着这个设置
+            with boolean.validated_evaluation(cell, modifier, snapshot, depsgraph, shape):
                 pass
         results.append(cell)
         if settings.use_debug_redraw:

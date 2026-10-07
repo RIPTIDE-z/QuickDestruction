@@ -1,8 +1,11 @@
 """原物体切换 - 绑定方式为原物体切换时, 把源物体做成一段蒙皮网格, 并给出各骨骼的缩放开关
 
-原物体从起始帧显示到隐藏帧之前, 隐藏帧起缩到隐藏缩放; 碎块在出现帧之前是隐藏缩放, 出现帧起恢复原尺寸
-两个帧分开设置: 可以让两者重叠一段, 也可以中间空一段; 默认都是第 1 帧, 配合从第 0 帧开始的烘焙
-隐藏缩放默认 0.01 而不是 0: 部分引擎 (虚幻) 不接受零缩放的骨骼
+每个骨架有两个动作: 待机与破碎, 游戏导出分别写成两个文件
+待机: 从起始帧起持续若干帧的静止循环, 只显示原物体, 碎块都是隐藏缩放, 会动碎块的骨骼停在静止姿态
+破碎: 原物体从隐藏帧起缩到隐藏缩放; 碎块在出现帧之前是隐藏缩放, 出现帧起恢复原尺寸并播放破碎动画
+两个帧分开设置: 可以让两者重叠一段, 也可以中间空一段; 默认都是第 0 帧, 即破碎动画一开始就只有碎块
+两个动作给同一批骨骼的同一批通道打关键帧: 导出时未打关键帧的通道会沿用上一个动作留下的姿态
+隐藏缩放默认 0.001 而不是 0: 部分引擎 (虚幻) 不接受零缩放的骨骼
 缩放是骨骼上的常量插值关键帧: 原物体与不动碎块的骨骼头部在资产中心, 会动碎块的在各自的静止质心,
 引擎在相邻两帧之间插值时每块都绕自己的中心缩放, 不会从世界原点飞过来
 """
@@ -12,9 +15,10 @@ from mathutils import Vector
 
 from ....common import asset
 from ..errors import RigError
+from .tracks import Track
 
 # 原物体蒙皮网格归属的骨骼名
-INTACT_BONE = "intact"
+INTACT_BONE = "origin"
 # 原物体切换时不动碎块归属的骨骼名: 它们也要在切换前隐藏, 所以不能像仅碎块那样归 root
 STILL_BONE = "still"
 # 原物体切换在 root 之外最多多出的骨骼数: 原物体骨骼与不动碎块骨骼
@@ -49,6 +53,32 @@ def toggle_keys(frame_start, frame, visible_before, hidden):
     if frame <= frame_start:
         return [(frame_start, after)]
     return [(frame_start, before), (frame, after)]
+
+
+def idle_keys(frame_start, length, visible, hidden):
+    """待机动作里一根骨骼的缩放: 起止两帧同一个值
+
+    frame_start 模拟起始帧, 待机动作从它开始
+    length 待机长度, 帧
+    visible 为真时缩放为 1 (原物体), 否则为隐藏缩放 (碎块)
+    hidden 隐藏时的缩放
+    返回 [(帧, 缩放), (帧, 缩放)]
+    """
+    scale = 1.0 if visible else hidden
+    return [(frame_start, scale), (frame_start + length, scale)]
+
+
+def idle_track(rest, frame_start, length):
+    """待机动作里会动碎块的轨迹: 起止两帧都在静止姿态
+
+    rest 碎块的静止世界矩阵
+    frame_start 模拟起始帧
+    length 待机长度, 帧
+    返回 Track
+    """
+    location, rotation, _scale = rest.decompose()
+    frames = [frame_start, frame_start + length]
+    return Track(frames, [location, location.copy()], [rotation, rotation.copy()])
 
 
 def pivot(rests):

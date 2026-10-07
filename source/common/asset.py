@@ -36,6 +36,8 @@ RIG_MARK = "_qd_rig"
 RIG_COLLECTION_MARK = "_qd_rig_collection"
 # 根集合上的导出记录: 对应的绑定与已写出的文件
 EXPORT_MARK = "_qd_export"
+# 骨架物体上的待机动作, ID 指针型自定义属性: 原物体切换时另导出一个待机文件; 它也让动作保存时不被丢弃
+IDLE_ACTION_MARK = "_qd_idle_action"
 # 绑定产物 (导出集合, 骨架, 蒙皮网格, 动作) 的阶段标记值
 RIG_STAGE = "rig"
 # 弹体子物体上记下的原位置, 飞行动画写入前保存, 复位时放回
@@ -475,6 +477,24 @@ def clear_rig_result(root):
         root.pop(key, None)
 
 
+def idle_action(armature):
+    """骨架的待机动作
+
+    armature 骨架物体
+    返回 动作; 仅碎块的绑定没有待机动作, 为 None
+    """
+    return armature.get(IDLE_ACTION_MARK)
+
+
+def set_idle_action(armature, action):
+    """记下骨架的待机动作
+
+    armature 骨架物体
+    action 待机动作
+    """
+    armature[IDLE_ACTION_MARK] = action
+
+
 def remove_rig_collection(collection, asset_id):
     """删除导出集合里属于本资产绑定阶段的物体, 以及因此不再有使用者的物体数据与动作
 
@@ -487,8 +507,9 @@ def remove_rig_collection(collection, asset_id):
     linked = {}
     for obj in objects:
         animation = obj.animation_data.action if obj.animation_data else None
-        # 字典去重并保持顺序: 几个物体可能共用同一份数据
-        linked.update(dict.fromkeys(item for item in (obj.data, animation) if item is not None))
+        # 字典去重并保持顺序: 几个物体可能共用同一份数据; 骨架的待机动作随骨架一起删除
+        items = (obj.data, animation, idle_action(obj))
+        linked.update(dict.fromkeys(item for item in items if item is not None))
     # 先删物体, 物体数据与动作的使用者随之减少, 之后才能判断它们是否还被别处使用
     # 批量删除: 逐个删除数据块的代价随数据库规模增长
     if objects:

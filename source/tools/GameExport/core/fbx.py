@@ -1,10 +1,13 @@
-"""FBX 导出 - 每个骨架连同它的蒙皮网格写成一个 FBX 文件, 轴向与缩放按引擎预设
+"""FBX 导出 - 每个骨架连同它的蒙皮网格写成 FBX 文件, 轴向与缩放按引擎预设
 
-导出期间临时把场景帧范围设为模拟范围, 并改变选择与活动物体; 无论成败结束时都还原
+骨架带待机动作 (原物体切换) 时写两个文件: 待机与破碎, 否则写一个
+导出期间临时把场景帧范围设为这个文件的动画范围, 待机文件还临时换上待机动作, 并改变选择与活动物体;
+无论成败结束时都还原
 """
 
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import bpy
 
@@ -15,8 +18,10 @@ from ..constants import (
     ARMATURE_HOLD_NAME,
     ARMATURE_NODE_NAME,
     ASSET_TOKEN,
+    DESTRUCTION_SUFFIX,
     FBX_EXTENSION,
     FBX_FIXED,
+    IDLE_SUFFIX,
 )
 from ..errors import ExportError
 
@@ -104,22 +109,57 @@ def resolve_directory(values):
     return Path(bpy.path.abspath(raw))
 
 
-def target_files(root, values):
-    """求一个资产导出的文件路径, 一个骨架一个
+class Take(NamedTuple):
+    """要写出的一个 FBX 文件"""
+
+    # 骨架物体, 连同以它为父级的蒙皮网格一起写出
+    armature: object
+    # 文件路径
+    path: Path
+    # 导出期间临时换上的动作; None 表示用骨架的当前动作 (破碎动作)
+    action: object
+    # 动画的起止帧
+    frames: tuple
+
+
+def takes(root, values):
+    """一个资产要写出的全部文件
 
     root 资产根集合, 必须已经构建
     values 参数值, 提供目录与文件名
-    返回 路径列表; 骨架不止一个时文件名加两位序号
+    返回 Take 列表; 骨架不止一个时文件名加两位序号, 带待机动作的骨架再分待机与破碎两个文件
     """
     armatures, _meshes = export_objects(root)
     directory = resolve_directory(values)
     stem = _stem(root, values)
-    count = len(armatures)
-    return [
-        directory
-        / (f"{stem}{FBX_EXTENSION}" if count == 1 else f"{stem}_{index + 1:02d}{FBX_EXTENSION}")
-        for index in range(count)
-    ]
+    frames = tuple(asset.rig_record(root)["frames"])
+    found = []
+    for index, armature in enumerate(armatures):
+        base = stem if len(armatures) == 1 else f"{stem}_{index + 1:02d}"
+        idle = asset.idle_action(armature)
+        # 仅碎块: 一个文件, 用骨架当前的动作
+        if idle is None:
+            found.append(Take(armature, directory / f"{base}{FBX_EXTENSION}", None, frames))
+            continue
+        # 原物体切换: 待机文件用待机动作与它自己的帧范围, 破碎文件用当前动作与模拟范围
+        idle_frames = tuple(round(value) for value in idle.frame_range)
+        found.append(
+            Take(armature, directory / f"{base}{IDLE_SUFFIX}{FBX_EXTENSION}", idle, idle_frames)
+        )
+        found.append(
+            Take(armature, directory / f"{base}{DESTRUCTION_SUFFIX}{FBX_EXTENSION}", None, frames)
+        )
+    return found
+
+
+def target_files(root, values):
+    """求一个资产导出的文件路径
+
+    root 资产根集合, 必须已经构建
+    values 参数值, 提供目录与文件名
+    返回 路径列表, 与 takes 同序
+    """
+    return [take.path for take in takes(root, values)]
 
 
 def existing_files(root, values):
@@ -142,12 +182,12 @@ def _check_axes(values):
 
 
 def _set_frames(scene, log, first, last):
-    """导出期间把帧范围设为模拟范围; 按不会被互相钳制的顺序写入
+    """导出期间把帧范围设为这个文件的动画范围; 按不会被互相钳制的顺序写入
 
     scene 场景
     log 写前快照, 结束时由调用方撤回
-    first 模拟起始帧
-    last 模拟结束帧
+    first 起始帧
+    last 结束帧
     """
     order = ("frame_start", "frame_end")
     # 新起始帧不早于旧结束帧时先写结束帧, 否则先写起始帧, 两者都不会被对方钳制
@@ -168,6 +208,28 @@ def _take_node_name(armature, log):
     if holder is not None and holder != armature:
         log.set(holder, "name", ARMATURE_HOLD_NAME)
     log.set(armature, "name", ARMATURE_NODE_NAME)
+
+
+def _use_action(armature, action, log):
+    """导出期间给骨架换上另一个动作, 撤回时连同槽位一起恢复
+
+    armature 骨架物体
+    action 要换上的动作
+    log 写前快照, 导出结束后由调用方撤回
+    """
+    data = armature.animation_data
+    old_action, old_slot = data.action, data.action_slot
+
+    def restore():
+        """先恢复动作再恢复槽位: 槽位必须属于当前动作"""
+        data.action = old_action
+        data.action_slot = old_slot
+
+    log.add(restore)
+    data.action = action
+    # 换上动作时 Blender 按上次的槽位名找槽位, 找不到时取它唯一的槽位
+    if data.action_slot is None and action.slots:
+        data.action_slot = action.slots[0]
 
 
 def _select(context, objects, active):
@@ -197,47 +259,58 @@ def export_files(context, root, values, overwrite):
     if not hasattr(bpy.ops.export_scene, "fbx"):
         raise ExportError(NO_ADDON_MESSAGE)
     _check_axes(values)
-    paths = target_files(root, values)
+    planned = takes(root, values)
+    paths = [take.path for take in planned]
     # 先全部核对再动手: 多个文件时不能写一半才发现后面的已存在
     if not overwrite:
         for path in paths:
             if path.exists():
                 raise ExportError(EXISTS_MESSAGE, path=str(path))
     paths[0].parent.mkdir(parents=True, exist_ok=True)
-    armatures, meshes = export_objects(root)
-    record = asset.rig_record(root)
+    _armatures, meshes = export_objects(root)
     scene, view = context.scene, context.view_layer
-    # 记下现场, 结束时还原: 导出需要改选择, 活动物体与帧范围
+    # 记下现场, 结束时还原: 导出需要改选择, 活动物体与当前帧
     selection = [obj for obj in view.objects if obj.select_get()]
     active, frame = view.objects.active, scene.frame_current
-    log = WriteLog()
     try:
-        _set_frames(scene, log, *record["frames"])
-        # 一个骨架连同它的蒙皮网格写一个文件
-        for armature, path in zip(armatures, paths, strict=True):
-            members = [obj for obj in meshes if obj.parent == armature]
-            _select(context, [armature, *members], armature)
-            # 每个骨架单独改名并在写完后立刻改回: 同一时刻只能有一个物体叫 Armature
-            names = WriteLog()
-            try:
-                _take_node_name(armature, names)
-                bpy.ops.export_scene.fbx(
-                    filepath=str(path),
-                    use_selection=True,
-                    axis_forward=values.axis_forward,
-                    axis_up=values.axis_up,
-                    apply_scale_options=values.apply_scale,
-                    global_scale=values.global_scale,
-                    **FBX_FIXED,
-                )
-            finally:
-                names.undo()
+        for take in planned:
+            _write_take(context, take, meshes, values)
     finally:
-        # 无论成败都还原帧范围, 选择, 活动物体与当前帧
-        log.undo()
+        # 无论成败都还原选择, 活动物体与当前帧
         _select(context, selection, active)
         scene.frame_set(frame)
     return paths
+
+
+def _write_take(context, take, meshes, values):
+    """写出一个文件: 骨架连同它的蒙皮网格; 期间的改名, 换动作与帧范围在写完后立刻撤回
+
+    同一时刻只能有一个物体叫 Armature, 所以每个文件单独改名
+    context Blender 上下文
+    take 要写出的文件
+    meshes 资产的全部蒙皮网格
+    values 参数值, 提供轴向与缩放
+    """
+    armature = take.armature
+    members = [obj for obj in meshes if obj.parent == armature]
+    _select(context, [armature, *members], armature)
+    log = WriteLog()
+    try:
+        _take_node_name(armature, log)
+        _set_frames(context.scene, log, *take.frames)
+        if take.action is not None:
+            _use_action(armature, take.action, log)
+        bpy.ops.export_scene.fbx(
+            filepath=str(take.path),
+            use_selection=True,
+            axis_forward=values.axis_forward,
+            axis_up=values.axis_up,
+            apply_scale_options=values.apply_scale,
+            global_scale=values.global_scale,
+            **FBX_FIXED,
+        )
+    finally:
+        log.undo()
 
 
 def all_targets(roots, values):

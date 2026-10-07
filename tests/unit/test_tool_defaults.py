@@ -4,8 +4,8 @@
     几个工具的默认值决定了新场景的开箱体验, 而且彼此有一致性要求:
     物理设置默认休眠, 计划预览默认显示, 游戏导出默认面向虚幻引擎且轴向缩放的默认值等于引擎预设,
     默认只允许 ASCII 名称, 预设地面足够大, 烘焙默认 0 到 90 帧而不跟随场景,
-    原物体切换的隐藏缩放默认 0.01 (虚幻引擎不接受 0 缩放) 且两个开关帧默认第 1 帧,
-    生成碎块后默认隐藏源物体
+    原物体切换的隐藏缩放默认 0.001 (虚幻引擎不接受 0 缩放), 待机 2 帧, 两个开关帧默认第 0 帧,
+    生成碎块后默认隐藏源物体, 递归细分默认先切大碎块
     轴向缩放的默认值不会触发引擎联动回调, 两者不一致时新场景的面板会显示一个引擎却用另一套轴向导出
 测试过程:
     直接读各工具的参数规格与常量, 不启动 Blender
@@ -80,19 +80,28 @@ def test_bake_range_defaults_to_0_90():
 
 
 def test_swap_defaults():
-    """原物体切换的隐藏缩放默认 0.01 而不是 0; 原物体隐藏帧与碎块出现帧默认都是第 1 帧"""
+    """原物体切换: 隐藏缩放默认 0.001 而不是 0; 待机动画默认 2 帧;
+    破碎动画的两个开关帧默认第 0 帧, 即破碎动画一开始原物体就隐藏, 碎块就显示
+    """
     defaults = rig_settings.SCHEMA.defaults()
     LOG.info(
-        "hidden scale %s, hide %s, show %s",
+        "hidden scale %s, idle %s, hide %s, show %s",
         defaults["hidden_scale"],
+        defaults["idle_length"],
         defaults["intact_hide_frame"],
         defaults["shards_show_frame"],
     )
-    assert defaults["hidden_scale"] == 0.01
-    assert defaults["intact_hide_frame"] == 1
-    assert defaults["shards_show_frame"] == 1
+    assert defaults["hidden_scale"] == 0.001
+    assert defaults["idle_length"] == 2
+    assert defaults["intact_hide_frame"] == 0
+    assert defaults["shards_show_frame"] == 0
 
 
 def test_source_hidden_by_default():
     """生成碎块后默认隐藏源物体"""
     assert fracture_settings.SCHEMA.defaults()["hide_source"] is True
+
+
+def test_split_priority_defaults_to_big_shards():
+    """递归细分名额不够时默认先切大碎块"""
+    assert fracture_settings.SCHEMA.defaults()["recursion_chance_select"] == "SIZE_MAX"

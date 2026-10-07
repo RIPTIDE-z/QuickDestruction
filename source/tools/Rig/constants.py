@@ -19,6 +19,8 @@ MESH_SUFFIX = "_RigMesh"
 INTACT_SUFFIX = "_Intact"
 # 骨架动作名前缀, 后接骨架名
 ACTION_PREFIX = "QD_Rig_"
+# 待机动作名后缀, 加在骨架动作名之后
+IDLE_SUFFIX = "_Idle"
 
 # 蒙皮网格上记录来源的整数属性: 顶点所属碎块在资产里的序号, 点域
 # 属性不会进入 FBX; 检查与测试靠它们把蒙皮网格逐块对回碎块, 下游脚本也可以读

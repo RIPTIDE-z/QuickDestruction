@@ -1,7 +1,7 @@
 """绑定构建的划分与命名单元测试
 
 测试目的:
-    1. 骨骼命名: b_ 加逐层序号, 只含 ASCII, 超过 63 字节时返回 None, 退回顺序号命名
+    1. 骨骼命名: b_ 加从 1 开始的平铺顺序号, 只含 ASCII, 不超过 63 字节
     2. Morton 序: 空间上相近的点在序里相邻, 相同位置按序号排, 结果确定
     3. 容量: 上限减去 root 占的一个, 0 表示不限, 小于 2 的上限没有容量
     4. 划分: 每个骨架与每段网格都不超过容量, 不重不漏, 没有会动的碎块时仍有一个只有 root 的骨架
@@ -22,19 +22,12 @@ from source.tools.Rig.core import partition
 LOG = logging.getLogger(__name__)
 
 
-def test_bone_name_is_ascii_and_short():
-    """路径转成 b_ 加逐层序号; 序号不足三位补零, 超过三位照写"""
-    assert partition.bone_name((3, 2)) == "b_003_002"
-    assert partition.bone_name((1,)) == "b_001"
-    assert partition.bone_name((1234, 5)) == "b_1234_005"
-
-
-def test_long_paths_fall_back():
-    """路径很深时名字超过 63 字节, 返回 None, 调用方退回顺序号命名"""
-    deep = tuple(range(1, 40))
-    assert partition.bone_name(deep) is None
-    assert partition.fallback_name(7) == "b_00007"
-    assert len(partition.fallback_name(99999).encode()) <= partition.BONE_NAME_BYTES
+def test_bone_name_is_flat_and_ascii():
+    """骨骼名平铺编号: b_ 加从 1 开始的顺序号, 不足三位补零, 超过三位照写, 始终在字节上限内"""
+    assert partition.bone_name(0) == "b_001"
+    assert partition.bone_name(41) == "b_042"
+    assert partition.bone_name(1233) == "b_1234"
+    assert len(partition.bone_name(10**6).encode("ascii")) <= partition.BONE_NAME_BYTES
 
 
 def test_morton_order_is_deterministic_and_local():

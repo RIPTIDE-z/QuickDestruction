@@ -192,7 +192,7 @@ PROPERTY_SPECS = {
                     "Shards whose origin is farthest from the 3D cursor first.",
                 ),
             ),
-            "default": "EVEN",
+            "default": "SIZE_MAX",
             "description": "How limited splitting is shared when the split fraction is below 1 "
             "or Shard Limit cannot fit a full round.",
         },

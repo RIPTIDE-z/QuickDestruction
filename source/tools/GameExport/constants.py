@@ -50,3 +50,6 @@ ARMATURE_HOLD_NAME = "QD_Armature_Hold"
 ASSET_TOKEN = "{asset}"
 # 导出文件的扩展名
 FBX_EXTENSION = ".fbx"
+# 原物体切换的两个文件的后缀: 待机与破碎, 加在文件名 (与骨架序号) 之后
+IDLE_SUFFIX = "_Idle"
+DESTRUCTION_SUFFIX = "_Destruction"
