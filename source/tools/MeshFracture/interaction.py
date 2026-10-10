@@ -48,7 +48,14 @@ GROUPS = (
     ParamGroup("Seed Source", ("source",), draw=_draw_source),
     ParamGroup(
         "Cut Parameters",
-        ("first_cut_seeds", "recursion_clamp", "source_noise", "random_seed", "margin"),
+        (
+            "first_cut_seeds",
+            "recursion_clamp",
+            "source_noise",
+            "random_seed",
+            "margin",
+            CheckGrid(("use_fill",)),
+        ),
     ),
     ParamGroup(
         "Recursive Shatter",

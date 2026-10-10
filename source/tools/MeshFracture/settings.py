@@ -197,6 +197,18 @@ PROPERTY_SPECS = {
             "or Shard Limit cannot fit a full round.",
         },
     ),
+    # 是否把源网格当作实体填充, 关闭时只保留嵌套曲面之间的壳层
+    "use_fill": (
+        "BoolProperty",
+        {
+            "name": "Fill Solid",
+            "description": "Treat the source as a solid, so the space inside nested closed "
+            "surfaces is filled too. Turn it off for a hollow shell made of an outer and an "
+            "inner surface: shards then keep only the wall between them and never reach into "
+            "the cavity. It makes no difference for meshes without nested surfaces.",
+            "default": True,
+        },
+    ),
     # 是否把胞体的面设为平滑着色
     "use_smooth_faces": (
         "BoolProperty",
@@ -376,6 +388,16 @@ def recursion_rounds(values):
     return values.recursion if bakes_booleans(values) else 0
 
 
+def hollows_source(values):
+    """是否把源网格里嵌套的内层曲面当作空腔: 只在应用了布尔结果且关闭填充时才处理
+
+    保留布尔修改器时修改器引用的是源物体本身, 没有地方放修正后的临时操作数, 所以不处理
+    values 参数值或参数组
+    返回 当作空腔为真
+    """
+    return bakes_booleans(values) and not values.use_fill
+
+
 def uses_interior(values):
     """是否需要区分内部断面: 断面顶点组与锐边都要按面隐藏标记判定断面
 
@@ -429,6 +451,7 @@ ACTIVE_WHEN = {
     "use_sharp_edges": bakes_booleans,
     "use_interior_vgroup": bakes_booleans,
     "use_island_split": bakes_booleans,
+    "use_fill": bakes_booleans,
     "sub_cut_pieces": _recursing,
     "recursion_chance": _recursing,
     "recursion_chance_select": _recursing,

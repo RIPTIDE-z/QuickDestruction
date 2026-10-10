@@ -52,7 +52,7 @@ def _bake_intersection(cell, modifier, sources, depsgraph, tracker):
     return mesh
 
 
-def attach(obj, snapshot, cells, settings, batch):
+def attach(obj, snapshot, cells, settings, batch, operand=None):
     """给每个胞体挂上与被切物体求交的修改器; 还需要刷新视图层才会求值
 
     obj 被切的物体
@@ -60,6 +60,7 @@ def attach(obj, snapshot, cells, settings, batch):
     cells 胞体物体列表
     settings 参数值
     batch ShardBatch
+    operand 求交的操作数物体, 为 None 时就是被切物体本身; 面隐藏标记总是清在被切物体上
     返回 修改器列表, 与 cells 同序
     """
     if uses_interior(settings) and batch.first:
@@ -67,7 +68,8 @@ def attach(obj, snapshot, cells, settings, batch):
         obj.data.polygons.foreach_set("hide", [False] * len(obj.data.polygons))
         obj.data.update()
     hide_faces = finishes_interior(settings)
-    return [_add_intersection(cell, obj, snapshot, hide_faces) for cell in cells]
+    target = obj if operand is None else operand
+    return [_add_intersection(cell, target, snapshot, hide_faces) for cell in cells]
 
 
 def collect(snapshot, cells, modifiers, settings, batch, depsgraph):

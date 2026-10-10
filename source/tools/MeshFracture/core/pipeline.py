@@ -11,6 +11,7 @@ from ..settings import (
     bakes_booleans,
     finishes_interior,
     first_cut_seed_limit,
+    hollows_source,
     recursion_rounds,
     uses_interior,
 )
@@ -23,6 +24,7 @@ from . import (
     recursion,
     sampling,
     shard_objects,
+    shell,
 )
 from .isolation import Isolation
 from .naming import NamingPlan
@@ -120,7 +122,7 @@ def _prepare(context, job, settings, rng, depsgraph):
     settings 参数值
     rng 局部随机流
     depsgraph 求值用的依赖图
-    返回 (快照, 胞体列表, 修改器列表)
+    返回 (快照, 胞体列表, 修改器列表, 布尔操作数)
     """
     obj, batch, limit = job
     # 求值快照每次切割只取一次, 胞体构造与布尔求交共用
@@ -129,8 +131,12 @@ def _prepare(context, job, settings, rng, depsgraph):
     # 种子点数就已超限时, 在耗时的布尔求交之前报错
     _check_limit(len(points))
     cells = cell_objects.build_cells(context, obj, snapshot, points, settings, batch, rng)
-    modifiers = intersect.attach(obj, snapshot, cells, settings, batch)
-    return snapshot, cells, modifiers
+    # 关闭填充时, 首次切割的源物体里嵌套的内层曲面要翻成空腔; 递归的父块是上一次切割的产物, 已经带着空腔
+    operand = obj
+    if batch.first and hollows_source(settings):
+        operand = shell.hollow_operand(context, obj, depsgraph, batch)
+    modifiers = intersect.attach(obj, snapshot, cells, settings, batch, operand)
+    return snapshot, cells, modifiers, operand
 
 
 def _cut_jobs(context, jobs, settings, rng):
@@ -163,8 +169,12 @@ def _cut_jobs(context, jobs, settings, rng):
         context.view_layer.update()
         depsgraph = context.evaluated_depsgraph_get()
         outcomes = []
-        for (_obj, batch, _limit), (snapshot, cells, modifiers) in zip(jobs, prepared, strict=True):
+        for (obj, batch, _limit), (snapshot, cells, modifiers, operand) in zip(
+            jobs, prepared, strict=True
+        ):
             cells = intersect.collect(snapshot, cells, modifiers, settings, batch, depsgraph)
+            # 布尔结果已经取回, 修改器也已移除, 临时操作数不再被引用
+            shell.release_operand(batch.naming.tracker, obj, operand)
             if settings.use_recenter:
                 shard_objects.recenter(cells)
             batch.number(cells)
