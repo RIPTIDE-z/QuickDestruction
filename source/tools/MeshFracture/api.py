@@ -12,7 +12,7 @@ from types import MappingProxyType
 
 from ...common import asset
 from ...common.blender_context import preserve_selection
-from .core import diagnosis
+from .core import diagnosis, parts
 from .core.pipeline import run
 from .errors import MeshFractureError
 from .settings import SCHEMA
@@ -72,6 +72,28 @@ def generate_fragments(context, sources, config, *, rng=None):
     if settings.hide_source:
         hide_sources(context, by_source)
     # 映射包成只读视图, 调用方不能改动结果
+    return MeshFractureResult(
+        tuple(shards), MappingProxyType(by_source), MappingProxyType(by_asset), seconds
+    )
+
+
+def convert_parts(context, sources, config):
+    """把模型自带的部件直接当作碎块, 不切割; 输出与 generate_fragments 一致的资产
+
+    一个网格物体时按连通块拆成部件, 选中多个物体时每个物体是一个部件, 多个物体时另合成一个源物体
+    config 可以只给一部分字段, 用到输出集合, 命名, 重设原点与"让部件互不重叠"
+    context Blender 上下文, 物体模式
+    sources 源物体序列, 非网格物体被忽略
+    config 参数字典
+    返回 MeshFractureResult
+    """
+    settings = SCHEMA.resolve(config)
+    sources = tuple(sources)
+    with preserve_selection(context):
+        shards, by_source, by_asset, seconds = parts.run(context, sources, settings)
+    # 全部成功之后才隐藏源物体, 与切割一致
+    if settings.hide_source:
+        hide_sources(context, by_source)
     return MeshFractureResult(
         tuple(shards), MappingProxyType(by_source), MappingProxyType(by_asset), seconds
     )

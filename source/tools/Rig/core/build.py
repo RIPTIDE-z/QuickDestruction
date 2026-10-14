@@ -32,7 +32,7 @@ from ..constants import (
 )
 from ..errors import RigError
 from ..settings import BUILD_FIELDS, SWAP
-from . import bones, check, interior, merge, swap, tracks, transfer
+from . import bones, check, interior, merge, seamless, swap, tracks, transfer
 from .merge import Entry
 from .partition import ROOT_BONE, bone_name, partition
 
@@ -40,6 +40,8 @@ from .partition import ROOT_BONE, bone_name, partition
 NO_SIMULATION_MESSAGE = 'Asset "{name}" has no current simulation; bake it first'
 # 碎块有父物体时的错误: 导出把碎块的世界姿态烘进骨架, 父级会让世界姿态与动画不一致
 PARENTED_MESSAGE = 'Shard "{name}" has a parent; unparent it first'
+# 模拟成果里没有锚定记录时的错误: 旧版本烘焙的成果
+NO_ANCHOR_MESSAGE = "The simulation has no anchor record; bake it again to merge anchored shards"
 # 缺少静止姿态时的错误
 NO_REST_MESSAGE = 'Shard "{name}" has no rest pose; apply physics again'
 # 校验失败时的错误
@@ -73,6 +75,8 @@ class RigResult:
     moving: int
     # 不动的碎块数
     static: int
+    # 合并成静止整体的碎块数
+    merged: int
     # 骨架数
     armatures: int
     # 蒙皮网格数
@@ -111,12 +115,18 @@ class Inputs(NamedTuple):
     items: list
     # 静止世界矩阵, 与 items 同序
     rests: list
-    # 会动的碎块的骨骼名, 与 moving 同序
+    # 有骨骼的碎块的骨骼名, 与 bound 同序
     names: list
-    # 会动的碎块在 items 里的序号
-    moving: list
-    # 不动的碎块在 items 里的序号
-    still: list
+    # 有骨骼的碎块在 items 里的序号, 按路径顺序; 绑定静止碎块时是全部碎块, 否则只有会动的
+    bound: list
+    # 没有骨骼的碎块在 items 里的序号: 不绑定静止碎块时, 不动的碎块并入 root 或 still
+    loose: list
+    # 带动画关键帧的碎块在 items 里的序号: 只有会动的碎块, 绑了骨骼的不动碎块停在静止姿态
+    animated: frozenset
+    # 合并成静止整体的碎块在 items 里的序号: 设计上静止的碎块, 没有骨骼也不逐块进蒙皮网格
+    base: list
+    # 静止整体的网格, 世界坐标, 与未破碎的源物体一致; 没有合并时为 None
+    base_mesh: object
     # {碎块名: 轨迹}
     tracked: dict
     # 原物体切换的输入; 仅碎块时为 None
@@ -179,14 +189,15 @@ def _read(root):
     return result, items, rests, tracks.read_tracks(items)
 
 
-def _bone_names(moving):
-    """给会动的碎块起骨骼名: 按碎块路径的顺序平铺编号, b_001, b_002, ...
+def _bone_names(bound):
+    """给有骨骼的碎块起骨骼名: 按碎块路径的顺序平铺编号, b_001, b_002, ...
 
-    碎块列表已按路径排序, 所以编号确定; 骨骼到碎块的映射另记在绑定记录里
-    moving 会动的碎块在碎块列表里的序号
-    返回 与 moving 同序的骨骼名列表
+    碎块列表已按路径排序, 所以编号确定; 绑定静止碎块时每块碎块都有骨骼, 编号与碎块一一对应,
+    不随模拟里哪些碎块会动而变化; 骨骼到碎块的映射另记在绑定记录里
+    bound 有骨骼的碎块在碎块列表里的序号
+    返回 与 bound 同序的骨骼名列表
     """
-    return [bone_name(number) for number in range(len(moving))]
+    return [bone_name(number) for number in range(len(bound))]
 
 
 def _make_collection(context, tracker, name):
@@ -202,22 +213,26 @@ def _make_collection(context, tracker, name):
     return collection
 
 
-def _segment_entries(inputs, segment, statics, still_group):
-    """一段网格要合并的碎块: 本段会动的碎块各归自己的骨骼, statics 是要并入这一段的不动碎块
+def _segment_entries(inputs, segment, statics, still_group, with_base):
+    """一段网格要合并的碎块: 本段有骨骼的碎块各归自己的骨骼, statics 是要并入这一段的无骨骼碎块
 
     inputs 构建输入
-    segment 本段包含的会动碎块在 moving 里的位置
-    statics 并入本段的不动碎块在 items 里的序号
-    still_group 不动碎块归属的顶点组名
+    segment 本段包含的碎块在 bound 里的位置
+    statics 并入本段的无骨骼碎块在 items 里的序号
+    still_group 无骨骼碎块与静止整体归属的顶点组名
+    with_base 为真时本段还带上静止整体
     返回 Entry 列表
     """
-    items, rests, names, moving = inputs.items, inputs.rests, inputs.names, inputs.moving
+    items, rests, names, bound = inputs.items, inputs.rests, inputs.names, inputs.bound
     entries = [
-        Entry(items[moving[position]], rests[moving[position]], names[position], moving[position])
+        Entry(items[bound[position]], rests[bound[position]], names[position], bound[position])
         for position in segment
     ]
-    # 不动的碎块全部归同一个顶点组: 仅碎块时是 root, 原物体切换时是能被隐藏的 still
+    # 无骨骼的碎块全部归同一个顶点组: 仅碎块时是 root, 原物体切换时是能被隐藏的 still
     entries += [Entry(items[index], rests[index], still_group, index) for index in statics]
+    # 静止整体已经在世界坐标, 不对应某一块碎块, 序号记 -1
+    if with_base and inputs.base_mesh is not None:
+        entries.append(Entry(None, None, still_group, -1, inputs.base_mesh))
     return entries
 
 
@@ -232,9 +247,9 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
     inputs 构建输入
     values 参数值
     asset_id 资产标识, 写到动作上
-    返回 (骨架列表, 网格列表, {骨骼名: 碎块名}, 每个骨架包含的会动碎块位置列表)
+    返回 (骨架列表, 网格列表, {骨骼名: 碎块名}, 每个骨架包含的碎块在 bound 里的位置列表)
     """
-    items, rests, names, moving, still, _tracked, plan_swap = inputs
+    items, rests, names, bound, loose, _animated, base, _base_mesh, _tracked, plan_swap = inputs
     still_group = ROOT_BONE if plan_swap is None else swap.STILL_BONE
     armature_objects, mesh_objects, mapping, per_armature = [], [], {}, []
     for armature_index, armature in enumerate(plan):
@@ -244,17 +259,17 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
         specs = [
             (
                 names[position],
-                rests[moving[position]].translation,
-                bones.bone_length(items[moving[position]]),
+                rests[bound[position]].translation,
+                bones.bone_length(items[bound[position]]),
             )
             for position in members
         ]
         lengths = [spec[2] for spec in specs]
-        # 原物体切换: 第一个骨架另带原物体骨骼, 有不动碎块时再带 still 骨骼, 头部都在资产中心
+        # 原物体切换: 第一个骨架另带原物体骨骼, 有无骨骼的不动碎块或静止整体时再带 still 骨骼, 头部都在资产中心
         if plan_swap is not None and armature_index == 0:
             length = max(lengths, default=1.0)
             specs.append((swap.INTACT_BONE, plan_swap.pivot, length))
-            if still:
+            if loose or base:
                 specs.append((swap.STILL_BONE, plan_swap.pivot, length))
         obj = bones.make_armature(
             context, tracker, armature_name, collection, specs, max(lengths, default=1.0)
@@ -262,11 +277,12 @@ def _build_geometry(context, tracker, collection, label, plan, inputs, values, a
         armature_objects.append(obj)
         per_armature.append(members)
         for position in members:
-            mapping[names[position]] = items[moving[position]].name
+            mapping[names[position]] = items[bound[position]].name
         for segment_index, segment in enumerate(armature.segments):
-            # 不动的碎块并入第一个骨架的第一段
-            statics = still if armature_index == 0 and segment_index == 0 else ()
-            entries = _segment_entries(inputs, segment, statics, still_group)
+            # 无骨骼的碎块与静止整体并入第一个骨架的第一段
+            first = armature_index == 0 and segment_index == 0
+            statics = loose if first else ()
+            entries = _segment_entries(inputs, segment, statics, still_group, first)
             mesh_name = _numbered(label + MESH_SUFFIX, segment_index, len(armature.segments))
             # 多个骨架时网格名带骨架序号与段序号, 避免不同骨架的网格重名
             if len(plan) > 1:
@@ -295,14 +311,16 @@ def _write_animations(tracker, obj, index, members, inputs, asset_id):
     tracker 创建账本
     obj 骨架物体
     index 骨架序号
-    members 这个骨架里会动碎块在 moving 里的位置
+    members 这个骨架里的碎块在 bound 里的位置
     inputs 构建输入
     asset_id 资产标识, 写到动作上
     """
     plan_swap = inputs.swap
-    # 每块会动碎块: (骨骼名, 碎块序号)
-    bones_here = [(inputs.names[position], inputs.moving[position]) for position in members]
+    # 这个骨架里每块有骨骼的碎块: (骨骼名, 碎块序号)
+    bones_here = [(inputs.names[position], inputs.bound[position]) for position in members]
     bone_names = [name for name, _index in bones_here]
+    # 只有会动的碎块写位置与旋转关键帧; 绑了骨骼的不动碎块没有关键帧, 一直停在静止姿态, 只参与缩放开关
+    moving_here = [(name, index) for name, index in bones_here if index in inputs.animated]
     if plan_swap is not None:
         still_poses = [
             (
@@ -310,16 +328,16 @@ def _write_animations(tracker, obj, index, members, inputs, asset_id):
                 swap.idle_track(inputs.rests[i], plan_swap.start, plan_swap.length),
                 inputs.rests[i],
             )
-            for name, i in bones_here
+            for name, i in moving_here
         ]
-        toggles = _toggles(plan_swap, bone_names, index, inputs.still, idle=True)
+        toggles = _toggles(plan_swap, bone_names, index, [*inputs.loose, *inputs.base], idle=True)
         idle = transfer.write_action(tracker, obj, still_poses, toggles, IDLE_SUFFIX)
         asset.claim(idle, asset_id, asset.RIG_STAGE)
         asset.set_idle_action(obj, idle)
     animated = [
-        (name, inputs.tracked[inputs.items[i].name], inputs.rests[i]) for name, i in bones_here
+        (name, inputs.tracked[inputs.items[i].name], inputs.rests[i]) for name, i in moving_here
     ]
-    toggles = _toggles(plan_swap, bone_names, index, inputs.still)
+    toggles = _toggles(plan_swap, bone_names, index, [*inputs.loose, *inputs.base])
     action = transfer.write_action(tracker, obj, animated, toggles)
     asset.claim(action, asset_id, asset.RIG_STAGE)
 
@@ -330,9 +348,9 @@ def _toggles(plan_swap, bone_names, armature_index, still, idle=False):
     破碎动作: 碎块骨骼在出现帧之前是隐藏缩放, 原物体骨骼从隐藏帧起缩到隐藏缩放
     待机动作: 原物体骨骼一直是 1, 碎块骨骼一直是隐藏缩放
     plan_swap SwapPlan; 仅碎块时为 None, 此时没有开关
-    bone_names 这个骨架里会动碎块的骨骼名
+    bone_names 这个骨架里全部碎块的骨骼名, 含绑了骨骼的不动碎块
     armature_index 骨架序号, 原物体与 still 骨骼只在第一个骨架里
-    still 不动碎块的序号列表, 为空时没有 still 骨骼
+    still 没有骨骼的不动碎块的序号列表, 为空时没有 still 骨骼
     idle 为真时给出待机动作的开关
     返回 [(骨骼名, [(帧, 缩放), ...]), ...]
     """
@@ -346,7 +364,7 @@ def _toggles(plan_swap, bone_names, armature_index, still, idle=False):
             return swap.idle_keys(start, plan_swap.length, visible, scale)
         return swap.toggle_keys(start, frame, visible, scale)
 
-    # 出现帧之前要隐藏的骨骼: 本骨架会动的碎块, 第一个骨架再加上不动碎块的 still
+    # 出现帧之前要隐藏的骨骼: 本骨架全部有骨骼的碎块, 第一个骨架再加上无骨骼不动碎块的 still
     hidden = list(bone_names)
     toggles = []
     # 原物体与 still 骨骼只建在第一个骨架里
@@ -369,6 +387,23 @@ def _starts(items, rests, moving, tracked):
     """
     starts = [tracks.motion_start(tracked[items[i].name], rests[i]) for i in moving]
     return [start for start in starts if start is not None]
+
+
+def _anchored(result, still, values):
+    """要合并成静止整体的碎块序号: 模拟记录里设计上静止的碎块, 且整段动画里确实没有动
+
+    result 模拟记录
+    still 不动的碎块序号
+    values 参数值, 提供是否合并
+    返回 排序后的序号列表; 不合并或没有锚定的碎块时为空; 记录里没有锚定信息时抛 RigError
+    """
+    if not values.merge_anchored:
+        return []
+    anchored = result.get("anchored")
+    # 旧版本烘焙的成果没有这个字段
+    if anchored is None:
+        raise RigError(NO_ANCHOR_MESSAGE)
+    return sorted(set(anchored) & set(still))
 
 
 def _swap_plan(root, values, result, rests):
@@ -394,9 +429,9 @@ def _swap_plan(root, values, result, rests):
 
 
 def _partition(points, values):
-    """按骨骼上限划分会动的碎块; 原物体切换时每个骨架多留原物体与 still 两根骨骼
+    """按骨骼上限划分有骨骼的碎块; 原物体切换时每个骨架多留原物体与 still 两根骨骼
 
-    points 会动碎块的静止质心
+    points 有骨骼碎块的静止质心
     values 参数值
     返回 划分结果; 上限放不下固定骨骼时抛 RigError
     """
@@ -456,14 +491,25 @@ def _build_one(context, root, values, tracker, log):
     if values.ascii_names:
         sources = items if plan_swap is None else [*items, plan_swap.source]
         check.require_ascii([asset.source_label(root), *material_names(sources)])
-    names = _bone_names(moving)
-    points = [tuple(rests[index].translation) for index in moving]
+    base = _anchored(result, still, values)
+    # 设计上静止的碎块合成静止整体, 没有骨骼; 其余不动的碎块: 绑定静止碎块时每块都有骨骼, 骨架只由碎块本身
+    # 与锚定设置决定, 与模拟里哪些碎块会动无关, 不同模拟可以共用; 否则它们没有骨骼, 并入 root 或 still
+    if values.bind_still:
+        bound, loose = [index for index in range(len(items)) if index not in base], []
+    else:
+        bound, loose = moving, [index for index in still if index not in base]
+    names = _bone_names(bound)
+    points = [tuple(rests[index].translation) for index in bound]
     plan = _partition(points, values)
     yield Progress(1, STAGES)
     label = asset.source_label(root)
     asset_id = shards.asset_of(root)
+    # 静止整体从未破碎的源物体出发求得, 外表面就是源物体自己的几何
+    base_mesh = seamless.build_base(context, root, items, base, tracker) if base else None
     building = _make_collection(context, tracker, BUILDING_PREFIX + label)
-    inputs = Inputs(items, rests, names, moving, still, tracked, plan_swap)
+    inputs = Inputs(
+        items, rests, names, bound, loose, frozenset(moving), base, base_mesh, tracked, plan_swap
+    )
     # 物体先用带前缀的临时名, 提交时旧导出已删, 再改回最终名字, 避免与旧导出重名得到 .001 后缀
     armatures, meshes, mapping, _members = _build_geometry(
         context, tracker, building, BUILDING_PREFIX + label, plan, inputs, values, asset_id
@@ -478,10 +524,19 @@ def _build_one(context, root, values, tracker, log):
         "frames": [result["frame_start"], result["frame_end"]],
         "moving": len(moving),
         "static": len(still),
+        # 合并成静止整体的碎块序号与整体归属的骨骼 (顶点组); 没有合并时为 None; 检查不再逐块核对这些碎块
+        "merged": {
+            "shards": list(base),
+            "bone": ROOT_BONE if plan_swap is None else swap.STILL_BONE,
+        }
+        if base
+        else None,
         "armatures": len(armatures),
         "meshes": len(meshes),
         "bones": sum(len(obj.data.bones) for obj in armatures),
         "last_start": max(starts, default=None),
+        # 第一块碎块离开静止姿态的帧: 游戏导出的"从起动帧开始"据此裁剪动画范围; 没有碎块起动时取起始帧
+        "first_start": min(starts, default=result["frame_start"]),
         # 绑定方式与两个开关帧: 仅碎块时为 None; 校验只核对碎块出现帧及之后
         "mode": values.rig_mode,
         "hide_frame": None if plan_swap is None else plan_swap.hide,
@@ -517,6 +572,7 @@ def _build_one(context, root, values, tracker, log):
         rig_id=rig_id,
         moving=len(moving),
         static=len(still),
+        merged=len(base),
         armatures=len(armatures),
         meshes=len(meshes),
         bones=record["bones"],

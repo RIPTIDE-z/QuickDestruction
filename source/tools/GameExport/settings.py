@@ -5,7 +5,14 @@ engine 必须排在轴向与缩放之前: 预设载入与回滚都按规格顺�
 """
 
 from ...common.schema import Schema
-from .constants import CONTEXT, ENGINE_FIELDS, ENGINE_PRESETS
+from .constants import (
+    ANIM_RANGE_BREAK,
+    ANIM_RANGE_CUSTOM,
+    ANIM_RANGE_FULL,
+    CONTEXT,
+    ENGINE_FIELDS,
+    ENGINE_PRESETS,
+)
 
 # FBX 轴向的取值, 与 Blender 导出插件一致
 AXES = ("X", "Y", "Z", "-X", "-Y", "-Z")
@@ -87,6 +94,79 @@ PROPERTY_SPECS = {
             "still be edited afterwards.",
         },
     ),
+    # 破碎动画导出哪一段
+    "anim_range": (
+        "EnumProperty",
+        {
+            "name": "Animation Range",
+            "items": (
+                (
+                    ANIM_RANGE_FULL,
+                    "Full Simulation",
+                    "Export the whole simulation range, with the frame numbers it has.",
+                ),
+                (
+                    ANIM_RANGE_BREAK,
+                    "From Break Start",
+                    "Start at the frame where the first shard leaves its rest pose, so the "
+                    "first frame of the file is the start of the breaking.",
+                ),
+                (
+                    ANIM_RANGE_CUSTOM,
+                    "Custom Range",
+                    "Export only the frames between the start and end below.",
+                ),
+            ),
+            "default": ANIM_RANGE_FULL,
+            "description": "Which part of the destruction animation is exported. Trimmed "
+            "ranges are shifted so the file starts at frame 0; the Idle animation and the "
+            "full range are not shifted.",
+        },
+    ),
+    # 从起动帧开始时, 起动帧之前保留的静止帧数
+    "break_lead": (
+        "IntProperty",
+        {
+            "name": "Lead Frames",
+            "description": "Rest-pose frames kept before the first break frame, so the clip "
+            "starts a little earlier than the first movement. 0 starts on the first moved frame.",
+            "min": 0,
+            "default": 0,
+        },
+    ),
+    # 自定义范围的起始帧
+    "range_start": (
+        "IntProperty",
+        {
+            "name": "Range Start",
+            "description": "First frame of the custom range; a frame before the start of the "
+            "simulation is cut to it.",
+            "min": 0,
+            "default": 0,
+        },
+    ),
+    # 自定义范围的结束帧, 0 表示到模拟结束
+    "range_end": (
+        "IntProperty",
+        {
+            "name": "Range End",
+            "description": "Last frame of the custom range. 0 goes to the end of the simulation; "
+            "a frame after it is cut to it.",
+            "min": 0,
+            "default": 0,
+        },
+    ),
+    # 是否另写一个破碎动画最后一帧的静态姿态文件
+    "export_final_pose": (
+        "BoolProperty",
+        {
+            "name": "Final Pose File",
+            "description": "Also write a static FBX of the shards as they lie on the last frame "
+            "of the destruction animation: meshes only, with no skeleton and no animation, "
+            "for example as the model of the ruins. The source object is not included.",
+            "default": False,
+        },
+    ),
     # 导出文件的前向轴
     "axis_forward": (
         "EnumProperty",
@@ -164,6 +244,31 @@ PROPERTY_SPECS = {
     ),
 }
 
+
+def _from_break(values):
+    """起动帧之前的静止帧数只在"从起动帧开始"时生效
+
+    values 参数组
+    返回 生效为真
+    """
+    return values.anim_range == ANIM_RANGE_BREAK
+
+
+def _custom_range(values):
+    """起止帧只在"自定义范围"时生效
+
+    values 参数组
+    返回 生效为真
+    """
+    return values.anim_range == ANIM_RANGE_CUSTOM
+
+
+# 参数的生效条件: 字段名 -> 条件函数; 条件不成立时界面把它置灰但仍可编辑
+ACTIVE_WHEN = {
+    "break_lead": _from_break,
+    "range_start": _custom_range,
+    "range_end": _custom_range,
+}
 
 # 游戏导出的参数规格
 SCHEMA = Schema(PROPERTY_SPECS, CONTEXT)

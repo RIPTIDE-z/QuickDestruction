@@ -18,7 +18,7 @@ from ...framework.ui import (
     parameter_panels,
     primary_button,
 )
-from .api import generate_fragments, make_asset_unique, source_issues
+from .api import convert_parts, generate_fragments, make_asset_unique, source_issues
 from .constants import CONTEXT, TOOL_ID
 from .core.diagnosis import NOT_CLOSED, SELF_INTERSECTING
 from .settings import ACTIVE_WHEN, SCHEMA
@@ -68,6 +68,7 @@ GROUPS = (
         ),
     ),
     ParamGroup("Cell Shape", ("cell_scale",), closed=True),
+    ParamGroup("From Parts", ("use_parts_disjoint",), closed=True),
     ParamGroup(
         "Interior & Shards",
         (
@@ -193,6 +194,35 @@ class QD_MESH_FRACTURE_OT_generate(ToolOperator, Operator):
         )
 
 
+class QD_MESH_FRACTURE_OT_parts(ToolOperator, Operator):
+    """把模型自带的部件直接当作碎块, 不切割"""
+
+    bl_idname = "qd_mesh_fracture.parts"
+    bl_label = "Use Parts as Shards"
+    bl_description = (
+        "Turn the parts the model already has into shards without cutting: the connected "
+        "parts of one selected mesh, or each of several selected objects"
+    )
+    bl_translation_context = CONTEXT
+    bl_options: ClassVar[set[str]] = {"UNDO", "INTERNAL"}
+
+    def run(self, context):
+        """读取场景参数调用阶段 API, 成功后选中本次生成的碎块
+
+        context Blender 上下文
+        返回 报告文字
+        """
+        data = SCHEMA.read(scene_settings(context, TOOL_ID))
+        result = convert_parts(context, context.selected_editable_objects, data)
+        restore_selection(context, result.shards, result.shards[0])
+        return tr_report(
+            CONTEXT,
+            "Created {count} shards from parts in {seconds:.2f} s",
+            count=len(result.shards),
+            seconds=result.seconds,
+        )
+
+
 class QD_MESH_FRACTURE_OT_make_unique(ToolOperator, Operator):
     """给复制出来的资产换一个新标识, 原资产保持不变"""
 
@@ -246,6 +276,10 @@ class QD_MESH_FRACTURE_PT_main(ToolPanel, Panel):
         layout = self.layout
         ready = _can_apply(context)
         primary_button(layout, QD_MESH_FRACTURE_OT_generate.bl_idname, "MOD_EXPLODE", ready)
+        # 模型自带部件时不切割, 直接转成碎块
+        row = layout.row()
+        row.enabled = ready
+        row.operator(QD_MESH_FRACTURE_OT_parts.bl_idname, icon="OUTLINER_OB_GROUP_INSTANCE")
         if not ready:
             # 置灰时说明原因, 否则只看到一个灰按钮
             layout.label(

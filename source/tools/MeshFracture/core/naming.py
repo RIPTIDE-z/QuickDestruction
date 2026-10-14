@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import bpy
 
 from ....common import asset, shards
+from ..settings import hollows_source
 
 # 切割期临时名的前缀, 最终名字由 apply_names 统一分配
 TEMP_NAME_PREFIX = "QDTMP_"
@@ -73,13 +74,15 @@ class ShardBatch:
 class NamingPlan:
     """一个源物体的命名与集合 - 最终碎块都在碎块集合里, 保留的父碎块按层收纳"""
 
-    def __init__(self, source, collection, settings, tracker):
+    def __init__(self, source, collection, settings, tracker, gap=None, hollow=None):
         """记录命名参数, 在输出集合下建立源物体集合与碎块集合, 并把源物体集合登记为资产根
 
         source 源物体
         collection 输出集合, 源物体集合建在它下面
         settings 参数值
         tracker 回收账本
+        gap 资产记录的切割间隙, 为 None 时取切面内缩量的 2 倍
+        hollow 资产是否把内层曲面当作空腔, 为 None 时由参数决定
         """
         source_name = source.name
         # 源物体名在首次切割前固定, 标记里记录完整名
@@ -97,7 +100,11 @@ class NamingPlan:
         # 源物体集合, 本源的全部产物都在它下面; 调试几何也放在这里
         self.root = self._new_collection(self.label, collection)
         # 资产标识: 源物体集合就是资产根, 切割间隙是切面内缩量的 2 倍
-        self.asset_id = asset.create_asset(self.root, source, 2.0 * settings.margin)
+        # 同时记下是否把内层曲面当作空腔: 绑定构建从源物体取静止整体时要按同样的方式理解它
+        # 部件转碎块没有切割间隙, 也不涉及空腔, 由调用方指定
+        gap = 2.0 * settings.margin if gap is None else gap
+        hollow = hollows_source(settings) if hollow is None else hollow
+        self.asset_id = asset.create_asset(self.root, source, gap, hollow)
         # 碎块集合, 切割中与最终的碎块都在这里
         self.shards = self._new_collection(f"{self.label}{SHARDS_SUFFIX}", self.root)
         # 新建的碎块落进的集合, 默认是碎块集合; 递归期间隔离模块会临时改指工作集合

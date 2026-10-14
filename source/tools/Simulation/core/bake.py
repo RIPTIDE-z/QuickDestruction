@@ -351,6 +351,25 @@ def _remember_records(session, result):
             result.add(lambda r=root, rec=record, act=action: asset.set_sim_result(r, rec, act))
 
 
+def _anchored_ordinals(session):
+    """每个资产里设计上静止的碎块序号: 被区域或底部锚定的, 以及被区域排除的
+
+    它们由物理设置与驱动区域决定, 与这次模拟里驱动怎样撞击无关, 同一套设置下的不同模拟结果一致;
+    序号是碎块在资产里按路径排序后的位置, 与参与者列表里同一资产的顺序一致, 也是绑定构建使用的碎块序号
+    session 模拟会话
+    返回 {资产标识: [序号, ...]}
+    """
+    ordinals = {}
+    counts = {}
+    for item in session.participants:
+        found = ordinals.setdefault(item.asset_id, [])
+        position = counts.get(item.asset_id, 0)
+        counts[item.asset_id] = position + 1
+        if item.plan.mode in (impulse.ANCHORED, impulse.EXCLUDED):
+            found.append(position)
+    return ordinals
+
+
 def _commit(session, finals, pending, moved, flights, result):
     """写入会话与资产的模拟记录, 删除临时动作, 最后删除各资产的旧成果动作
 
@@ -365,6 +384,7 @@ def _commit(session, finals, pending, moved, flights, result):
     """
     _remember_records(session, result)
     run_id = uuid.uuid4().hex
+    anchored = _anchored_ordinals(session)
     revisions = {}
     for root in session.roots:
         revisions[shards.asset_of(root)] = asset.physics_record(root)["rev"]
@@ -379,6 +399,8 @@ def _commit(session, finals, pending, moved, flights, result):
             "frame_start": session.frame_start,
             "frame_end": session.frame_end,
             "moved": moved[asset_id],
+            # 设计上静止的碎块序号: 绑定构建据此把它们并成一个整体
+            "anchored": anchored[asset_id],
         }
         asset.set_sim_result(root, record, finals[asset_id])
     run = {"assets": revisions, **session.signatures, "settings": session.settings}

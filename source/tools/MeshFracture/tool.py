@@ -8,6 +8,7 @@ from .interaction import (
     SUBPANELS,
     QD_MESH_FRACTURE_OT_generate,
     QD_MESH_FRACTURE_OT_make_unique,
+    QD_MESH_FRACTURE_OT_parts,
     QD_MESH_FRACTURE_PT_main,
 )
 from .settings import SCHEMA
@@ -18,6 +19,7 @@ TOOL = ToolSpec(
     locales=Path(__file__).with_name("locales"),
     classes=(
         QD_MESH_FRACTURE_OT_generate,
+        QD_MESH_FRACTURE_OT_parts,
         QD_MESH_FRACTURE_OT_make_unique,
         QD_MESH_FRACTURE_PT_main,
         *SUBPANELS,

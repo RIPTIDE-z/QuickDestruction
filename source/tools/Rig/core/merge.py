@@ -18,14 +18,16 @@ from ..constants import FACE_SHARD_ATTRIBUTE, SHARD_ATTRIBUTE, VERTEX_ATTRIBUTE
 class Entry:
     """合并进网格的一块碎块"""
 
-    # 碎块物体
+    # 碎块物体; 静止整体没有对应的碎块, 为 None
     shard: object
-    # 碎块的静止世界矩阵
+    # 碎块的静止世界矩阵; 静止整体为 None
     rest: object
     # 顶点组名: 骨骼名或 root
     group: str
-    # 碎块在资产里的序号, 写进来源属性
+    # 碎块在资产里的序号, 写进来源属性; 静止整体为 -1
     ordinal: int
+    # 已经在世界坐标里的网格: 只有静止整体带, 带它时不再取碎块的网格也不再变换
+    mesh: object = None
 
 
 def _copy_shard(tracker, collection, entry):
@@ -36,9 +38,12 @@ def _copy_shard(tracker, collection, entry):
     entry 要复制的碎块
     返回 临时物体
     """
-    # 复制网格数据而不是引用: 变换只作用在副本上, 原碎块不受影响
-    mesh = tracker.track("meshes", entry.shard.data.copy())
-    mesh.transform(entry.rest)
+    # 复制网格数据而不是引用: 变换只作用在副本上, 原碎块不受影响; 静止整体已在世界坐标, 不再变换
+    if entry.mesh is not None:
+        mesh = tracker.track("meshes", entry.mesh.copy())
+    else:
+        mesh = tracker.track("meshes", entry.shard.data.copy())
+        mesh.transform(entry.rest)
     obj = tracker.track("objects", bpy.data.objects.new(f"copy_{entry.ordinal}", mesh))
     collection.objects.link(obj)
     count = len(mesh.vertices)
@@ -56,7 +61,7 @@ def _copy_shard(tracker, collection, entry):
     return obj
 
 
-def _join(context, objects):
+def join_objects(context, objects):
     """把临时物体合并进第一个, 其余的随 join 被删除
 
     context Blender 上下文
@@ -99,7 +104,7 @@ def build_mesh(context, tracker, name, collection, entries, armature):
         copies = [_copy_shard(tracker, collection, entry) for entry in entries]
         # join 之后只有第一个物体与它的网格还在; 其余网格成了孤儿, 攒着一起删
         orphans = [copy.data for copy in copies[1:]]
-        obj = _join(context, copies)
+        obj = join_objects(context, copies)
         tracker.bury(*orphans)
         tracker.flush()
         obj.name = name

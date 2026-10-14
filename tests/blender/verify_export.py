@@ -1,7 +1,7 @@
 """游戏导出测试 - 绑定构建, 检查与 FBX 导出的阶段 API 在真实 Blender 里的行为
 
 测试目的:
-    1. 构建: 每块碎块都进了蒙皮网格 (几何守恒), 会动的碎块各有一根骨骼, 不动的并入 root;
+    1. 构建: 每块碎块都进了蒙皮网格 (几何守恒), 默认每块碎块各有一根骨骼; 不绑定静止碎块时只有会动的有骨骼, 不动的并入 root;
        逐帧 (全部帧) 蒙皮网格与碎块动画的世界顶点一致; 命名, 集合, 材质与记录正确; 构建不留临时数据
     2. 骨骼上限: 每段网格骨骼数与每个骨架骨骼总数的上限生效, 拆分后仍逐帧一致
     3. 骨骼名: 平铺编号 b_001 起, 按碎块路径顺序, 记录映射
@@ -140,7 +140,8 @@ def leftovers():
 def case_build_basics():
     """构建: 守恒, 逐帧一致, 命名, 集合, 记录与不留临时数据"""
     root, shards = baked_asset(partial=True)
-    results = build_rig(bpy.context, [root], {})
+    # 本场景核对不绑定静止碎块的路径: 不动的并入 root, 骨骼数等于会动的碎块数加 root
+    results = build_rig(bpy.context, [root], {"bind_still": False})
     rig = results[0]
     check("返回一个构建结果", len(results) == 1)
     check(
@@ -799,8 +800,8 @@ def case_swap_rig():
     source_points = mesh_points(source)
     ratio = spread(mesh_points(intact[0])) / spread(source_points)
     check("开关帧不晚于起始帧时原物体从第一帧起隐藏", abs(ratio - HIDDEN) < 1e-5, f"{ratio:.5f}")
-    # 碎块第 3 帧出现, 原物体第 5 帧才隐藏: 中间两者重叠
-    build_rig(bpy.context, [root], SWAP)
+    # 碎块第 3 帧出现, 原物体第 5 帧才隐藏: 中间两者重叠; 不绑定静止碎块时不动的碎块归 still 骨骼
+    build_rig(bpy.context, [root], {**SWAP, "bind_still": False})
     record = asset.rig_record(root)
     check("记录了自定义的开关帧", (record["hide_frame"], record["show_frame"]) == (5, 3))
     armatures, meshes = export_parts(root)

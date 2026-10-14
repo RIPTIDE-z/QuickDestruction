@@ -178,16 +178,19 @@ def _shard_expectation(shard):
     return len(shard.data.vertices), len(shard.data.polygons), _material_counts(shard.data)
 
 
-def _geometry_issues(items, meshes):
+def _geometry_issues(items, meshes, merged=()):
     """碎块守恒: 逐块核对蒙皮网格里属于它的顶点数, 面数与各材质的面数
 
     items 资产的碎块列表, 序号即来源属性里的碎块序号
     meshes 蒙皮网格物体列表
+    merged 已合并成整体的静止碎块序号, 它们的面已经不在蒙皮网格里, 不核对
     返回 Issue 列表
     """
     tally = _mesh_tally(meshes)
     issues = []
     for ordinal, shard in enumerate(items):
+        if ordinal in merged:
+            continue
         expected = _shard_expectation(shard)
         found = tuple(tally.get(ordinal, (0, 0, {})))
         if found == expected:
@@ -376,6 +379,9 @@ def verify_skin(context, root, frames):
                     for index, (ordinal, local) in enumerate(
                         zip(vertex_ids, local_ids, strict=True)
                     ):
+                        # 静止整体的序号是 -1, 它没有对应的碎块, 静止不动, 不核对
+                        if ordinal < 0:
+                            continue
                         shard = items[ordinal]
                         expected = shard.matrix_world @ shard.data.vertices[local].co
                         error = (mesh.vertices[index].co - expected).length
@@ -413,7 +419,8 @@ def check_rig(context, root, config, sample_frames=3):
     armatures, meshes = export_objects(root)
     items = asset.shards_of(root)
     issues = []
-    issues += _geometry_issues(items, meshes)
+    merged = (record.get("merged") or {}).get("shards", ())
+    issues += _geometry_issues(items, meshes, set(merged))
     issues += _idle_issues(armatures, record)
     issues += _bone_issues(armatures, meshes, config)
     # 逐帧蒙皮核对最耗时, 构建时已经核对过, 这里可以关闭

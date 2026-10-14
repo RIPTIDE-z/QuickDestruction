@@ -20,6 +20,8 @@ FORMAT_MARK = "_qd_format"
 SOURCE_REF_MARK = "_qd_source_ref"
 # 根集合上的切割间隙, 等于切面内缩量的 2 倍
 GAP_MARK = "_qd_gap"
+# 根集合上的空心标记: 切割时把源物体里嵌套的内层曲面当作空腔, 其余工具从源物体取静止整体时要按同样的方式理解它
+HOLLOW_MARK = "_qd_hollow"
 # 根集合上的物理生效记录: 应用物理时实际使用的配置与修订号
 PHYSICS_MARK = "_qd_physics"
 # 根集合上的模拟成果记录: 所属会话与当时的物理修订号
@@ -65,12 +67,13 @@ class AssetError(DomainError):
     """资产解析或校验失败 - 消息按框架上下文翻译"""
 
 
-def create_asset(root, source, gap):
+def create_asset(root, source, gap, hollow=False):
     """给新建的源物体集合写入资产清单
 
     root 新建的资产根集合
     source 源物体
     gap 切割间隙, 等于切面内缩量的 2 倍
+    hollow 切割时是否把嵌套的内层曲面当作空腔
     返回 新的资产标识
     """
     asset_id = uuid.uuid4().hex
@@ -80,6 +83,7 @@ def create_asset(root, source, gap):
     root[SOURCE_REF_MARK] = source
     root[shards.SOURCE_MARK] = source.name
     root[GAP_MARK] = float(gap)
+    root[HOLLOW_MARK] = bool(hollow)
     return asset_id
 
 
@@ -306,6 +310,15 @@ def gap_of(root):
     返回 间隙, 没有记录时为 0
     """
     return float(root.get(GAP_MARK, 0.0))
+
+
+def hollow_of(root):
+    """资产切割时是否把源物体里嵌套的内层曲面当作空腔
+
+    root 资产根集合
+    返回 是空心为真; 旧资产没有记录, 按实体处理
+    """
+    return bool(root.get(HOLLOW_MARK, False))
 
 
 def rest_matrix(shard):

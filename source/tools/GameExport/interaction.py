@@ -26,17 +26,26 @@ from ...framework.ui import (
 )
 from .api import export_fbx, export_paths, needs_directory
 from .constants import CONTEXT, TOOL_ID
-from .settings import SCHEMA
+from .settings import ACTIVE_WHEN, SCHEMA
 
 # 导出设置第一层: 写到哪里, 给哪个引擎; 最常调整
-MAIN_FIELDS = ("directory", "file_name", "engine")
+MAIN_FIELDS = (
+    "directory",
+    "file_name",
+    "engine",
+    "anim_range",
+    "break_lead",
+    "range_start",
+    "range_end",
+    "export_final_pose",
+)
 # 轴向与缩放: 选择引擎时自动填好, 很少手动改, 收进默认收起的折叠区
 AXIS_FIELDS = ("axis_forward", "axis_up", "apply_scale", "global_scale")
 # 轴向与缩放折叠区的标识: Blender 按它记住展开状态
 AXES_ID = "qd_game_export_axes"
 
-# 本工具的字段都总是生效
-_param_active = active_rule({})
+# 参数的生效条件: 条件不成立时置灰但仍可编辑; 规则见 settings.ACTIVE_WHEN
+_param_active = active_rule(ACTIVE_WHEN)
 
 
 def _draw_settings(layout, owner):

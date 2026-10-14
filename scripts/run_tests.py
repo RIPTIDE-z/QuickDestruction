@@ -10,6 +10,7 @@
     只要有一项失败, 退出码就是 1
 """
 
+import os
 import subprocess
 import sys
 import time
@@ -29,15 +30,21 @@ BACKGROUND_TESTS = (
 UI_TESTS = ("verify_ui_draw.py",)
 # 单个测试的时间上限, 单位秒
 TIMEOUT = 900
+# 测试的临时目录: 放在 tmp/output_tmp 里, 不进仓库根目录; 系统临时目录不可写时 Python 会退回当前目录
+TEMP_DIR = ROOT / "tmp" / "output_tmp"
 
 
 def run(label, command, marker="ALL PASS"):
     """运行一条命令并返回是否通过; 通过要求退出码为 0 且输出里有 marker"""
     started = time.perf_counter()
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    # 临时目录一律指向 tmp/output_tmp, 测试里的 tempfile 与 pytest 的 tmp_path 都不会落在仓库根目录
+    env = {**os.environ, "TMP": str(TEMP_DIR), "TEMP": str(TEMP_DIR), "TMPDIR": str(TEMP_DIR)}
     try:
         done = subprocess.run(
             command,
             cwd=ROOT,
+            env=env,
             capture_output=True,
             text=True,
             encoding="utf-8",

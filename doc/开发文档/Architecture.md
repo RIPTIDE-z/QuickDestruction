@@ -305,8 +305,9 @@ API 在退出时尝试恢复原选择和活动物体；生成算子成功后另�
 | `api.py` | 显式输入、切割前体检、结果对象、重建副本身份 |
 | `core/pipeline.py` | 输入检查、首次切割、递归、收尾、硬上限与失败清理 |
 | `core/sampling.py`、`cells.py`、`cell_objects.py` | 种子采样、半空间求交、凸包及材质和数据层初始化 |
-| `core/boolean.py`、`intersect.py` | 求值快照、Exact 求交、结果校验（越界与内外复核）与布尔烘焙；封闭性判定在 `common/geometry.py` |
+| `core/boolean.py`、`intersect.py` | 求值快照、Exact 求交、结果校验（越界与内外复核）与布尔烘焙；封闭性判定在 `common/geometry.py`，嵌套曲面的朝向判定在 `common/hollow.py`（切割与绑定构建共用） |
 | `core/shell.py` | 关闭"填充实体"时，为首次切割准备把内腔曲面翻向朝内的临时布尔操作数，取回结果后丢弃；源物体不改动 |
+| `core/parts.py` | 部件转碎块：连通块或多个物体拆成部件，可选地让部件互不重叠（体积大的保留重叠体积，Exact 求差），用 `NamingPlan` 建与切割一致的资产（间隙 0，不空心） |
 | `core/recursion.py`、`allocation.py` | 候选选择与碎块预算分配；后者是纯数值逻辑 |
 | `core/cleanup.py`、`islands.py` | 焊接、清理、非平面面三角化、孤岛拆分及最终面合并 |
 | `core/isolation.py` | 临时排除已完成碎块，当前父块与新碎块使用工作集合；实时重绘时停用 |
@@ -335,7 +336,8 @@ API 在退出时尝试恢复原选择和活动物体；生成算子成功后另�
 | Rig | `core/transfer.py` | 世界轨迹换算成姿态基矩阵 `B⁻¹·Mt·M0⁻¹·B`，批量写线性关键帧；原物体切换的缩放开关写成常量插值 |
 | Rig | `core/swap.py` | 原物体切换：源物体做成原物体网格，按隐藏帧与出现帧给出缩放开关与骨骼头部位置 |
 | Rig | `core/interior.py` | 断面盒投影 UV，断面由碎块网格上的面属性 `qd_interior` 标出 |
+| Rig | `core/seamless.py` | 合并锚定碎块：源物体裁到锚定碎块的包围盒，减去范围内外扩后的非锚定碎块（每个顶点按相邻面求位移，断面权重优先），清理残渣并标记断面；静止整体作为 `Entry` 进蒙皮网格，归 root 或 still；锚定序号由模拟记录的 `anchored` 提供 |
 | Rig | `core/build.py` | 构建流程、临时集合、校验、两阶段提交与撤回 |
 | Rig | `core/check.py` | 检查与逐帧蒙皮核对 |
-| GameExport | `core/fbx.py` | 目标文件、FBX 导出封装、骨架节点名与现场还原 |
+| GameExport | `core/fbx.py` | 目标文件、FBX 导出封装、骨架节点名与现场还原；终局姿态文件按最后一帧的骨骼姿态（去掉缩放）把蒙皮网格烘成静态临时网格后导出 |
 | framework | `longtask.py` | 可取消模态长任务的公共流程，模拟烘焙与绑定构建共用；运行锁在 `common/busy.py` |

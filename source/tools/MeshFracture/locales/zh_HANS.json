@@ -74,9 +74,16 @@
     "This asset was duplicated": "此资产被复制过",
     "Other tools refuse to work on it until it is unique": "在重建身份之前，其他工具不会处理它",
     "The active object is not part of a duplicated asset": "活动物体不属于被复制过的资产",
-    "Hide Source": "隐藏源物体"
+    "Hide Source": "隐藏源物体",
+    "Use Parts as Shards": "部件转碎块",
+    "From Parts": "部件转碎块",
+    "Separate Overlaps": "让部件互不重叠",
+    "Created {count} shards from parts in {seconds:.2f} s": "已由部件生成 {count} 个碎块，耗时 {seconds:.2f} 秒",
+    "Mesh \"{name}\" has only one connected part; use Generate Fragments to cut it, or select several objects": "网格“{name}”只有一个连通部分；请用“生成碎块”切割它，或者选中多个物体"
   },
   "tooltips": {
+    "Turn the parts the model already has into shards without cutting: the connected parts of one selected mesh, or each of several selected objects": "把模型自带的部件直接转成碎块，不切割：选中一个网格时取它的每个连通部分，选中多个物体时每个物体是一块",
+    "Only for Use Parts as Shards: where parts overlap, the bigger part keeps the shared volume and the smaller one is cut back, so the shards no longer push each other apart in the simulation. A part buried completely inside a bigger one is dropped.": "只用于“部件转碎块”：部件重叠的地方，体积大的部件保留共有的体积，小的部件被削掉这一部分，碎块在模拟里就不会互相顶开。完全埋在更大部件里的部件会被丢弃。",
     "Where the cut seeds come from; several sources can be combined. Without any point, the source mesh vertices are used.": "切割种子的来源，可多选组合；没有找到任何点时使用源网格的顶点。",
     "Use the original vertices of the source mesh, before modifiers.": "使用源网格的原始顶点，不含修改器效果。",
     "Use the vertices of direct child objects; curves and similar types use their evaluated geometry.": "使用直接子物体的顶点；曲线等类型使用其求值后的几何。",

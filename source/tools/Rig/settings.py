@@ -76,13 +76,40 @@ PROPERTY_SPECS = {
             "default": 0,
         },
     ),
+    # 是否给不动的碎块也绑骨骼, 骨架只由碎块决定, 不同模拟可以共用
+    "bind_still": (
+        "BoolProperty",
+        {
+            "name": "Bind Still Shards",
+            "description": "Give the shards that never move, such as anchored ones, a bone "
+            "too, so the skeleton has one bone per shard whichever shards move in the "
+            "simulation, and animations of different simulations can share it. Still bones "
+            "carry no keys and stay at their rest pose. Off gives them no bone: they are "
+            "merged into the root, or into the still bone in Swap from Intact, which makes a "
+            "smaller skeleton.",
+            "default": True,
+        },
+    ),
+    # 是否把设计上静止的碎块合并成与源物体一致的静止整体
+    "merge_anchored": (
+        "BoolProperty",
+        {
+            "name": "Merge Anchored Shards",
+            "description": "Merge the anchored and excluded shards, the ones the physics "
+            "settings or driver zones keep in place, into one piece that is the unbroken "
+            "source object itself, without seams, bound to the root bone (the still bone in "
+            "Swap from Intact). Needs a simulation baked with this version.",
+            "default": False,
+        },
+    ),
     # 不动判定的位移阈值, Blender 单位
     "static_distance": (
         "FloatProperty",
         {
             "name": "Still Distance",
             "description": "Shards that never move farther than this and never turn more than "
-            "Still Angle are merged into the root and get no bone.",
+            "Still Angle count as still: they get no animation keys, and no bone either when "
+            "Bind Still Shards is off.",
             "min": 0.0,
             "soft_max": 0.1,
             "default": 0.001,
@@ -202,6 +229,8 @@ BUILD_FIELDS = (
     "idle_length",
     "intact_hide_frame",
     "shards_show_frame",
+    "bind_still",
+    "merge_anchored",
     "static_distance",
     "static_angle",
     "max_bones_per_mesh",

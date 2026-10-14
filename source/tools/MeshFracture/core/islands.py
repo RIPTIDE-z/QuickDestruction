@@ -28,7 +28,7 @@ def _island_sort_key(obj):
     )
 
 
-def _keep_faces(mesh, keep):
+def keep_faces(mesh, keep):
     """只保留下标在 keep 里的面, 其余的面连同只被它们使用的边与顶点一起删除
 
     mesh 网格数据, 原地修改
@@ -55,14 +55,14 @@ def _split_cell(cell, tracker):
     # 先从未改动的原网格复制出其余孤岛, 最后才削减原物体自己的网格
     for keep in groups[1:]:
         mesh = tracker.track("meshes", cell.data.copy())
-        _keep_faces(mesh, keep)
+        keep_faces(mesh, keep)
         # 物体副本带走变换, 材质槽链接方式与所在集合, 只换网格
         piece = tracker.track("objects", cell.copy())
         piece.data = mesh
         for collection in cell.users_collection:
             collection.objects.link(piece)
         pieces.append(piece)
-    _keep_faces(cell.data, groups[0])
+    keep_faces(cell.data, groups[0])
     return pieces
 
 

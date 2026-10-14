@@ -16,20 +16,10 @@ from mathutils.bvhtree import BVHTree
 from ....common.blender_context import evaluated_mesh, mesh_edit
 from ....common.errors import require_finite
 from ....common.geometry import is_not_closed
+from ....common.hollow import RAY_DIRECTIONS, RAY_HITS
 from ..constants import WELD_SCALE_RATIO
 from ..errors import NON_FINITE_MESSAGE, IntersectionBoundsError, MeshFractureError
 
-# 判断点在不在网格里时的三条射线方向: 都不与坐标轴对齐, 彼此也不平行; 按多数票决定, 一条射线恰好擦过棱时不会判错
-RAY_DIRECTIONS = tuple(
-    Vector(direction).normalized()
-    for direction in (
-        (0.5773, 0.5774, 0.5776),
-        (-0.6113, 0.4987, 0.6143),
-        (0.4027, -0.7109, 0.5767),
-    )
-)
-# 一条射线最多数的交点个数, 防止退化几何让射线反复命中同一处
-RAY_HITS = 256
 # 求交结果与胞体体积之差小于胞体体积乘它时, 视为整块胞体都在源物体里
 WHOLE_RATIO = 1e-4
 

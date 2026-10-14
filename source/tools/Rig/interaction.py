@@ -36,7 +36,15 @@ STATUS_ROWS = 6
 # 面板里最多列出的问题条数
 ISSUE_ROWS = 5
 # 绑定设置第一层的字段: 决定导出动画是什么样子, 最常调整
-MAIN_FIELDS = ("rig_mode", "hidden_scale", "idle_length", "intact_hide_frame", "shards_show_frame")
+MAIN_FIELDS = (
+    "rig_mode",
+    "bind_still",
+    "merge_anchored",
+    "hidden_scale",
+    "idle_length",
+    "intact_hide_frame",
+    "shards_show_frame",
+)
 # 详细设置里的字段, 按用途分成几组, 组间留空: 不动判定, 骨骼上限, 断面 UV, 名字限制
 DETAIL_GROUPS = (
     ("static_distance", "static_angle"),
@@ -255,6 +263,13 @@ def _draw_summary(layout, root):
         static=record["static"],
     )
     layout.label(text=text, translate=False, icon="ARMATURE_DATA")
+    # 静止碎块已合并成整体: 写明合并了几块
+    merged = record.get("merged")
+    if merged:
+        text = tr(
+            CONTEXT, "{count} anchored shards merged into one piece", count=len(merged["shards"])
+        )
+        layout.label(text=text, translate=False, icon="AUTOMERGE_ON")
     # 原物体切换: 写明待机长度, 以及破碎动画里原物体哪一帧隐藏, 碎块哪一帧出现
     if record.get("idle_length") is not None:
         text = tr(

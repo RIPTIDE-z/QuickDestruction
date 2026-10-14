@@ -275,6 +275,18 @@ PROPERTY_SPECS = {
             "default": False,
         },
     ),
+    # 部件转碎块时是否让部件互不重叠
+    "use_parts_disjoint": (
+        "BoolProperty",
+        {
+            "name": "Separate Overlaps",
+            "description": "Only for Use Parts as Shards: where parts overlap, the bigger part "
+            "keeps the shared volume and the smaller one is cut back, so the shards no longer "
+            "push each other apart in the simulation. A part buried completely inside a bigger "
+            "one is dropped.",
+            "default": True,
+        },
+    ),
     # 是否把碎块原点移到顶点平均位置
     "use_recenter": (
         "BoolProperty",

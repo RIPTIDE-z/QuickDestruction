@@ -29,6 +29,9 @@ FBX_FIXED = {
     "path_mode": "AUTO",
 }
 
+# 终局静态姿态文件的 FBX 参数: 只有网格, 不烘焙动画
+FBX_STATIC = {**FBX_FIXED, "object_types": {"MESH"}, "bake_anim": False}
+
 # 引擎预设: 标识 -> (前向轴, 上方向轴, 缩放选项, 全局缩放)
 # 这些取值是各引擎常用的导出设置, 还没有在目标引擎里逐项验证; 验证清单见 doc/使用说明/GameExport.md
 ENGINE_PRESETS = {
@@ -46,6 +49,11 @@ ARMATURE_NODE_NAME = "Armature"
 # 场景里已有物体占用 Armature 这个名字时, 导出期间先把它临时改成这个名字
 ARMATURE_HOLD_NAME = "QD_Armature_Hold"
 
+# 破碎动画导出范围的取值: 整段模拟, 从第一块碎块起动开始, 自定义起止帧
+ANIM_RANGE_FULL = "FULL"
+ANIM_RANGE_BREAK = "BREAK"
+ANIM_RANGE_CUSTOM = "CUSTOM"
+
 # 导出文件名里被源物体名替换的占位符
 ASSET_TOKEN = "{asset}"
 # 导出文件的扩展名
@@ -53,3 +61,7 @@ FBX_EXTENSION = ".fbx"
 # 原物体切换的两个文件的后缀: 待机与破碎, 加在文件名 (与骨架序号) 之后
 IDLE_SUFFIX = "_Idle"
 DESTRUCTION_SUFFIX = "_Destruction"
+# 终局静态姿态文件的后缀, 加在文件名之后; 这个文件只有一个, 不随骨架数增加
+FINAL_POSE_SUFFIX = "_FinalPose"
+# 原物体网格的骨骼名, 与绑定构建里的原物体骨骼同名; 终局姿态里不含原物体 (工具之间不互相导入, 所以这里再写一次)
+INTACT_BONE = "origin"

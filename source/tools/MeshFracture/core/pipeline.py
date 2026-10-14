@@ -84,7 +84,7 @@ def _visible_collection(context, collection):
     return visit(context.view_layer.layer_collection)
 
 
-def _output_collection(context, name, tracker):
+def output_collection(context, name, tracker):
     """解析输出集合: 空名用当前集合, 否则按名查找, 找不到时在当前集合下新建
 
     context Blender 上下文
@@ -105,7 +105,7 @@ def _output_collection(context, name, tracker):
     return collection
 
 
-def _check_limit(count):
+def check_limit(count):
     """碎块数超过硬上限时报错, 由 run 回收已经生成的数据
 
     count 碎块数或它的上界
@@ -129,7 +129,7 @@ def _prepare(context, job, settings, rng, depsgraph):
     snapshot = boolean.inspect_source(obj, depsgraph)
     points = sampling.seed_points(context, obj, settings, limit, rng, depsgraph)
     # 种子点数就已超限时, 在耗时的布尔求交之前报错
-    _check_limit(len(points))
+    check_limit(len(points))
     cells = cell_objects.build_cells(context, obj, snapshot, points, settings, batch, rng)
     # 关闭填充时, 首次切割的源物体里嵌套的内层曲面要翻成空腔; 递归的父块是上一次切割的产物, 已经带着空腔
     operand = obj
@@ -254,7 +254,7 @@ def main_object(context, collection, obj, settings, rng, state, done):
     naming = NamingPlan(obj, collection, settings, tracker)
     first_job = (obj, naming.first_batch(), first_cut_seed_limit(settings))
     (cells,) = _cut_jobs(context, [first_job], settings, rng)
-    _check_limit(done + len(cells))
+    check_limit(done + len(cells))
     maximum = settings.recursion_clamp
     cursor = context.scene.cursor.location
     # 保留布尔修改器时递归会让引用失效, 直接跳过
@@ -268,12 +268,12 @@ def main_object(context, collection, obj, settings, rng, state, done):
         plan = recursion.plan_round(context, cells, settings, cursor, rng, budget)
         if not plan:
             break
-        _check_limit(done + recursion.projected_count(context, cells, plan, settings))
+        check_limit(done + recursion.projected_count(context, cells, plan, settings))
         # 实时重绘要逐个父块地看到进度, 那时一批只有一个父块
         size = 1 if settings.use_debug_redraw else BATCH_PARENTS
         for start in range(0, len(plan), size):
             _subdivide(context, plan[start : start + size], cells, naming, settings, rng, state)
-            _check_limit(done + len(cells))
+            check_limit(done + len(cells))
         # 每轮结束统一批量删除被替换的数据
         tracker.flush()
     # 首次切割丢弃的空胞体, 以及提前结束的轮次留下的待删数据
@@ -302,7 +302,7 @@ def run(context, sources, settings, rng):
     started = perf_counter()
     try:
         context.window_manager.progress_begin(0, len(sources))
-        collection = _output_collection(context, settings.collection_name, tracker)
+        collection = output_collection(context, settings.collection_name, tracker)
         cells = []
         source_to_shards = {}
         source_to_asset = {}
