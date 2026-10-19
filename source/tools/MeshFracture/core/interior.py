@@ -46,6 +46,24 @@ def _mark_interior_faces(bm):
         face[layer] = face.hide
 
 
+def finish_original(cells, settings):
+    """面全部来自模型自身的碎块的断面收尾: 结果与 finish_interior 处理没有断面的碎块时相同
+
+    部件转碎块没有切割出的新面, 所以断面面属性全为假, 断面顶点组为空, 也没有内外交界的锐边;
+    直接写结果, 不再逐面逐点遍历
+    模型自带的断面面属性 (例如源物体本身就是碎块) 原样保留
+    cells 碎块物体
+    settings 参数值
+    """
+    for cell in cells:
+        mesh = cell.data
+        # 新建的面域属性默认全为假
+        if mesh.attributes.get(shards.INTERIOR_ATTRIBUTE) is None:
+            mesh.attributes.new(shards.INTERIOR_ATTRIBUTE, "BOOLEAN", "FACE")
+        if settings.use_interior_vgroup and cell.vertex_groups.get(INTERIOR_VGROUP_NAME) is None:
+            cell.vertex_groups.new(name=INTERIOR_VGROUP_NAME)
+
+
 def finish_interior(cells, settings):
     """全部切割完成后统一处理内部断面: 断面面属性, 顶点组, 锐边, 最后取消全部隐藏
 

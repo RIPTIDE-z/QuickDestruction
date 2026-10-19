@@ -21,6 +21,7 @@ from . import (
     cleanup,
     interior,
     intersect,
+    materials,
     recursion,
     sampling,
     shard_objects,
@@ -56,11 +57,8 @@ def _check_sources(context, sources, settings):
             )
         if not obj.data.polygons:
             raise MeshFractureError('Mesh "{name}" has no faces', name=obj.name)
-        # 材质槽编号 0 总是合法 (没有材质时也行), 其余必须在源物体的槽位范围内
-        if index > 0 and index >= len(obj.material_slots):
-            raise MeshFractureError(
-                'Material slot {index} does not exist on "{name}"', index=index, name=obj.name
-            )
+        # 材质槽编号 0 总是合法, 其余要么是已有的槽, 要么是最后一个槽之后那个自动新建的断面材质槽
+        materials.check_slot(obj, index)
 
 
 def _visible_collection(context, collection):

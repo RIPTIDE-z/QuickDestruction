@@ -73,6 +73,8 @@ class ParamGroup(NamedTuple):
     popover: bool = False
     # 工具专属的绘制函数 draw(layout, owner), 需要特殊排法时使用; fields 仍要列出它画的字段
     draw: Callable | None = None
+    # 显示条件 show(owner), 为假时整个子面板或弹出按钮不出现; 用于按页切换的工具, None 表示总是显示
+    show: Callable | None = None
 
 
 def field_keys(fields):
@@ -333,22 +335,45 @@ def _group_draw(tool_id, schema, group, active):
     return draw
 
 
-def _popover_row_draw(context_name, popovers):
-    """生成底部弹出按钮面板的 draw: 各弹出面板的按钮并排一行
+def _group_poll(tool_id, group):
+    """生成子面板的 poll: 分组的显示条件不成立时 Blender 不画这个子面板
 
+    tool_id 工具标识
+    group 带 show 的 ParamGroup
+    返回 面板的 poll 类方法
+    """
+
+    def poll(_cls, context):
+        """按参数组判断是否显示
+
+        _cls 面板类, 不使用
+        context Blender 上下文
+        返回 显示为真
+        """
+        return context.scene is not None and group.show(scene_settings(context, tool_id))
+
+    return classmethod(poll)
+
+
+def _popover_row_draw(tool_id, context_name, popovers):
+    """生成底部弹出按钮面板的 draw: 各弹出面板的按钮并排一行, 显示条件不成立的按钮不画
+
+    tool_id 工具标识
     context_name 弹出按钮标题的翻译上下文
-    popovers 弹出面板类列表
+    popovers [(弹出面板类, ParamGroup), ...]
     返回 面板的 draw 方法
     """
 
-    def draw(self, _context):
+    def draw(self, context):
         """并排绘制弹出按钮
 
-        _context Blender 上下文, 不使用
+        context Blender 上下文
         """
+        owner = scene_settings(context, tool_id)
         row = self.layout.row(align=True)
-        for panel in popovers:
-            row.popover(panel=panel.__name__, text=panel.bl_label, text_ctxt=context_name)
+        for panel, group in popovers:
+            if group.show is None or group.show(owner):
+                row.popover(panel=panel.__name__, text=panel.bl_label, text_ctxt=context_name)
 
     return draw
 
@@ -421,7 +446,7 @@ def parameter_panels(parent, schema, core, groups, active):
     for group, name in zip(groups, names, strict=True):
         # 弹出分组不占侧栏子面板, 先收集起来
         if group.popover:
-            popovers.append(_popover_panel(parent, schema, group, active, name))
+            popovers.append((_popover_panel(parent, schema, group, active, name), group))
             continue
         namespace = {
             "bl_label": group.title,
@@ -430,6 +455,9 @@ def parameter_panels(parent, schema, core, groups, active):
             "bl_options": {"DEFAULT_CLOSED"} if group.closed else set(),
             "draw": _group_draw(parent.tool_id, schema, group, active),
         }
+        # 有显示条件的分组才加 poll, 其余子面板保持原样
+        if group.show is not None:
+            namespace["poll"] = _group_poll(parent.tool_id, group)
         panels.append(type(name, (ToolPanel, Panel), namespace))
     # 全部弹出按钮并排放在一个没有标题的底部子面板里
     if popovers:
@@ -437,7 +465,7 @@ def parameter_panels(parent, schema, core, groups, active):
             "bl_label": "",
             "bl_parent_id": parent.__name__,
             "bl_options": {"HIDE_HEADER"},
-            "draw": _popover_row_draw(schema.context, popovers),
+            "draw": _popover_row_draw(parent.tool_id, schema.context, popovers),
         }
         panels.append(type(footer_name, (ToolPanel, Panel), footer))
-    return (*popovers, *panels)
+    return (*(panel for panel, _group in popovers), *panels)

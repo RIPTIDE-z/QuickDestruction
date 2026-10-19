@@ -13,7 +13,15 @@ class CreatedData:
     def __init__(self):
         """初始化各类数据块的登记列表与待删列表"""
         # 键与 bpy.data 的集合名一致, 回滚时可直接 getattr(bpy.data, kind)
-        self.ids = {"objects": [], "meshes": [], "armatures": [], "collections": [], "actions": []}
+        # 材质排在最后: 用到它的网格先被回收, 材质才会没有使用者
+        self.ids = {
+            "objects": [],
+            "meshes": [],
+            "armatures": [],
+            "collections": [],
+            "actions": [],
+            "materials": [],
+        }
         # 待删数据: 已经取消链接, 等 flush 时一次批量删除
         self.graveyard = []
 
@@ -73,7 +81,7 @@ class CreatedData:
                     if kind in {"objects", "actions"}:
                         # 物体与动作必须 do_unlink, 否则仍在使用它们的地方会让删除失败
                         data.remove(item, do_unlink=True)
-                    elif (kind in {"meshes", "armatures"} and item.users == 0) or (
+                    elif (kind in {"meshes", "armatures", "materials"} and item.users == 0) or (
                         kind == "collections" and not item.objects and not item.children
                     ):
                         # 网格与集合只在没有使用者或没有内容时才删除

@@ -2,6 +2,7 @@
 
 路径是从源物体到碎块的逐层序号, 例如 (3, 2) 表示首次切割的第 3 块再细分出的第 2 块
 碎块名由源物体名, 后缀与路径组成, 例如 Cube_cell_003_002, 去掉最后一段就是父碎块的名字
+部件转碎块选中多个物体时, 名字里的物体名取各部件自己的物体, 路径仍是整个资产里的序号
 集合结构: <源物体> 下是 <源物体>_Shards
 保留父碎块时另有 <源物体>_Parents 与其中的 <源物体>_Parents_L<层>
 """
@@ -42,21 +43,24 @@ class ShardBatch:
         """
         return not self.path
 
-    def new_mesh(self):
-        """新建一个临时名的网格并登记到回收账本
+    def new_mesh(self, name=None):
+        """新建网格并登记到回收账本
 
+        name 网格名, 为 None 时用切割期的临时名, 最终名字由 apply_names 统一分配
         返回 网格数据
         """
-        return self.naming.tracker.track("meshes", bpy.data.meshes.new(self.naming.temp_name()))
+        name = self.naming.temp_name() if name is None else name
+        return self.naming.tracker.track("meshes", bpy.data.meshes.new(name))
 
-    def new_object(self, mesh, location):
+    def new_object(self, mesh, location, name=None):
         """用网格建碎块物体并链接进落点集合; 标记在切割结束后由 number 写入
 
         mesh 碎块的网格数据
         location 物体的位置
+        name 物体名, 为 None 时取网格名
         返回 碎块物体
         """
-        obj = self.naming.tracker.track("objects", bpy.data.objects.new(mesh.name, mesh))
+        obj = self.naming.tracker.track("objects", bpy.data.objects.new(name or mesh.name, mesh))
         self.naming.landing.objects.link(obj)
         obj.location = location
         return obj
@@ -88,7 +92,7 @@ class NamingPlan:
         # 源物体名在首次切割前固定, 标记里记录完整名
         self.source_name = source_name
         # 名字里用的源物体名, 按 UTF-8 字节截短, 不截断多字节字符
-        self.label = source_name.encode("utf-8")[:SOURCE_NAME_BYTES].decode("utf-8", "ignore")
+        self.label = self.short_label(source_name)
         # 碎块名后缀, 只用于碎块名
         self.suffix = settings.shard_suffix
         # 路径里每段序号的最小位数
@@ -127,14 +131,25 @@ class NamingPlan:
         parent.children.link(collection)
         return collection
 
-    def name_of(self, path):
-        """路径对应的碎块名: 源物体名, 后缀与逐层序号用下划线连接
+    @staticmethod
+    def short_label(name):
+        """名字里用的物体名: 按 UTF-8 字节截短, 不截断多字节字符
+
+        name 物体名
+        返回 截短后的名字
+        """
+        return name.encode("utf-8")[:SOURCE_NAME_BYTES].decode("utf-8", "ignore")
+
+    def name_of(self, path, owner=None):
+        """路径对应的碎块名: 物体名, 后缀与逐层序号用下划线连接
 
         path 碎块路径
+        owner 碎块名里使用的物体名, 为 None 时用源物体名; 选中多个物体转碎块时是各部件自己的物体名
         返回 碎块名, 空后缀被省略
         """
+        label = self.label if owner is None else self.short_label(owner)
         numbers = (f"{index:0{self.padding}d}" for index in path)
-        return "_".join(part for part in (self.label, self.suffix, *numbers) if part)
+        return "_".join(part for part in (label, self.suffix, *numbers) if part)
 
     def first_batch(self):
         """源物体首次切割的批次
@@ -185,6 +200,15 @@ class NamingPlan:
         """
         self.temp_counter += 1
         return f"{TEMP_NAME_PREFIX}{self.temp_counter:06d}"
+
+    def final_name(self, number, owner=None):
+        """部件转碎块的碎块名: 路径只有一层, 创建时就能确定, 不必先用临时名再改名
+
+        number 碎块序号, 从 1 起
+        owner 部件自己的物体名, 为 None 时用源物体名; 多个物体时碎块名跟随各自的物体
+        返回 物体名; 网格名是它加 _mesh, 与 apply_names 的结果一致
+        """
+        return self.name_of((number,), owner)
 
     def apply_names(self, objects):
         """全部切割结束后按路径统一命名, 网格名跟随物体名; 路径互不相同, 名字不会重复

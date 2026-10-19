@@ -6,7 +6,7 @@ from mathutils import Vector
 
 from ....common.blender_context import mesh_edit
 from ..constants import WELD_TO_JITTER_RATIO
-from . import cleanup, sampling, shard_objects
+from . import cleanup, materials, sampling, shard_objects
 from .cells import effective_margin, points_as_bmesh_cells
 
 
@@ -92,7 +92,7 @@ def _copy_source_layers(mesh, source_mesh):
         )
 
 
-def _sync_slot_links(source_object, cell):
+def sync_slot_links(source_object, cell):
     """让胞体的材质槽链接方式与来源一致
 
     source_object 源物体
@@ -135,9 +135,11 @@ def build_cells(context, obj, snapshot, points, settings, batch, rng):
         if mesh is None:
             continue
         _copy_source_layers(mesh, obj.data)
+        # 断面材质索引指向最后一个槽之后时, 胞体多一个断面材质槽; 递归时父碎块已经有这个槽, 不会再加
+        materials.append_interior_slot(mesh, obj, settings.material_index, batch.naming.tracker)
         cell = batch.new_object(mesh, center)
         created.append(cell)
-        _sync_slot_links(obj, cell)
+        sync_slot_links(obj, cell)
         # 实时重绘: 每建一个胞体就刷新视口, 便于观察过程, 代价是明显变慢
         if settings.use_debug_redraw:
             context.view_layer.update()

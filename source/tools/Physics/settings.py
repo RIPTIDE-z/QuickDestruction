@@ -89,6 +89,13 @@ PROPERTY_SPECS = {
                 _material_item("CERAMIC", "Ceramic", 2300, "Smooth, a little bouncy."),
                 _material_item("WOOD", "Wood", 600, "Light, a little bouncy."),
                 _material_item("METAL", "Metal", 7850, "Very heavy and bouncy."),
+                _material_item(
+                    "SHELL",
+                    "Thin Shell",
+                    2400,
+                    "Thin curved pieces such as eggshell: grips, does not bounce and stops "
+                    "spinning quickly.",
+                ),
                 ("CUSTOM", "Custom", "Keep the values below as they are."),
             ),
             "default": "CONCRETE",
@@ -214,6 +221,36 @@ PROPERTY_SPECS = {
             "default": 0.05,
             "subtype": "DISTANCE",
             "unit": "LENGTH",
+        },
+    ),
+    # 碰撞形状: 凸包, 网格或复合; 只在应用物理时写进刚体, 不改变碎块的外观
+    "collision_shape": (
+        "EnumProperty",
+        {
+            "name": "Collision Shape",
+            "items": (
+                (
+                    "CONVEX_HULL",
+                    "Convex Hull",
+                    "One hull wrapped around the whole shard; fast and stable. A curved thin "
+                    "piece becomes a dome that touches the ground at a single point.",
+                ),
+                (
+                    "MESH",
+                    "Mesh",
+                    "The triangles of the shard itself, keeping its real shape; it is slow "
+                    "and can be unstable for shards that move.",
+                ),
+                (
+                    "COMPOUND",
+                    "Compound",
+                    "Combine the shapes of the shard's own children; make them small and "
+                    "fairly flat and the shard keeps its curve without a single dome.",
+                ),
+            ),
+            "default": "CONVEX_HULL",
+            "description": "Shape that collides for each shard; it decides how a shard rests, "
+            "not how it looks.",
         },
     ),
     # 碰撞边距的方式: 自动或固定

@@ -72,7 +72,7 @@ GROUPS = (
     ParamGroup(
         "Before Impact", (Expand("activation", labeled=False), "use_anchor_bottom", "anchor_height")
     ),
-    ParamGroup("Collision", (Expand("margin_mode"), "margin"), closed=True),
+    ParamGroup("Collision", ("collision_shape", Expand("margin_mode"), "margin"), closed=True),
 )
 
 

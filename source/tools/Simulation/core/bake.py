@@ -140,9 +140,11 @@ def _set_body(participant, temp):
     temp.set(body, "type", "PASSIVE" if _static(participant) else "ACTIVE")
     # 冻结的碎块起动前受动画控制, 起动帧交接后才交还模拟
     temp.set(body, "kinematic", mode == impulse.FROZEN)
-    sleeping = mode == impulse.SLEEPING
-    temp.set(body, "use_deactivation", sleeping)
-    temp.set(body, "use_start_deactivated", sleeping)
+    # 每种激活方式都允许静止后入睡: 只有休眠的碎块才这样做时, 冻结与自由的碎块落地后的微小晃动永远停不下来
+    # (金蛋 02 实测: 薄壳碎片冻结时 6 秒后仍在缓慢挪动); Bullet 要求速度持续低于阈值一段时间才入睡, 飞行中的碎块不受影响
+    # 只有休眠的碎块从入睡状态开始
+    temp.set(body, "use_deactivation", True)
+    temp.set(body, "use_start_deactivated", mode == impulse.SLEEPING)
 
 
 def _prepare_shard(participant, pending, session, result):

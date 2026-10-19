@@ -18,6 +18,9 @@ ASSET_MARK = "_qd_asset"
 REST_MARK = "_qd_rest"
 # 碎块网格上的断面面属性: 布尔型, 面域, 为真的面是切割时新生成的内部断面; 下游据此给断面铺 UV 与材质
 INTERIOR_ATTRIBUTE = "qd_interior"
+# 碎块网格上的断面已展开标记: 布尔型, 面域, 为真的断面已经有自己的 UV (例如按 UV 岛拆分时展开的侧壁长条),
+# 绑定构建的盒投影跳过它们
+INTERIOR_UV_ATTRIBUTE = "qd_interior_uv"
 
 
 def mark(shard, source_name, path, asset_id):

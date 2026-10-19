@@ -21,6 +21,8 @@
     13. 共面面合并: 网格化的立方体切割后碎块里没有残留的共面边
     14. 种子扰动: 扰动改变结果, 同一随机种子可复现
     15. 材质与数据层: 碎块保留材质槽与链接方式, UV 与颜色层, 断面材质只落在断面上
+    15b. 自动断面材质: 断面材质索引指向最后一个槽之后时碎块多一个 <第一个材质>_Interior 槽,
+        递归不重复加槽, 再切复用同一材质, 源物体不变, 更靠后的索引报错且不留材质
     16. 布尔策略: 封闭网格不启用容错求解, 越界与非有限坐标的结果被拒绝, 没有面的网格无法切割
     16b. 内外复核: 默认参数切割圆环不缺碎块 (关掉复核时会缺); 空结果与整块结果按表面相交与
         中心位置复核, 远离原点的物体不误报
@@ -564,6 +566,52 @@ def case_seed_jitter():
             check(f"{label} 体积守恒", abs(ratio - 1) < VOLUME_TOLERANCE, f"{ratio:.6f}")
     check("扰动改变了切割结果", prints["none"] != prints["jitter"])
     check("同一随机种子的扰动可复现", prints["jitter"] == prints["jitter again"])
+
+
+def case_auto_interior_material():
+    """自动断面材质: 断面材质索引指向最后一个槽之后时, 碎块多一个 <第一个材质>_Interior 槽, 断面用它;
+    递归切割不会再加第二个; 再切一次复用同一个材质; 源物体的槽不变; 更靠后的索引报错且不留下材质"""
+    reset()
+    for material in list(bpy.data.materials):
+        bpy.data.materials.remove(material)
+    source = cube("Src")
+    source.data.materials.append(bpy.data.materials.new("Stone"))
+    seeds(source, 6, 0.9, 3)
+    result = cut([source], {**BASE, "recursion": 1, "sub_cut_pieces": 3, "material_index": 1}, "")
+    slots = {tuple(s.material.name for s in shard.material_slots) for shard in result.shards}
+    print(f"  info: slot lists {slots}")
+    check(
+        "碎块的槽是 Stone 加 Stone_Interior, 递归没有重复加槽",
+        slots == {("Stone", "Stone_Interior")},
+        str(slots),
+    )
+    indices = {face.material_index for shard in result.shards for face in shard.data.polygons}
+    check("外表面用 0, 断面用新槽 1", indices == {0, 1}, str(indices))
+    flags = [
+        (face.material_index == 1)
+        == shard.data.attributes[shard_contract.INTERIOR_ATTRIBUTE].data[face.index].value
+        for shard in result.shards
+        for face in shard.data.polygons
+    ]
+    check("用新槽的正好是断面", all(flags))
+    check("源物体的材质槽不变", [s.material.name for s in source.material_slots] == ["Stone"])
+    again = cube("Src2", 1.0, (5.0, 0.0, 0.0))
+    again.data.materials.append(bpy.data.materials["Stone"])
+    seeds(again, 4, 0.9, 4)
+    cut([again], {**BASE, "recursion": 0, "material_index": 1}, "")
+    names = sorted(m.name for m in bpy.data.materials)
+    check("再切一次复用同一个断面材质", names == ["Stone", "Stone_Interior"], str(names))
+    before = len(bpy.data.materials)
+    try:
+        cut([again], {**BASE, "recursion": 0, "material_index": 3}, "")
+        check("更靠后的索引报错", False)
+    except MeshFractureError as error:
+        check(
+            "更靠后的索引报错",
+            "slot 1 to create" in error.message.format(**error.values),
+            error.message,
+        )
+    check("报错后没有留下材质", len(bpy.data.materials) == before)
 
 
 def case_materials_layers():
@@ -1326,6 +1374,7 @@ def case_asset_persistence():
 
 # 全部场景, 按顺序逐个运行; 会重新打开文件的场景放在最后
 CASES = (
+    case_auto_interior_material,
     case_volume,
     case_torus,
     case_reproducible,

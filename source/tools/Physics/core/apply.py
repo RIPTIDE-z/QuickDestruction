@@ -13,7 +13,7 @@ from ....common import asset, rigidbody
 from ....common.blender_context import mesh_edit
 from ....common.created_data import CreatedData, WriteLog, run_all
 from ....common.geometry import convex_hull_volume, is_not_closed, vertex_mean, volume_centroid
-from ..constants import MASS_MIN
+from ..constants import CHILD_SHAPE, MASS_MIN
 from ..errors import PhysicsError
 from ..settings import SCHEMA
 
@@ -96,7 +96,7 @@ def _write_body(shard, mass, values, log):
     log 写前快照
     """
     body = shard.rigid_body
-    log.set(body, "collision_shape", "CONVEX_HULL")
+    log.set(body, "collision_shape", values.collision_shape)
     log.set(body, "mass", mass)
     log.set(body, "friction", values.friction)
     log.set(body, "restitution", values.restitution)
@@ -120,6 +120,52 @@ def _record_rest(shard, log):
         return
     asset.store_rest(shard, shard.matrix_world)
     log.add(lambda: asset.clear_rest(shard))
+
+
+def _compound_parts(shards):
+    """复合形状要拼合的子块: 碎块的直接子物体里能当刚体的网格
+
+    Blender 的复合形状只拼直接子物体的形状, 更深的层级不参与
+    shards 碎块列表
+    返回 子块物体列表, 保持碎块与子物体的顺序
+    """
+    return [child for shard in shards for child in shard.children if child.type == "MESH"]
+
+
+def _check_shape(shards, values):
+    """要求复合形状的碎块都有子块: 没有子块时刚体没有形状, 碎块会直接穿过一切
+
+    shards 全部碎块
+    values 参数值
+    """
+    if values.collision_shape != "COMPOUND":
+        return
+    for shard in shards:
+        if not _compound_parts([shard]):
+            raise PhysicsError(
+                'Shard "{name}" has no child mesh for the compound shape', name=shard.name
+            )
+
+
+def _build_parts(context, world, shards, log):
+    """为复合形状的子块建立刚体数据: 链接进刚体世界让 Blender 建立, 再移出以免它们单独参与模拟
+
+    刚体数据移出后仍然保留, 父级据此取到子块的形状
+    context Blender 上下文
+    world 刚体世界
+    shards 碎块列表
+    log 写前快照
+    """
+    parts = _compound_parts(shards)
+    if not parts:
+        return
+    rigidbody.link(world, parts)
+    rigidbody.unlink(world, parts)
+    log.add(lambda: rigidbody.remove_bodies(context, parts))
+    for part in parts:
+        body = part.rigid_body
+        if body is not None:
+            log.set(body, "collision_shape", CHILD_SHAPE)
 
 
 def _shard_mass(shard, volume, values, unit_cube):
@@ -175,6 +221,8 @@ def _apply_asset(context, world, root, shards, values, log, tally):
     log.add(lambda: rigidbody.remove_bodies(context, fresh))
     # 不改变世界成员: 原本不在世界里的碎块移出, 撤回时它们的刚体会被整体删除
     rigidbody.unlink(world, outside)
+    # 复合形状: 子块只要有刚体数据即可, 它们本身不参与模拟
+    _build_parts(context, world, shards, log)
     unit_cube = rigidbody.unit_scale(context.scene) ** 3
     mass_total, open_total = 0.0, 0
     for shard in shards:
@@ -209,6 +257,8 @@ def apply(context, roots, values):
     for root, shards in targets:
         if not shards:
             raise PhysicsError('Asset "{name}" has no shards', name=root.name)
+        # 复合形状缺子块时刚体没有形状, 在改动场景之前报错
+        _check_shape(shards, values)
     tracker = CreatedData()
     log = WriteLog()
     try:
@@ -234,7 +284,9 @@ def remove(context, roots):
     """
     asset.validate(roots)
     shards = [shard for root in roots for shard in asset.shards_of(root)]
-    rigidbody.remove_bodies(context, shards)
+    # 子块的刚体数据是复合形状用的, 随碎块一起删除
+    parts = _compound_parts(shards)
+    rigidbody.remove_bodies(context, [*shards, *parts])
     for root in roots:
         asset.clear_physics_record(root)
     return len(shards)

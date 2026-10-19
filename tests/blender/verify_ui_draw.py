@@ -9,10 +9,14 @@
     2. 另注册一个驱动面板, 在它的 draw 里用真实 layout 与真实绘制上下文逐个驱动绘制入口:
        工具面板, 子面板与弹出面板, 标题栏预设入口, 预设菜单; 转发型 layout 代理记录每次控件调用
     3. 自检: 在同一上下文里写 ID 数据必须被拒绝, 否则说明驱动上下文并不受限, 整个结论不成立
+    4. 按页切换的工具 (PAGED_TOOLS) 逐页切换并重绘, 每一页的子面板都由 Blender 自己绘制一次
+    全部步骤由一个定时器按顺序执行 (STEPS): 上一步做完才排下一步, 烘焙之后等运行锁真正释放再核对,
+    不按固定时刻核对, 机器负载高时也不会误报
     入口全部由 registration.TOOLS 推导, 新增工具会自动纳入
 判据:
-    - 工具的顶层面板没有父面板, 子面板挂在本工具的面板下; 自身或上级默认收起的面板没有被绘制,
-      其余侧栏面板都被绘制且不抛异常; 弹出面板只在点开时绘制, 由驱动面板驱动
+    - 工具的顶层面板没有父面板, 子面板挂在本工具的面板下; 自身或上级默认收起的面板,
+      以及每一页 poll 都为假的面板没有被绘制, 其余侧栏面板都被绘制且不抛异常;
+      弹出面板只在点开时绘制, 由驱动面板驱动
     - 每个驱动入口不抛异常并至少产生一个控件, 包括子面板与弹出面板的内容
     - 顶层面板提供本工具的算子入口; 标题栏预设入口经布局上下文写入工具标识;
   预设菜单请求到全部预设算子
@@ -291,10 +295,46 @@ def folded(cls, panels):
     return False
 
 
+# 按页切换的工具: 工具标识 -> (切换页面的字段, 全部页面); 测试里每一页都切过去让 Blender 真实绘制一次
+PAGED_TOOLS = {"mesh_fracture": ("method", ("PARTS", "UV_ISLANDS", "CUT"))}
+
+
+def show_page(tool_id, value):
+    """切换按页工具的当前页并重绘, 这一页的子面板由 Blender 自己绘制"""
+    field, _values = PAGED_TOOLS[tool_id]
+    setattr(getattr(bpy.context.scene.qd_settings, tool_id), field, value)
+    redraw()
+
+
+def hidden_on_every_page(cls):
+    """面板的 poll 在每一页都为假时 Blender 从不绘制它; 没有 poll 的面板总是可见
+
+    按页切换的工具会逐页切换并重绘, 所以只要有一页能显示, 这个子面板就应该被绘制过
+    """
+    poll = getattr(cls, "poll", None)
+    if poll is None:
+        return False
+    owners = [
+        (getattr(bpy.context.scene.qd_settings, tool_id), field, values)
+        for tool_id, (field, values) in PAGED_TOOLS.items()
+    ]
+    # 没有按页切换的工具时只看当前状态
+    if not owners:
+        return not poll(bpy.context)
+    visible = False
+    for owner, field, values in owners:
+        current = getattr(owner, field)
+        for value in values:
+            setattr(owner, field, value)
+            visible = visible or poll(bpy.context)
+        setattr(owner, field, current)
+    return not visible
+
+
 def check_sidebar():
     """Blender 自己绘制的侧栏面板: 顶层面板没有父面板, 子面板挂在本工具面板下
 
-    收起的不绘制, 其余绘制且不抛异常
+    收起的或每一页 poll 都为假的不绘制, 其余绘制且不抛异常
     """
     for tool in registration.TOOLS:
         panels = [cls for cls in tool_panels(tool) if not is_popover(cls)]
@@ -304,10 +344,11 @@ def check_sidebar():
             parent = parent_of(cls)
             check(f"{name} 挂在本工具的面板下或是顶层面板", not parent or parent in names, parent)
             closed = folded(cls, panels)
+            hidden = hidden_on_every_page(cls)
             check(
                 f"{name} 的绘制情况与折叠状态一致",
-                (name in DRAWN) == (not closed),
-                f"被绘制 {name in DRAWN}, 收起 {closed}",
+                (name in DRAWN) == (not closed and not hidden),
+                f"被绘制 {name in DRAWN}, 收起 {closed}, 每一页都不显示 {hidden}",
             )
             if name in DRAWN:
                 check(f"{name} 绘制没有抛异常", DRAWN[name] is None, repr(DRAWN[name]))
@@ -511,17 +552,66 @@ if bpy.app.background:
     print("[FAIL] 本脚本需要真实界面, 请去掉 -b 运行", flush=True)
     raise SystemExit(1)
 
-bpy.app.timers.register(start, first_interval=1.0)
-bpy.app.timers.register(start_bake, first_interval=2.0)
-bpy.app.timers.register(enable_preview, first_interval=3.0)
-bpy.app.timers.register(check_main, first_interval=3.5)
-bpy.app.timers.register(check_preview, first_interval=3.6)
-bpy.app.timers.register(start_escape, first_interval=3.8)
-bpy.app.timers.register(send_escape, first_interval=4.2)
-bpy.app.timers.register(check_escape, first_interval=4.5)
-# 之后的定时器要跨过载入文件, 必须是 persistent, 否则载入时被移除
-bpy.app.timers.register(lambda: start_interrupted("load"), first_interval=4.7, persistent=True)
-bpy.app.timers.register(interrupt_by_load, first_interval=4.8, persistent=True)
-bpy.app.timers.register(lambda: start_interrupted("disable"), first_interval=5.1, persistent=True)
-bpy.app.timers.register(interrupt_by_disable, first_interval=5.4, persistent=True)
-bpy.app.timers.register(finish, first_interval=5.7, persistent=True)
+
+def bake_idle():
+    """等待用的条件: 没有烘焙在运行"""
+    return not task.busy()
+
+
+# 等待条件的检查间隔与最长等待, 单位秒; 超时后照常往下走, 由随后的判据报告失败
+WAIT_INTERVAL = 0.1
+WAIT_LIMIT = 60.0
+
+# 按顺序执行的步骤: (与上一步的间隔秒数, 函数, 是否为等待条件)
+# 等待条件反复调用直到返回真: 烘焙要多久取决于机器负载, 用固定时刻核对结果在负载高时会误报
+STEPS = (
+    (1.0, start, False),
+    (1.0, start_bake, False),
+    (WAIT_INTERVAL, bake_idle, True),
+    # 按页切换的工具逐页切过去重绘, 每页的子面板都由 Blender 自己绘制一次
+    *(
+        (0.3, lambda tool_id=tool_id, value=value: show_page(tool_id, value), False)
+        for tool_id, (_field, values) in PAGED_TOOLS.items()
+        for value in values
+    ),
+    (0.3, enable_preview, False),
+    (0.5, check_main, False),
+    (0.1, check_preview, False),
+    (0.2, start_escape, False),
+    (0.4, send_escape, False),
+    (WAIT_INTERVAL, bake_idle, True),
+    (0.1, check_escape, False),
+    (0.2, lambda: start_interrupted("load"), False),
+    (0.1, interrupt_by_load, False),
+    (0.3, lambda: start_interrupted("disable"), False),
+    (0.3, interrupt_by_disable, False),
+    (0.3, finish, False),
+)
+
+
+def make_runner():
+    """生成按顺序执行 STEPS 的定时器函数: 上一步做完才排下一步, 步骤出错记为失败后继续"""
+    state = {"index": 0, "waited": 0.0}
+
+    def tick():
+        """执行当前步骤, 返回到下一步的间隔; 返回 None 时定时器结束"""
+        index = state["index"]
+        _delay, func, wait = STEPS[index]
+        try:
+            done = func()
+        except Exception:
+            traceback.print_exc()
+            check(f"步骤 {index} {getattr(func, '__name__', func)} 执行完成", False)
+            done = True
+        # 等待条件还不成立且没超时: 过一会儿再查同一步
+        if wait and not done and state["waited"] < WAIT_LIMIT:
+            state["waited"] += WAIT_INTERVAL
+            return WAIT_INTERVAL
+        state["index"], state["waited"] = index + 1, 0.0
+        return STEPS[index + 1][0] if index + 1 < len(STEPS) else None
+
+    return tick
+
+
+# 定时器要跨过载入文件, 必须是 persistent, 否则载入时被移除
+bpy.app.timers.register(make_runner(), first_interval=STEPS[0][0], persistent=True)

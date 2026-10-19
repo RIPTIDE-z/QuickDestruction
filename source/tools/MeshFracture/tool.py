@@ -9,6 +9,7 @@ from .interaction import (
     QD_MESH_FRACTURE_OT_generate,
     QD_MESH_FRACTURE_OT_make_unique,
     QD_MESH_FRACTURE_OT_parts,
+    QD_MESH_FRACTURE_OT_uv_islands,
     QD_MESH_FRACTURE_PT_main,
 )
 from .settings import SCHEMA
@@ -20,6 +21,7 @@ TOOL = ToolSpec(
     classes=(
         QD_MESH_FRACTURE_OT_generate,
         QD_MESH_FRACTURE_OT_parts,
+        QD_MESH_FRACTURE_OT_uv_islands,
         QD_MESH_FRACTURE_OT_make_unique,
         QD_MESH_FRACTURE_PT_main,
         *SUBPANELS,

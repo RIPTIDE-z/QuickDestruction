@@ -107,7 +107,7 @@ TOOL = ToolSpec(
 - 字段顺序约束在 `orders` 中声明；
 - 字段级 `update` 回调直接写在规格的关键字参数里，例如物理设置的材料下拉。预设按规格顺序写入，所以联动字段要排在被它改写的字段之前。
 
-- **布局**：主面板放资产摘要、状态与主按钮，其余参数用 `ParamGroup` 分组。`closed=True` 默认收起，`popover=True` 在底部生成弹出按钮。
+- **布局**：主面板放资产摘要、状态与主按钮，其余参数用 `ParamGroup` 分组。`closed=True` 默认收起，`popover=True` 在底部生成弹出按钮；`show=函数(参数组)` 给子面板加 `poll`，条件不成立时整个子面板或弹出按钮不出现，用于按页切换的工具。
 - **生成**：`parameter_panels(parent, schema, core, groups, active)` 返回面板类，并检查每个参数恰好列入一次。
 - **绘制**：
   - `draw_fields` 将标签与数值分列，向量分量并排；
@@ -301,13 +301,15 @@ API 在退出时尝试恢复原选择和活动物体；生成算子成功后另�
 
 | 模块 | 职责 |
 | --- | --- |
-| `tool.py`、`settings.py`、`interaction.py` | 工具声明、参数规格、面板、生成算子与重建副本身份算子 |
+| `tool.py`、`settings.py`、`interaction.py` | 工具声明、参数规格、面板、生成算子与重建副本身份算子；面板按 `method` 分成切割、部件、UV 岛三页，子面板用 `ParamGroup.show` 只在所属页显示，共用子面板里用不到的字段按 `FIELD_METHODS` 置灰 |
 | `api.py` | 显式输入、切割前体检、结果对象、重建副本身份 |
 | `core/pipeline.py` | 输入检查、首次切割、递归、收尾、硬上限与失败清理 |
 | `core/sampling.py`、`cells.py`、`cell_objects.py` | 种子采样、半空间求交、凸包及材质和数据层初始化 |
 | `core/boolean.py`、`intersect.py` | 求值快照、Exact 求交、结果校验（越界与内外复核）与布尔烘焙；封闭性判定在 `common/geometry.py`，嵌套曲面的朝向判定在 `common/hollow.py`（切割与绑定构建共用） |
 | `core/shell.py` | 关闭"填充实体"时，为首次切割准备把内腔曲面翻向朝内的临时布尔操作数，取回结果后丢弃；源物体不改动 |
-| `core/parts.py` | 部件转碎块：连通块或多个物体拆成部件，可选地让部件互不重叠（体积大的保留重叠体积，Exact 求差），用 `NamingPlan` 建与切割一致的资产（间隙 0，不空心） |
+| `core/parts.py`、`overlap.py` | 部件转碎块：一个物体按共享边分连通块（`islands.face_labels` 并查集，再由 `islands.split_by_labels` 递归对半拆成各块网格，游离点边先清掉），多个物体每个物体一个部件（求值副本直接成为碎块网格，源物体由 BMesh 合并各副本得到，不用 `join` 算子）；几何原样保留，不修补；碎块的材质槽与断面材质槽、`qd_interior` 面属性、`Interior` 顶点组与切割一致（`interior.finish_original`）；`NamingPlan` 建与切割一致的资产（间隙 0，不空心），名字创建时就是最终名；`overlap.find_overlaps` 只检测不修复重叠（包围盒扫描找候选对，求交树缩小三角形，沿边射线判穿插，射线奇偶判包住），结果在 `MeshFractureResult.overlaps` |
+| `core/materials.py` | 断面材质槽检查；断面材质索引指向最后一个槽之后时给碎块加 `<第一个材质名>_Interior`（同名复用，新建的登记进回收账本），切割与按 UV 岛拆分共用 |
+| `core/uv_split.py` | 按 UV 岛拆分：求 UV 岛，按间距、背对背、覆盖率与互为最佳配对薄壳的内外层岛，只在配对岛之间按环距离桥接侧壁（侧壁带隐藏标记，交给 `interior.finish_interior` 收尾），桥接后检查封闭性并报告 `open_shards`；每段侧壁按弧长与壳厚展开成独立的长条 UV，写进每个 UV 层并记 `qd_interior_uv`（`Rig/core/interior.box_project` 跳过这些面）；未拆分的连通块按 `uv_unsplit` 处理；碎块网格由按分组递归对半拆开的 BMesh 得到；资产同 `parts.py` |
 | `core/recursion.py`、`allocation.py` | 候选选择与碎块预算分配；后者是纯数值逻辑 |
 | `core/cleanup.py`、`islands.py` | 焊接、清理、非平面面三角化、孤岛拆分及最终面合并 |
 | `core/isolation.py` | 临时排除已完成碎块，当前父块与新碎块使用工作集合；实时重绘时停用 |

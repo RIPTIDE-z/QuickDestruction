@@ -9,6 +9,20 @@ from .constants import CELL_SCALE_MIN, CONTEXT, MAX_ROUNDS, SHARD_LIMIT
 # 参数规格: 字段名 -> (bpy.props 的类型名, 该类型的关键字参数)
 # name 与 description 是英文原文, 也是语言文件里的键; 其余关键字原样交给 bpy.props
 PROPERTY_SPECS = {
+    # 破碎方式: 决定面板显示哪一页参数与哪个生成按钮; 阶段 API 各管一种方式, 不读它
+    "method": (
+        "EnumProperty",
+        {
+            "name": "Method",
+            "items": (
+                ("CUT", "Cut", "Cut the mesh into Voronoi fragments."),
+                ("PARTS", "Parts", "Use the parts the model already has as shards."),
+                ("UV_ISLANDS", "UV Islands", "Use the UV islands of the mesh as shards."),
+            ),
+            "default": "CUT",
+            "description": "How the shards are made; each method has its own page of settings.",
+        },
+    ),
     # 种子来源: 顶点, 粒子与注解铅笔, 可多选取并集
     "source": (
         "EnumProperty",
@@ -260,7 +274,9 @@ PROPERTY_SPECS = {
         {
             "name": "Cut Material",
             "description": "Material slot of the interior faces, also in recursive cuts. 0 is "
-            "the first slot.",
+            "the first slot. The slot right after the last one of the source is added to the "
+            "shards automatically, with a material named after the first material plus "
+            "_Interior; an existing material with that name is reused.",
             "default": 0,
             "min": 0,
         },
@@ -275,16 +291,64 @@ PROPERTY_SPECS = {
             "default": False,
         },
     ),
-    # 部件转碎块时是否让部件互不重叠
-    "use_parts_disjoint": (
+    # 按 UV 岛拆分时用的 UV 层名, 空名表示活动 UV
+    "uv_map": (
+        "StringProperty",
+        {
+            "name": "UV Map",
+            "description": "Only for Split by UV Islands: the UV map whose islands become the "
+            "shards. Empty uses the active UV map.",
+            "default": "",
+        },
+    ),
+    # 按 UV 岛拆分时是否只拆含选中面的部件
+    "use_uv_selected": (
         "BoolProperty",
         {
-            "name": "Separate Overlaps",
-            "description": "Only for Use Parts as Shards: where parts overlap, the bigger part "
-            "keeps the shared volume and the smaller one is cut back, so the shards no longer "
-            "push each other apart in the simulation. A part buried completely inside a bigger "
-            "one is dropped.",
-            "default": True,
+            "name": "Selected Parts Only",
+            "description": "Only for Split by UV Islands: split only the connected parts that "
+            "have selected faces; select them in Edit Mode, for example by pointing at a part "
+            "and pressing L. The matching inner layer of a selected shell is split with it.",
+            "default": False,
+        },
+    ),
+    # 按 UV 岛拆分时侧壁长条 UV 每米的长度
+    "strip_uv_scale": (
+        "FloatProperty",
+        {
+            "name": "Strip UV Scale",
+            "description": "Only for Split by UV Islands: UV length per meter for the side "
+            "walls, each unwrapped as its own long strip along the crack.",
+            "min": 0.001,
+            "soft_max": 100.0,
+            "default": 1.0,
+        },
+    ),
+    # 按 UV 岛拆分时不拆分的部件怎样处理
+    "uv_unsplit": (
+        "EnumProperty",
+        {
+            "name": "Unsplit Parts",
+            "items": (
+                (
+                    "ATTACH",
+                    "Attach",
+                    "Each part that is not split joins the shard nearest to it.",
+                ),
+                (
+                    "SEPARATE",
+                    "Separate",
+                    "Each part that is not split becomes a shard of its own.",
+                ),
+                (
+                    "TOGETHER",
+                    "Together",
+                    "All parts that are not split form one shard together.",
+                ),
+            ),
+            "default": "ATTACH",
+            "description": "Only for Split by UV Islands: what happens to parts that are not "
+            "split, such as decorations or a stand.",
         },
     ),
     # 是否把碎块原点移到顶点平均位置

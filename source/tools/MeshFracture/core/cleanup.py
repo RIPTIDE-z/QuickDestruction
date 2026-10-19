@@ -69,7 +69,7 @@ def face_components(bm):
     return parts
 
 
-def _drop_loose(bm):
+def drop_loose(bm):
     """删除没有面的散边与散点, 否则拆分孤岛会把它们拆成没有面的空碎块
 
     bm 要整理的 BMesh
@@ -109,7 +109,7 @@ def weld_intersection(mesh, weld_dist):
     """
     with mesh_edit(mesh) as bm:
         bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=weld_dist)
-        _drop_loose(bm)
+        drop_loose(bm)
         parts = _disconnect_components(bm)
         # 焊接与清理会改动拓扑, 重新算法线后才能判断面是否共面
         bm.normal_update()
